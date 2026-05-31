@@ -51,7 +51,7 @@ priority: High
 owner: ''
 feature: Uncategorized
 created_at: 2026-05-31T14:09:52.609763049Z
-modified_at: 2026-05-31T14:18:16.799080500Z
+modified_at: 2026-05-31T14:38:00.851334691Z
 req_type: Epic
 tags:
 - aida
@@ -71,3 +71,9 @@ relationships:
 - rel_type: Parent
   target_id: 019e7e66-78f6-7972-b865-2ca1b648e9e0
   created_at: 2026-05-31T14:18:28.023722274Z
+comments:
+- id: 019e7e78-6893-77a3-a1cc-4a64ae51e5af
+  author: joe
+  content: 'Schema finalized in docs/architecture/graph-schema.md (PR #1). NOTE: definitions use a TERM title/tag prefix (not AIDA''s native --type term as this EPIC body originally suggested). The merged doc is canonical for node/edge/tag conventions; follow it over any earlier wording here.'
+  created_at: 2026-05-31T14:38:00.851334691Z
+  modified_at: 2026-05-31T14:38:00.851334691Z
