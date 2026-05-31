@@ -1,5 +1,5 @@
 use chrono::Utc;
-use llm::{AnthropicClient, LLMClient, Message};
+use llm::{AnthropicClient, ClaudeCliClient, LLMClient, Message};
 use serde_json::json;
 use serde_json::Value;
 use std::collections::BTreeMap;
@@ -552,6 +552,12 @@ enum StrategyKind {
 }
 
 #[derive(Debug, Clone, Copy, Eq, PartialEq)]
+enum LlmBackendKind {
+    ClaudeCli,
+    Anthropic,
+}
+
+#[derive(Debug, Clone, Copy, Eq, PartialEq)]
 enum SessionCommand {
     Start,
     Resume,
@@ -646,6 +652,23 @@ fn parse_strategy(value: &str) -> Result<StrategyKind> {
     }
 }
 
+fn env_llm_backend() -> LlmBackendKind {
+    std::env::var("QUIZDOM_BACKEND")
+        .ok()
+        .and_then(|value| parse_llm_backend(&value).ok())
+        .unwrap_or(LlmBackendKind::ClaudeCli)
+}
+
+fn parse_llm_backend(value: &str) -> Result<LlmBackendKind> {
+    match value {
+        "claude-cli" | "claude_cli" | "claude" => Ok(LlmBackendKind::ClaudeCli),
+        "anthropic" => Ok(LlmBackendKind::Anthropic),
+        other => Err(QuizdomError::Usage(format!(
+            "unknown LLM backend: {other}; expected claude-cli or anthropic"
+        ))),
+    }
+}
+
 fn next_arg(args: &mut impl Iterator<Item = String>, name: &str) -> Result<String> {
     args.next()
         .filter(|value| !value.is_empty())
@@ -681,12 +704,23 @@ pub fn run_cli(
 fn build_strategy(config: &CliConfig) -> Option<Box<dyn NextQuestionStrategy>> {
     match config.strategy {
         StrategyKind::Deterministic => None,
-        StrategyKind::Llm => AnthropicClient::from_env().ok().map(|client| {
-            Box::new(LlmNextQuestionStrategy::with_generated_question_persister(
-                client,
-                AidaCliGeneratedQuestionPersister::default(),
-            )) as Box<dyn NextQuestionStrategy>
-        }),
+        StrategyKind::Llm => match env_llm_backend() {
+            LlmBackendKind::ClaudeCli => {
+                let client = ClaudeCliClient::from_env();
+                Some(
+                    Box::new(LlmNextQuestionStrategy::with_generated_question_persister(
+                        client,
+                        AidaCliGeneratedQuestionPersister::default(),
+                    )) as Box<dyn NextQuestionStrategy>,
+                )
+            }
+            LlmBackendKind::Anthropic => AnthropicClient::from_env().ok().map(|client| {
+                Box::new(LlmNextQuestionStrategy::with_generated_question_persister(
+                    client,
+                    AidaCliGeneratedQuestionPersister::default(),
+                )) as Box<dyn NextQuestionStrategy>
+            }),
+        },
     }
 }
 
@@ -1449,6 +1483,19 @@ Tags: topic:free-will, answer:choice[libertarian, compatibilist], weight:42
             .unwrap();
 
         assert_eq!(next.id, "Q-2");
+    }
+
+    #[test]
+    fn parses_llm_backend_selection() {
+        assert_eq!(
+            parse_llm_backend("claude-cli").unwrap(),
+            LlmBackendKind::ClaudeCli
+        );
+        assert_eq!(
+            parse_llm_backend("anthropic").unwrap(),
+            LlmBackendKind::Anthropic
+        );
+        assert!(parse_llm_backend("other").is_err());
     }
 
     #[test]

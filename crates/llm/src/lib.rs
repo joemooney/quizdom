@@ -12,8 +12,10 @@ use std::future::Future;
 use std::pin::Pin;
 
 mod anthropic;
+mod claude_cli;
 
 pub use anthropic::{AnthropicClient, AnthropicConfig};
+pub use claude_cli::{ClaudeCliClient, ClaudeCliConfig};
 
 /// Text plus tool calls returned by [`LLMClient::call`].
 pub type LLMOutput = (String, Vec<ToolCall>);
