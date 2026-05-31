@@ -8,7 +8,7 @@ priority: High
 owner: ''
 feature: Uncategorized
 created_at: 2026-05-31T14:18:20.814586740Z
-modified_at: 2026-05-31T14:18:20.814586740Z
+modified_at: 2026-05-31T14:19:09.129668424Z
 req_type: Story
 tags:
 - graph
@@ -19,3 +19,7 @@ relationships:
 - rel_type: Child
   target_id: 019e7e5e-a5e1-78b2-9419-9523f83fab27
   created_at: 2026-05-31T14:18:22.220657069Z
+- rel_type: References
+  target_id: 019e7e66-5b3b-72a1-a52f-b55a1a8ce5fb
+  created_at: 2026-05-31T14:19:09.129662586Z
+  created_by: joe
