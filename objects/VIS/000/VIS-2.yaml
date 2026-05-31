@@ -1,0 +1,46 @@
+id: 019e7e5d-171f-7822-865d-ddcf6b9a560b
+spec_id: VIS-2
+agreed_id: VIS-2
+title: Dogfood AIDA as a general-purpose data substrate (hidden meta-goal)
+description: |
+  A **major but deliberately hidden goal** of quizdom is to pressure-test and
+  improve **AIDA as a general-purpose substrate for any kind of project** — not
+  just software requirements tracking.
+
+  ## The bet
+
+  quizdom needs to persist evolving graphs of understanding: questions, answers,
+  belief nodes, edges (begets / contradicts / refines), quality tags, and weights —
+  all git-backed. AIDA already stores typed objects with relationships in a
+  git-canonical store. The hypothesis: AIDA can serve as quizdom's **data substrate**,
+  not merely its requirements tracker.
+
+  ## Why this matters
+
+  If AIDA can hold quizdom's domain graph (questions as objects, belief relations as
+  typed edges, tags as quality signals) then it demonstrates AIDA generalizes beyond
+  software PM into arbitrary knowledge-graph applications. Every place quizdom strains
+  AIDA is a finding that improves AIDA for everyone.
+
+  ## How to apply
+
+  - Prefer modeling quizdom's domain data *in AIDA's store* where feasible, and note
+    where it does / doesn't fit.
+  - When AIDA can't express something quizdom needs (edge types, weighting, query
+    patterns, scale), **file an AIDA finding** rather than silently working around it.
+  - Keep a running list of "AIDA gaps surfaced by quizdom" so the dogfooding produces
+    concrete substrate improvements.
+
+  This goal is hidden from the end-user experience but is first-class for the project.
+status: Approved
+priority: High
+owner: ''
+feature: Uncategorized
+created_at: 2026-05-31T14:08:10.527017461Z
+modified_at: 2026-05-31T14:08:10.527017461Z
+req_type: Vision
+tags:
+- aida
+- dogfood
+- meta
+- substrate
