@@ -3,12 +3,12 @@ spec_id: STORY-19
 agreed_id: STORY-19
 title: 'Both-sides branching: fork agree/disagree paths from a proposition'
 description: 'Let a user explore agree AND disagree branches from the same proposition; fork the traversal and track both paths in the log. ## Acceptance: a session forks into two branches from one proposition; both are recoverable from the log; the user can walk each side independently. Depends on the session loop + log format.'
-status: Approved
+status: InProgress
 priority: Medium
 owner: ''
 feature: Uncategorized
 created_at: 2026-05-31T14:31:40.271296227Z
-modified_at: 2026-05-31T14:32:15.581745407Z
+modified_at: 2026-05-31T17:49:19.208503300Z
 req_type: Story
 tags:
 - both-sides
