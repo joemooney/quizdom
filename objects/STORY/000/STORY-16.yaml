@@ -8,7 +8,7 @@ priority: High
 owner: ''
 feature: Uncategorized
 created_at: 2026-05-31T14:18:25.398745821Z
-modified_at: 2026-05-31T14:19:10.126035153Z
+modified_at: 2026-05-31T14:38:01.962163955Z
 req_type: Story
 tags:
 - graph
@@ -23,3 +23,9 @@ relationships:
   target_id: 019e7e66-5b3b-72a1-a52f-b55a1a8ce5fb
   created_at: 2026-05-31T14:19:10.126022289Z
   created_by: joe
+comments:
+- id: 019e7e78-6cea-7cc2-af7f-ca065e21f562
+  author: joe
+  content: Build the seed cluster to match docs/architecture/graph-schema.md EXACTLY (TERM-prefix definitions, weight:N tags, begets/probes/refines/disagrees edges). The doc's 'Worked Example' is the target shape.
+  created_at: 2026-05-31T14:38:01.962163955Z
+  modified_at: 2026-05-31T14:38:01.962163955Z
