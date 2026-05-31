@@ -15,3 +15,7 @@ tags:
 - graph
 - schema
 - story
+relationships:
+- rel_type: Child
+  target_id: 019e7e5e-a5e1-78b2-9419-9523f83fab27
+  created_at: 2026-05-31T14:18:18.486472383Z
