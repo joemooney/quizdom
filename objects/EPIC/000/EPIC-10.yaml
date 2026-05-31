@@ -8,7 +8,7 @@ priority: Medium
 owner: ''
 feature: Uncategorized
 created_at: 2026-05-31T14:10:07.544177402Z
-modified_at: 2026-05-31T14:10:07.544177402Z
+modified_at: 2026-05-31T21:31:11.098252057Z
 req_type: Epic
 tags:
 - curation
@@ -21,3 +21,9 @@ relationships:
 - rel_type: Parent
   target_id: 019e7f96-4567-7303-8798-fac71e185a9f
   created_at: 2026-05-31T19:50:17.131567728Z
+comments:
+- id: 019e7ff2-ad7a-70d2-af92-a5e265e2028d
+  author: joe
+  content: 'STORY-48 (answer-conditioned follow-ons) complete via PR #20 — the answer-aware branching the user requested. EPIC-10 still has bank-evolution/curation work (weighting from feedback) undecomposed.'
+  created_at: 2026-05-31T21:31:11.098252057Z
+  modified_at: 2026-05-31T21:31:11.098252057Z
