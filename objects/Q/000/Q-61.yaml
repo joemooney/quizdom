@@ -1,0 +1,24 @@
+id: 019e7fd1-df66-79d2-b962-16ef6d2839b1
+spec_id: Q-61
+agreed_id: Q-61
+prefix_override: Q
+title: You point past reason to aesthetic 'fit' — a note can be right without being either calculated or random. But when your soul senses that fit, is it *recognizing* a rightness that was already there to be found (which would anchor the choice in something prior), or *conferring* rightness in the act of choosing? If it recognizes, what makes the standard yours rather than a prior cause; if it confers, what makes one conferral less arbitrary than the chance you rejected?
+description: |-
+  LLM-generated quizdom question.
+
+  answer: free-text
+  origin: Q-60
+
+  Generated from origin question: If reason isn't the guiding force and the soul can always cycle back to swap one note for another, what makes any given swap an act of *will* rather than just an arbitrary re-roll — what does the willing, if not the soul's reasons?
+status: Approved
+priority: Medium
+owner: ''
+feature: Uncategorized
+created_at: 2026-05-31T20:55:21.190624585Z
+modified_at: 2026-05-31T20:55:21.190624585Z
+req_type: Functional
+tags:
+- answer:free-text
+- seed
+- topic:free-will
+- weight:50
