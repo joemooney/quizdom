@@ -8,7 +8,7 @@ priority: Medium
 owner: ''
 feature: Uncategorized
 created_at: 2026-05-31T21:33:35.720820049Z
-modified_at: 2026-05-31T22:21:34.218594885Z
+modified_at: 2026-05-31T22:28:28.125269148Z
 req_type: Story
 tags:
 - curation
@@ -20,3 +20,9 @@ relationships:
 - rel_type: Child
   target_id: 019e7e5e-e038-77b0-a462-602c6b7db9df
   created_at: 2026-05-31T21:33:36.983324984Z
+comments:
+- id: 019e8027-1f5d-7861-83c9-a93e1f4d5743
+  author: joe
+  content: 'Implemented weighted-probabilistic successor selection in strategy.rs: new WeightSampler seam (XorShiftWeightSampler from_entropy + with_seed) and WeightedNextQuestionStrategy. eligible_for_sampling() restricts to the highest STORY-48 relevance tier (answer-conditioned > unconditional) and excludes weight:0, then samples proportional to weight via the pure weighted_index() core. Wired as --strategy weighted / QUIZDOM_STRATEGY=weighted. Tests cover distribution sweep, weight:0 exclusion, all-zero->None, from-answer filtering, tier precedence, and reproducible seeding. cargo test/fmt/clippy clean.'
+  created_at: 2026-05-31T22:28:28.125269148Z
+  modified_at: 2026-05-31T22:28:28.125269148Z
