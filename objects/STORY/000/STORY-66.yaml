@@ -3,12 +3,12 @@ spec_id: STORY-66
 agreed_id: STORY-66
 title: 'Re-weighting engine: adjust weight:N + quality:* from a quality signal'
 description: 'In bank.rs/persist.rs/strategy.rs (NO session.rs): a function that, given a quality signal for a question (insightful | neutral | unhelpful | punted), adjusts its weight:N (bump on insightful, decay on unhelpful/punted) bounded to [0,100] and updates the quality:* tag, persisting via ''aida edit''/tag commands. Pure, testable. ## Acceptance: re-weight bumps/decays within [0,100], updates quality:*, persists to AIDA; covered by unit tests (mock the aida calls). Disjoint from the session loop.'
-status: Approved
+status: InProgress
 priority: High
 owner: ''
 feature: Uncategorized
 created_at: 2026-05-31T21:33:31.057653884Z
-modified_at: 2026-05-31T21:33:31.057653884Z
+modified_at: 2026-05-31T21:38:37.585090607Z
 req_type: Story
 tags:
 - bank
