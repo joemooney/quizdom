@@ -1,0 +1,17 @@
+id: 019e7e66-670e-79a2-960e-a0ff69e2b9bd
+spec_id: STORY-15
+agreed_id: STORY-15
+title: Per-user session log format + promotion path to AIDA
+description: 'Specify the lighter per-user log capturing raw answers + session traversal (ADR-12), and the promotion mechanism that lifts a notable belief from the log into an AIDA BELIEF object with edges. ## Acceptance: log format documented with a sample; promotion steps defined (which fields map to title/tags/edges); round-trips one example belief.'
+status: Approved
+priority: High
+owner: ''
+feature: Uncategorized
+created_at: 2026-05-31T14:18:20.814586740Z
+modified_at: 2026-05-31T14:18:20.814586740Z
+req_type: Story
+tags:
+- graph
+- promotion
+- session-log
+- story
