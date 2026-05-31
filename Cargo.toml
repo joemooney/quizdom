@@ -1,4 +1,3 @@
 [workspace]
-members = ["crates/quizdom"]
+members = ["crates/llm", "crates/quizdom"]
 resolver = "2"
-
