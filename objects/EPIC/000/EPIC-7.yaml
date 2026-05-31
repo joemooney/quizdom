@@ -2,13 +2,46 @@ id: 019e7e5e-bb29-71d3-be50-f14d76486472
 spec_id: EPIC-7
 agreed_id: EPIC-7
 title: LLM integration (answer analysis + question generation)
-description: Wire an LLM (Claude API default) to analyze each answer and either generate a new question or select a fitting one from the evolving bank. The intelligence behind the loop.
-status: Draft
+description: |-
+  Wire an LLM into the session engine so it analyzes each answer and either
+  generates a new question or selects a fitting one from the evolving bank — the
+  intelligence behind the loop. Architecture decided in ADR-34 + SPIKE-33.
+
+  ## Architecture (ADR-34)
+
+  - A standalone, provider-agnostic `llm` crate in the workspace (`crates/llm`):
+    `LLMClient::call(system, &[Message], &[ToolDef]) -> (text, Vec<ToolCall>)`;
+    `Message`/`ToolDef`/`ToolCall`/`LLMError` types; `AnthropicClient` over reqwest
+    (retries + stream aggregation); `ClaudeCliClient` optional later. NO AIDA tools,
+    sessions, or SSE — pure LLM glue. Designed for extraction once `~/ai/aida-chat`
+    adopts it (SPIKE-33).
+  - The LLM plugs into EPIC-6 via the `NextQuestionStrategy` trait (STORY-18) — an
+    `LlmNextQuestionStrategy` implements it, so the session loop is unchanged and
+    the deterministic strategy stays as fallback.
+  - LLM-minted questions are persisted to the AIDA bank (Q-object + `begets` edge,
+    `weight:N`) so the bank evolves (ties to EPIC-10).
+
+  ## Config
+
+  `ANTHROPIC_API_KEY` from env; model selectable, defaulting to a current Claude
+  model. Build with prompt caching per the Claude API guidance.
+
+  ## Acceptance
+
+  - The `llm` crate exposes `LLMClient` + `AnthropicClient`, unit-tested against a
+    mocked transport (no live API in tests).
+  - An `LlmNextQuestionStrategy` implements EPIC-6's `NextQuestionStrategy` and,
+    given an answer, returns a sensible next question (generated or selected).
+  - LLM-generated questions are written back to AIDA as Q-objects with `begets`
+    edges, joining the bank.
+  - The loop is unchanged (depends only on the trait); deterministic strategy
+    remains the fallback.
+status: Approved
 priority: High
 owner: ''
 feature: Uncategorized
 created_at: 2026-05-31T14:09:58.056998222Z
-modified_at: 2026-05-31T14:09:58.056998222Z
+modified_at: 2026-05-31T17:45:50.752731205Z
 req_type: Epic
 tags:
 - claude
