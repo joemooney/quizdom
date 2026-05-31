@@ -2,12 +2,12 @@ id: 019e7ea3-eb5a-7f70-8fb2-0582465d874e
 spec_id: SPEC-008
 title: aida pr ship assumes main/no-CI path failed in quizdom
 description: 'While shipping STORY-15, `aida pr ship` first attempted to create a PR against `main` even though origin HEAD is `master`, producing a GitHub GraphQL base-ref error. After manually creating PR #2 against `master`, `aida pr ship 2` failed its CI wait because quizdom has no .github/workflows. Adding `lifecycle:no-ci-wait` to STORY-15 did not alter this direct `pr ship` behavior. Workaround used: manually create PR #2 with base master, attempt `aida pr ship 2`, then merge docs-only PR via `gh pr merge`.'
-status: Draft
+status: Rejected
 priority: Medium
 owner: ''
 feature: Uncategorized
 created_at: 2026-05-31T15:25:32.378133170Z
-modified_at: 2026-05-31T17:30:21.713508481Z
+modified_at: 2026-05-31T17:46:48.445779773Z
 req_type: Task
 tags:
 - from-implementer:STORY-15
@@ -19,3 +19,8 @@ comments:
   content: 'Quizdom default branch renamed master->main (origin default + HEAD now main). This resolves the base-ref half of BUG-417 for THIS repo: aida pr ship assumes main, which now matches. The upstream AIDA bug (assume-main + CI-wait on no-workflow repos) remains valid generally — tracked as ~/ai/aida BUG-417.'
   created_at: 2026-05-31T17:30:21.713508481Z
   modified_at: 2026-05-31T17:30:21.713508481Z
+- id: 019e7f25-40fd-7f43-8046-5907466c0ee4
+  author: joe
+  content: 'Dismissed by joe 2026-05-31: Tracked upstream as ~/ai/aida BUG-417; base-ref half resolved by the master->main rename (origin default now matches aida pr ship''s assumption). No further quizdom action.'
+  created_at: 2026-05-31T17:46:48.445779773Z
+  modified_at: 2026-05-31T17:46:48.445779773Z

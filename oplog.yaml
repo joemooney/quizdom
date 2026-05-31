@@ -268,5 +268,13 @@ operations:
         edges, joining the bank.
       - The loop is unchanged (depends only on the trait); deterministic strategy
         remains the fallback.
-clock: 16
+- id: 019e7f25-4101-7073-8384-d9ad96b1e930
+  target_id: 019e7ea3-eb5a-7f70-8fb2-0582465d874e
+  author: aida
+  node_id: ''
+  lamport: 17
+  timestamp: 2026-05-31T17:46:48.449641202Z
+  kind: !SetStatus
+    status: Rejected
+clock: 17
 node_id: ''
