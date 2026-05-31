@@ -49,7 +49,7 @@ id_config:
     description: Database configuration and templates
 features: []
 next_feature_number: 1
-next_spec_number: 8
+next_spec_number: 9
 prefix_counters: {}
 relationship_definitions:
 - name: parent
