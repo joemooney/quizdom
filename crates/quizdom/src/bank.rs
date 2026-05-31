@@ -1,5 +1,6 @@
 use crate::error::{QuizdomError, Result};
 use crate::model::{answer_kind_from_tags, Question, QuestionRef, TermDefinition, TermRef};
+use crate::strategy::QualitySignal;
 use std::process::Command;
 
 pub trait QuestionBank {
@@ -215,4 +216,84 @@ fn parse_rel_list(output: &str, expected_type: &str) -> Vec<String> {
             (relationship_type == expected_type).then(|| to.to_string())
         })
         .collect()
+}
+
+// trace:STORY-66 | ai:claude
+/// Rewrite a question's tag list for a re-weighting pass.
+///
+/// `weight:N` and `quality:*` are single-valued tags, so every existing
+/// occurrence is dropped and exactly one fresh `weight:<new_weight>` and one
+/// `quality:*` (from `signal`) are appended. All other tags keep their original
+/// relative order. Pure — does not touch AIDA.
+pub fn rewrite_weight_and_quality_tags(
+    tags: &[String],
+    new_weight: u32,
+    signal: QualitySignal,
+) -> Vec<String> {
+    let mut rewritten: Vec<String> = tags
+        .iter()
+        .filter(|tag| !tag.starts_with("weight:") && !tag.starts_with("quality:"))
+        .cloned()
+        .collect();
+    rewritten.push(format!("weight:{new_weight}"));
+    rewritten.push(signal.quality_tag().to_string());
+    rewritten
+}
+
+// trace:STORY-66 | ai:claude
+#[cfg(test)]
+mod reweight_tag_tests {
+    use super::rewrite_weight_and_quality_tags;
+    use crate::strategy::QualitySignal;
+
+    #[test]
+    fn replaces_weight_and_quality_preserving_order() {
+        let tags = vec![
+            "topic:meaning".to_string(),
+            "weight:50".to_string(),
+            "answer:yes-no".to_string(),
+            "quality:neutral".to_string(),
+            "seed".to_string(),
+        ];
+        let result = rewrite_weight_and_quality_tags(&tags, 62, QualitySignal::Insightful);
+        assert_eq!(
+            result,
+            vec![
+                "topic:meaning".to_string(),
+                "answer:yes-no".to_string(),
+                "seed".to_string(),
+                "weight:62".to_string(),
+                "quality:insightful".to_string(),
+            ]
+        );
+    }
+
+    #[test]
+    fn adds_tags_when_absent() {
+        let tags = vec!["topic:free-will".to_string()];
+        let result = rewrite_weight_and_quality_tags(&tags, 30, QualitySignal::Punted);
+        assert_eq!(
+            result,
+            vec![
+                "topic:free-will".to_string(),
+                "weight:30".to_string(),
+                "quality:punted".to_string(),
+            ]
+        );
+    }
+
+    #[test]
+    fn collapses_duplicate_single_valued_tags() {
+        let tags = vec![
+            "weight:10".to_string(),
+            "weight:20".to_string(),
+            "quality:unhelpful".to_string(),
+            "quality:insightful".to_string(),
+        ];
+        let result = rewrite_weight_and_quality_tags(&tags, 0, QualitySignal::Unhelpful);
+        assert_eq!(
+            result,
+            vec!["weight:0".to_string(), "quality:unhelpful".to_string()]
+        );
+    }
 }

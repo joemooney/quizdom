@@ -445,3 +445,106 @@ pub(crate) fn parse_term_mapping(
             .to_string(),
     }))
 }
+
+// trace:STORY-66 | ai:claude
+/// A quality signal observed for a question after it was asked.
+///
+/// Drives the re-weighting engine: `Insightful` bumps a question's weight so it
+/// surfaces sooner again, `Unhelpful`/`Punted` decay it, and `Neutral` leaves
+/// it unchanged. Decoupled from the session loop — callers map their own UX
+/// into one of these variants.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum QualitySignal {
+    Insightful,
+    Neutral,
+    Unhelpful,
+    Punted,
+}
+
+/// Lower bound for a question weight.
+pub const WEIGHT_MIN: u32 = 0;
+/// Upper bound for a question weight.
+pub const WEIGHT_MAX: u32 = 100;
+
+const INSIGHTFUL_BUMP: i32 = 12;
+const UNHELPFUL_DECAY: i32 = 12;
+const PUNTED_DECAY: i32 = 20;
+
+impl QualitySignal {
+    /// The signed weight delta this signal applies before clamping.
+    pub fn weight_delta(self) -> i32 {
+        match self {
+            QualitySignal::Insightful => INSIGHTFUL_BUMP,
+            QualitySignal::Neutral => 0,
+            QualitySignal::Unhelpful => -UNHELPFUL_DECAY,
+            QualitySignal::Punted => -PUNTED_DECAY,
+        }
+    }
+
+    /// The `quality:*` tag value this signal records on the question.
+    pub fn quality_tag(self) -> &'static str {
+        match self {
+            QualitySignal::Insightful => "quality:insightful",
+            QualitySignal::Neutral => "quality:neutral",
+            QualitySignal::Unhelpful => "quality:unhelpful",
+            QualitySignal::Punted => "quality:punted",
+        }
+    }
+}
+
+/// Apply a quality signal to a current weight, clamped to
+/// `[WEIGHT_MIN, WEIGHT_MAX]`.
+///
+/// Pure and total: saturating on both ends so a decayed-to-zero or
+/// bumped-past-100 weight settles at the bound rather than wrapping.
+// trace:STORY-66 | ai:claude
+pub fn reweight(current: u32, signal: QualitySignal) -> u32 {
+    let adjusted = current as i32 + signal.weight_delta();
+    adjusted.clamp(WEIGHT_MIN as i32, WEIGHT_MAX as i32) as u32
+}
+
+// trace:STORY-66 | ai:claude
+#[cfg(test)]
+mod reweight_tests {
+    use super::{reweight, QualitySignal, WEIGHT_MAX, WEIGHT_MIN};
+
+    #[test]
+    fn insightful_bumps_weight() {
+        assert_eq!(reweight(50, QualitySignal::Insightful), 62);
+    }
+
+    #[test]
+    fn neutral_leaves_weight_unchanged() {
+        assert_eq!(reweight(50, QualitySignal::Neutral), 50);
+    }
+
+    #[test]
+    fn unhelpful_and_punted_decay_weight() {
+        assert_eq!(reweight(50, QualitySignal::Unhelpful), 38);
+        assert_eq!(reweight(50, QualitySignal::Punted), 30);
+    }
+
+    #[test]
+    fn bump_is_clamped_to_max() {
+        assert_eq!(reweight(95, QualitySignal::Insightful), WEIGHT_MAX);
+        assert_eq!(reweight(WEIGHT_MAX, QualitySignal::Insightful), WEIGHT_MAX);
+    }
+
+    #[test]
+    fn decay_is_clamped_to_min() {
+        assert_eq!(reweight(10, QualitySignal::Unhelpful), 0);
+        assert_eq!(reweight(5, QualitySignal::Punted), WEIGHT_MIN);
+        assert_eq!(reweight(WEIGHT_MIN, QualitySignal::Unhelpful), WEIGHT_MIN);
+    }
+
+    #[test]
+    fn quality_tags_cover_every_signal() {
+        assert_eq!(
+            QualitySignal::Insightful.quality_tag(),
+            "quality:insightful"
+        );
+        assert_eq!(QualitySignal::Neutral.quality_tag(), "quality:neutral");
+        assert_eq!(QualitySignal::Unhelpful.quality_tag(), "quality:unhelpful");
+        assert_eq!(QualitySignal::Punted.quality_tag(), "quality:punted");
+    }
+}
