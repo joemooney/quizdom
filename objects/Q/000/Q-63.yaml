@@ -1,0 +1,24 @@
+id: 019e7fdb-273e-7e63-94a3-b4b6d3db2a4a
+spec_id: Q-63
+agreed_id: Q-63
+prefix_override: Q
+title: If the soul just *is* the system's state, then the soul that reevaluates is the old state and the 'new soul' is only the result of an action-plus-reaction it didn't fully author. So which state does the choosing — the old one (prior cause again) or the new one (which didn't exist yet to choose itself)? What persists across the swap to be the *willer* rather than just one state being overwritten by the next?
+description: |-
+  LLM-generated quizdom question.
+
+  answer: free-text
+  origin: Q-62
+
+  Generated from origin question: You now grant the soul authors only the action, not the reaction — and you judge a path by whether its outcome is 'satisfactory' enough to keep or roll back. But that standard of 'satisfactory' is doing the real work. Does it come from the soul (in which case it's the soul's fixed nature deciding again — prior cause), or from the reaction the soul didn't author (in which case the world, not your will, sets what counts as fit)? If from neither, what is left to make the rollback a choice rather than just trying again until something random sticks?
+status: Approved
+priority: Medium
+owner: ''
+feature: Uncategorized
+created_at: 2026-05-31T21:05:29.406862964Z
+modified_at: 2026-05-31T21:05:29.406862964Z
+req_type: Functional
+tags:
+- answer:free-text
+- seed
+- topic:free-will
+- weight:50
