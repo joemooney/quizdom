@@ -1,4 +1,5 @@
 use chrono::Utc;
+use llm::{AnthropicClient, LLMClient, Message};
 use serde_json::json;
 use serde_json::Value;
 use std::collections::BTreeMap;
@@ -10,6 +11,7 @@ use std::process::Command;
 
 const DEFAULT_SEED: &str = "Q-23";
 const DEFAULT_USER: &str = "local-user";
+const SOCRATIC_SYSTEM_PROMPT: &str = "You are quizdom's Socratic belief-exploration engine. There are no correct answers. Explore and challenge the user's beliefs, probe semantic nuance, and prefer formal or shared definitions before bespoke meanings. Decide whether to select an existing follow-up question or generate one new concise follow-up question.";
 
 #[derive(Debug)]
 pub enum QuizdomError {
@@ -86,8 +88,23 @@ pub trait NextQuestionStrategy {
     fn next_question(
         &self,
         current: &Question,
+        context: &StrategyContext,
         bank: &dyn QuestionBank,
     ) -> Result<Option<Question>>;
+}
+
+#[derive(Debug, Clone, Eq, PartialEq)]
+pub struct StrategyContext {
+    pub answer: Answer,
+    pub recent_path: Vec<AnsweredQuestion>,
+}
+
+#[derive(Debug, Clone, Eq, PartialEq)]
+pub struct AnsweredQuestion {
+    pub question_ref: String,
+    pub question_text: String,
+    pub raw_answer: String,
+    pub normalized_answer: String,
 }
 
 pub struct DeterministicNextQuestionStrategy;
@@ -96,22 +113,177 @@ impl NextQuestionStrategy for DeterministicNextQuestionStrategy {
     fn next_question(
         &self,
         current: &Question,
+        _context: &StrategyContext,
         bank: &dyn QuestionBank,
     ) -> Result<Option<Question>> {
-        let mut successors = bank
-            .begets(&current.id)?
-            .into_iter()
-            .map(|question_ref| bank.load_question(&question_ref.id))
-            .collect::<Result<Vec<_>>>()?;
-
-        successors.sort_by(|left, right| {
-            right
-                .weight
-                .cmp(&left.weight)
-                .then_with(|| left.id.cmp(&right.id))
-        });
-
+        let successors = sorted_successors(current, bank)?;
         Ok(successors.into_iter().next())
+    }
+}
+
+fn successor_questions(current: &Question, bank: &dyn QuestionBank) -> Result<Vec<Question>> {
+    bank.begets(&current.id)?
+        .into_iter()
+        .map(|question_ref| bank.load_question(&question_ref.id))
+        .collect()
+}
+
+fn sorted_successors(current: &Question, bank: &dyn QuestionBank) -> Result<Vec<Question>> {
+    let mut successors = successor_questions(current, bank)?;
+    successors.sort_by(|left, right| {
+        right
+            .weight
+            .cmp(&left.weight)
+            .then_with(|| left.id.cmp(&right.id))
+    });
+    Ok(successors)
+}
+
+fn strategy_prompt(
+    current: &Question,
+    context: &StrategyContext,
+    candidates: &[Question],
+) -> String {
+    let mut prompt = format!(
+        "Current question ({id}): {title}\nAnswer mode: {mode}\nUser raw answer: {raw}\nUser normalized answer: {normalized}\n\nRecent path:\n",
+        id = current.id,
+        title = current.title,
+        mode = current.answer_kind.mode(),
+        raw = context.answer.raw,
+        normalized = context.answer.normalized,
+    );
+    for item in &context.recent_path {
+        prompt.push_str(&format!(
+            "- {}: {} => {}\n",
+            item.question_ref, item.question_text, item.raw_answer
+        ));
+    }
+    prompt.push_str("\nCandidate bank questions:\n");
+    if candidates.is_empty() {
+        prompt.push_str("(none)\n");
+    }
+    for candidate in candidates {
+        prompt.push_str(&format!(
+            "- {} [weight:{} {}]: {}\n",
+            candidate.id,
+            candidate.weight,
+            candidate.answer_kind.mode(),
+            candidate.title
+        ));
+    }
+    prompt.push_str(
+        "\nReturn only JSON. To select a bank question: {\"action\":\"select\",\"id\":\"Q-...\"}. To generate a question: {\"action\":\"generate\",\"question\":\"...\",\"answer_mode\":\"yes-no|free-text\"}.",
+    );
+    prompt
+}
+
+fn apply_llm_decision(text: &str, candidates: &[Question]) -> Result<Option<Question>> {
+    let value: Value = serde_json::from_str(text.trim())
+        .map_err(|error| QuizdomError::Parse(format!("invalid LLM strategy JSON: {error}")))?;
+    match value.get("action").and_then(Value::as_str) {
+        Some("select") => {
+            let id = value
+                .get("id")
+                .and_then(Value::as_str)
+                .ok_or_else(|| QuizdomError::Parse("LLM select decision missing id".to_string()))?;
+            Ok(candidates
+                .iter()
+                .find(|candidate| candidate.id == id)
+                .cloned())
+        }
+        Some("generate") => {
+            let title = value
+                .get("question")
+                .and_then(Value::as_str)
+                .filter(|question| !question.trim().is_empty())
+                .ok_or_else(|| {
+                    QuizdomError::Parse("LLM generate decision missing question".to_string())
+                })?;
+            let answer_kind = match value
+                .get("answer_mode")
+                .and_then(Value::as_str)
+                .unwrap_or("free-text")
+            {
+                "yes-no" => AnswerKind::YesNo,
+                "free-text" => AnswerKind::FreeText,
+                other if other.starts_with("choice[") => {
+                    answer_kind_from_tags(&[format!("answer:{other}")])
+                        .unwrap_or(AnswerKind::FreeText)
+                }
+                _ => AnswerKind::FreeText,
+            };
+            Ok(Some(Question {
+                id: "generated:llm".to_string(),
+                title: title.trim().to_string(),
+                tags: vec![
+                    "generated".to_string(),
+                    format!("answer:{}", answer_kind.mode()),
+                ],
+                answer_kind,
+                weight: 0,
+            }))
+        }
+        _ => Err(QuizdomError::Parse(
+            "LLM strategy decision must use action select or generate".to_string(),
+        )),
+    }
+}
+
+pub struct LlmNextQuestionStrategy<C> {
+    client: C,
+    deterministic: DeterministicNextQuestionStrategy,
+}
+
+impl<C> LlmNextQuestionStrategy<C> {
+    pub fn new(client: C) -> Self {
+        Self {
+            client,
+            deterministic: DeterministicNextQuestionStrategy,
+        }
+    }
+}
+
+impl<C> NextQuestionStrategy for LlmNextQuestionStrategy<C>
+where
+    C: LLMClient,
+{
+    fn next_question(
+        &self,
+        current: &Question,
+        context: &StrategyContext,
+        bank: &dyn QuestionBank,
+    ) -> Result<Option<Question>> {
+        // trace:STORY-37 | ai:codex
+        match self.llm_next_question(current, context, bank) {
+            Ok(next) => Ok(next),
+            Err(_) => self.deterministic.next_question(current, context, bank),
+        }
+    }
+}
+
+impl<C> LlmNextQuestionStrategy<C>
+where
+    C: LLMClient,
+{
+    fn llm_next_question(
+        &self,
+        current: &Question,
+        context: &StrategyContext,
+        bank: &dyn QuestionBank,
+    ) -> Result<Option<Question>> {
+        let candidates = successor_questions(current, bank).unwrap_or_default();
+        let prompt = strategy_prompt(current, context, &candidates);
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_time()
+            .build()
+            .map_err(QuizdomError::Io)?;
+        let (text, _tool_calls) = runtime
+            .block_on(
+                self.client
+                    .call(SOCRATIC_SYSTEM_PROMPT, &[Message::user(prompt)], &[]),
+            )
+            .map_err(|error| QuizdomError::Aida(error.to_string()))?;
+        apply_llm_decision(&text, &candidates)
     }
 }
 
@@ -166,6 +338,13 @@ struct CliConfig {
     proposition: Option<String>,
     agree_seed: Option<String>,
     disagree_seed: Option<String>,
+    strategy: StrategyKind,
+}
+
+#[derive(Debug, Clone, Copy, Eq, PartialEq)]
+enum StrategyKind {
+    Deterministic,
+    Llm,
 }
 
 #[derive(Debug, Clone, Copy, Eq, PartialEq)]
@@ -186,6 +365,7 @@ impl CliConfig {
         let mut proposition = None;
         let mut agree_seed = None;
         let mut disagree_seed = None;
+        let mut strategy = env_strategy();
         let mut args = args.into_iter().peekable();
 
         if matches!(args.peek().map(String::as_str), Some("session")) {
@@ -211,6 +391,7 @@ impl CliConfig {
                 "--proposition" => proposition = Some(next_arg(&mut args, "--proposition")?),
                 "--agree-seed" => agree_seed = Some(next_arg(&mut args, "--agree-seed")?),
                 "--disagree-seed" => disagree_seed = Some(next_arg(&mut args, "--disagree-seed")?),
+                "--strategy" => strategy = parse_strategy(&next_arg(&mut args, "--strategy")?)?,
                 "--help" | "-h" => return Err(QuizdomError::Usage(usage())),
                 other => {
                     return Err(QuizdomError::Usage(format!(
@@ -239,7 +420,25 @@ impl CliConfig {
             proposition,
             agree_seed,
             disagree_seed,
+            strategy,
         })
+    }
+}
+
+fn env_strategy() -> StrategyKind {
+    std::env::var("QUIZDOM_STRATEGY")
+        .ok()
+        .and_then(|value| parse_strategy(&value).ok())
+        .unwrap_or(StrategyKind::Deterministic)
+}
+
+fn parse_strategy(value: &str) -> Result<StrategyKind> {
+    match value {
+        "deterministic" => Ok(StrategyKind::Deterministic),
+        "llm" => Ok(StrategyKind::Llm),
+        other => Err(QuizdomError::Usage(format!(
+            "unknown strategy: {other}; expected deterministic or llm"
+        ))),
     }
 }
 
@@ -250,7 +449,7 @@ fn next_arg(args: &mut impl Iterator<Item = String>, name: &str) -> Result<Strin
 }
 
 fn usage() -> String {
-    "usage: quizdom [session] [start|resume|fork] [--seed Q-23] [--branch main] [--user local-user] [--session sess-id] [--log path] [--proposition text --agree-seed Q --disagree-seed Q]"
+    "usage: quizdom [session] [start|resume|fork] [--seed Q-23] [--branch main] [--strategy deterministic|llm] [--user local-user] [--session sess-id] [--log path] [--proposition text --agree-seed Q --disagree-seed Q]"
         .to_string()
 }
 
@@ -261,11 +460,26 @@ pub fn run_cli(
 ) -> Result<()> {
     let config = CliConfig::parse(args)?;
     let bank = AidaCliQuestionBank::default();
-    let strategy = DeterministicNextQuestionStrategy;
+    let deterministic = DeterministicNextQuestionStrategy;
     match config.command {
-        SessionCommand::Start => run_session(&config, &bank, &strategy, input, &mut output),
-        SessionCommand::Resume => resume_session(&config, &bank, &strategy, input, &mut output),
+        SessionCommand::Start => match build_strategy(&config) {
+            Some(strategy) => run_session(&config, &bank, strategy.as_ref(), input, &mut output),
+            None => run_session(&config, &bank, &deterministic, input, &mut output),
+        },
+        SessionCommand::Resume => match build_strategy(&config) {
+            Some(strategy) => resume_session(&config, &bank, strategy.as_ref(), input, &mut output),
+            None => resume_session(&config, &bank, &deterministic, input, &mut output),
+        },
         SessionCommand::Fork => fork_session(&config, &mut output),
+    }
+}
+
+fn build_strategy(config: &CliConfig) -> Option<Box<dyn NextQuestionStrategy>> {
+    match config.strategy {
+        StrategyKind::Deterministic => None,
+        StrategyKind::Llm => AnthropicClient::from_env().ok().map(|client| {
+            Box::new(LlmNextQuestionStrategy::new(client)) as Box<dyn NextQuestionStrategy>
+        }),
     }
 }
 
@@ -277,7 +491,7 @@ fn run_session(
     output: &mut impl Write,
 ) -> Result<()> {
     // trace:STORY-17 | ai:codex
-    run_session_from_current(config, bank, strategy, input, output, 0, true)
+    run_session_from_current(config, bank, strategy, input, output, 0, true, Vec::new())
 }
 
 fn run_session_from_current(
@@ -288,6 +502,7 @@ fn run_session_from_current(
     output: &mut impl Write,
     mut turn: u64,
     write_start_event: bool,
+    mut recent_path: Vec<AnsweredQuestion>,
 ) -> Result<()> {
     let mut input = BufReader::new(input);
     let mut logger = SessionLogger::open(&config.log_path)?;
@@ -333,8 +548,12 @@ fn run_session_from_current(
             &current,
             &answer,
         )?;
+        let context = StrategyContext {
+            answer: answer.clone(),
+            recent_path: recent_path.clone(),
+        };
 
-        match strategy.next_question(&current, bank)? {
+        match strategy.next_question(&current, &context, bank)? {
             Some(next) => {
                 logger.next_question_selected(
                     &config.session_id,
@@ -343,8 +562,14 @@ fn run_session_from_current(
                     turn,
                     &current.id,
                     &next.id,
-                    "Deterministic begets traversal: highest weight, then id.",
+                    "Configured next-question strategy selected the follow-up.",
                 )?;
+                recent_path.push(AnsweredQuestion {
+                    question_ref: current.id.clone(),
+                    question_text: current.title.clone(),
+                    raw_answer: answer.raw,
+                    normalized_answer: answer.normalized,
+                });
                 current = next;
                 turn += 1;
             }
@@ -376,13 +601,14 @@ fn resume_session(
     let replay = SessionReplay::load(&config.log_path, &config.branch_id)?;
     replay.render(output)?;
 
-    let Some(next_question_ref) = replay.next_question_ref else {
+    let Some(next_question_ref) = replay.next_question_ref.as_ref() else {
         writeln!(output, "No saved follow-up question. Session complete.")?;
         return Ok(());
     };
 
     let mut resumed_config = config.clone();
-    resumed_config.seed = next_question_ref;
+    resumed_config.seed = next_question_ref.clone();
+    let recent_path = replay.recent_path();
     run_session_from_current(
         &resumed_config,
         bank,
@@ -391,6 +617,7 @@ fn resume_session(
         output,
         replay.next_turn,
         false,
+        recent_path,
     )
 }
 
@@ -604,6 +831,18 @@ impl SessionReplay {
             writeln!(output, "answer: {}", answer.raw_answer)?;
         }
         Ok(())
+    }
+
+    fn recent_path(&self) -> Vec<AnsweredQuestion> {
+        self.answers
+            .iter()
+            .map(|answer| AnsweredQuestion {
+                question_ref: answer.question_ref.clone(),
+                question_text: answer.question_text.clone(),
+                raw_answer: answer.raw_answer.clone(),
+                normalized_answer: answer.normalized_answer.clone(),
+            })
+            .collect()
     }
 }
 
@@ -935,6 +1174,7 @@ pub fn parse_begets_rel_list(output: &str) -> Vec<QuestionRef> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use llm::{LLMError, LLMFuture, ToolDef};
     use std::collections::HashMap;
 
     #[test]
@@ -989,11 +1229,107 @@ Tags: topic:free-will, answer:choice[libertarian, compatibilist], weight:42
         .with_edges("Q-1", ["Q-3", "Q-2"]);
 
         let next = DeterministicNextQuestionStrategy
-            .next_question(&bank.load_question("Q-1").unwrap(), &bank)
+            .next_question(
+                &bank.load_question("Q-1").unwrap(),
+                &strategy_context("yes"),
+                &bank,
+            )
             .unwrap()
             .unwrap();
 
         assert_eq!(next.id, "Q-2");
+    }
+
+    #[test]
+    fn llm_strategy_selects_existing_candidate_from_model_json() {
+        let bank = FakeBank::new([
+            question("Q-1", 0, AnswerKind::YesNo),
+            question("Q-2", 40, AnswerKind::FreeText),
+            question("Q-3", 10, AnswerKind::YesNo),
+        ])
+        .with_edges("Q-1", ["Q-2", "Q-3"]);
+        let strategy =
+            LlmNextQuestionStrategy::new(MockLlm::ok(r#"{"action":"select","id":"Q-3"}"#));
+
+        let next = strategy
+            .next_question(
+                &bank.load_question("Q-1").unwrap(),
+                &strategy_context("because it matters"),
+                &bank,
+            )
+            .unwrap()
+            .unwrap();
+
+        assert_eq!(next.id, "Q-3");
+    }
+
+    #[test]
+    fn llm_strategy_returns_generated_question_in_memory() {
+        let bank = FakeBank::new([question("Q-1", 0, AnswerKind::YesNo)]);
+        let strategy = LlmNextQuestionStrategy::new(MockLlm::ok(
+            r#"{"action":"generate","question":"What do you mean by responsibility?","answer_mode":"free-text"}"#,
+        ));
+
+        let next = strategy
+            .next_question(
+                &bank.load_question("Q-1").unwrap(),
+                &strategy_context("yes"),
+                &bank,
+            )
+            .unwrap()
+            .unwrap();
+
+        assert_eq!(next.id, "generated:llm");
+        assert_eq!(next.title, "What do you mean by responsibility?");
+        assert_eq!(next.answer_kind, AnswerKind::FreeText);
+    }
+
+    #[test]
+    fn llm_strategy_falls_back_to_deterministic_on_model_error() {
+        let bank = FakeBank::new([
+            question("Q-1", 0, AnswerKind::YesNo),
+            question("Q-3", 80, AnswerKind::YesNo),
+            question("Q-2", 80, AnswerKind::YesNo),
+        ])
+        .with_edges("Q-1", ["Q-3", "Q-2"]);
+        let strategy = LlmNextQuestionStrategy::new(MockLlm::err(LLMError::Provider(
+            "provider unavailable".to_string(),
+        )));
+
+        let next = strategy
+            .next_question(
+                &bank.load_question("Q-1").unwrap(),
+                &strategy_context("yes"),
+                &bank,
+            )
+            .unwrap()
+            .unwrap();
+
+        assert_eq!(next.id, "Q-2");
+    }
+
+    #[test]
+    #[ignore = "requires ANTHROPIC_API_KEY and makes a live provider call"]
+    fn live_llm_strategy_smoke() {
+        if std::env::var("ANTHROPIC_API_KEY").is_err() {
+            return;
+        }
+        let bank = FakeBank::new([
+            question("Q-1", 0, AnswerKind::YesNo),
+            question("Q-2", 10, AnswerKind::FreeText),
+        ])
+        .with_edges("Q-1", ["Q-2"]);
+        let strategy = LlmNextQuestionStrategy::new(AnthropicClient::from_env().unwrap());
+
+        let next = strategy
+            .next_question(
+                &bank.load_question("Q-1").unwrap(),
+                &strategy_context("yes"),
+                &bank,
+            )
+            .unwrap();
+
+        assert!(next.is_some());
     }
 
     #[test]
@@ -1096,6 +1432,7 @@ Tags: topic:free-will, answer:choice[libertarian, compatibilist], weight:42
             proposition: None,
             agree_seed: None,
             disagree_seed: None,
+            strategy: StrategyKind::Deterministic,
         };
         let mut start_output = Vec::new();
 
@@ -1156,6 +1493,7 @@ Tags: topic:free-will, answer:choice[libertarian, compatibilist], weight:42
             proposition: Some("Free will requires alternatives".to_string()),
             agree_seed: Some("Q-agree".to_string()),
             disagree_seed: Some("Q-disagree".to_string()),
+            strategy: StrategyKind::Deterministic,
         };
         let mut fork_output = Vec::new();
         fork_session(&fork_config, &mut fork_output).unwrap();
@@ -1210,6 +1548,44 @@ Tags: topic:free-will, answer:choice[libertarian, compatibilist], weight:42
             tags: vec![format!("weight:{weight}")],
             answer_kind,
             weight,
+        }
+    }
+
+    fn strategy_context(raw: &str) -> StrategyContext {
+        StrategyContext {
+            answer: Answer {
+                raw: raw.to_string(),
+                normalized: raw.to_string(),
+            },
+            recent_path: Vec::new(),
+        }
+    }
+
+    #[derive(Clone)]
+    struct MockLlm {
+        result: std::result::Result<(String, Vec<llm::ToolCall>), LLMError>,
+    }
+
+    impl MockLlm {
+        fn ok(text: &str) -> Self {
+            Self {
+                result: Ok((text.to_string(), Vec::new())),
+            }
+        }
+
+        fn err(error: LLMError) -> Self {
+            Self { result: Err(error) }
+        }
+    }
+
+    impl LLMClient for MockLlm {
+        fn call<'a>(
+            &'a self,
+            _system: &'a str,
+            _messages: &'a [Message],
+            _tools: &'a [ToolDef],
+        ) -> LLMFuture<'a> {
+            Box::pin(std::future::ready(self.result.clone()))
         }
     }
 

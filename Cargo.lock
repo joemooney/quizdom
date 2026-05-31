@@ -593,7 +593,9 @@ name = "quizdom"
 version = "0.1.0"
 dependencies = [
  "chrono",
+ "llm",
  "serde_json",
+ "tokio",
 ]
 
 [[package]]
