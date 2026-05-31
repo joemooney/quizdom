@@ -1,7 +1,9 @@
 use chrono::Utc;
 use serde_json::json;
+use serde_json::Value;
+use std::collections::BTreeMap;
 use std::fmt;
-use std::fs::{self, OpenOptions};
+use std::fs::{self, File, OpenOptions};
 use std::io::{self, BufRead, BufReader, Read, Write};
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -155,14 +157,22 @@ impl QuestionBank for AidaCliQuestionBank {
 
 #[derive(Debug, Clone)]
 struct CliConfig {
+    command: SessionCommand,
     seed: String,
     user_id: String,
     session_id: String,
     log_path: PathBuf,
 }
 
+#[derive(Debug, Clone, Copy, Eq, PartialEq)]
+enum SessionCommand {
+    Start,
+    Resume,
+}
+
 impl CliConfig {
     fn parse(args: impl IntoIterator<Item = String>) -> Result<Self> {
+        let mut command = SessionCommand::Start;
         let mut seed = DEFAULT_SEED.to_string();
         let mut user_id = DEFAULT_USER.to_string();
         let mut session_id = format!("sess-{}", Utc::now().timestamp());
@@ -170,6 +180,12 @@ impl CliConfig {
         let mut args = args.into_iter().peekable();
 
         if matches!(args.peek().map(String::as_str), Some("session")) {
+            args.next();
+        }
+        if matches!(args.peek().map(String::as_str), Some("start")) {
+            args.next();
+        } else if matches!(args.peek().map(String::as_str), Some("resume")) {
+            command = SessionCommand::Resume;
             args.next();
         }
 
@@ -198,6 +214,7 @@ impl CliConfig {
         });
 
         Ok(Self {
+            command,
             seed,
             user_id,
             session_id,
@@ -213,7 +230,7 @@ fn next_arg(args: &mut impl Iterator<Item = String>, name: &str) -> Result<Strin
 }
 
 fn usage() -> String {
-    "usage: quizdom [session] [--seed Q-23] [--user local-user] [--session sess-id] [--log path]"
+    "usage: quizdom [session] [start|resume] [--seed Q-23] [--user local-user] [--session sess-id] [--log path]"
         .to_string()
 }
 
@@ -225,7 +242,10 @@ pub fn run_cli(
     let config = CliConfig::parse(args)?;
     let bank = AidaCliQuestionBank::default();
     let strategy = DeterministicNextQuestionStrategy;
-    run_session(&config, &bank, &strategy, input, &mut output)
+    match config.command {
+        SessionCommand::Start => run_session(&config, &bank, &strategy, input, &mut output),
+        SessionCommand::Resume => resume_session(&config, &bank, &strategy, input, &mut output),
+    }
 }
 
 fn run_session(
@@ -236,17 +256,42 @@ fn run_session(
     output: &mut impl Write,
 ) -> Result<()> {
     // trace:STORY-17 | ai:codex
+    run_session_from_current(config, bank, strategy, input, output, 0, true)
+}
+
+fn run_session_from_current(
+    config: &CliConfig,
+    bank: &dyn QuestionBank,
+    strategy: &dyn NextQuestionStrategy,
+    input: impl Read,
+    output: &mut impl Write,
+    mut turn: u64,
+    write_start_event: bool,
+) -> Result<()> {
     let mut input = BufReader::new(input);
     let mut logger = SessionLogger::open(&config.log_path)?;
     let mut current = bank.load_question(&config.seed)?;
-    let mut turn = 0_u64;
 
-    logger.session_started(&config.session_id, &config.user_id, &current.id)?;
+    if write_start_event {
+        logger.session_started(&config.session_id, &config.user_id, &current.id)?;
+    }
 
     loop {
         logger.question_presented(&config.session_id, &config.user_id, turn, &current)?;
         render_question(&current, output)?;
-        let answer = read_valid_answer(&current.answer_kind, &mut input, output)?;
+        let answer = match read_answer_or_end(&current.answer_kind, &mut input, output)? {
+            AnswerInput::Answer(answer) => answer,
+            AnswerInput::End => {
+                writeln!(output, "Session ended.")?;
+                logger.session_ended(
+                    &config.session_id,
+                    &config.user_id,
+                    turn,
+                    "User ended session.",
+                )?;
+                break;
+            }
+        };
         logger.answer_recorded(&config.session_id, &config.user_id, turn, &current, &answer)?;
 
         match strategy.next_question(&current, bank)? {
@@ -278,37 +323,78 @@ fn run_session(
     Ok(())
 }
 
+fn resume_session(
+    config: &CliConfig,
+    bank: &dyn QuestionBank,
+    strategy: &dyn NextQuestionStrategy,
+    input: impl Read,
+    output: &mut impl Write,
+) -> Result<()> {
+    // trace:STORY-20 | ai:codex
+    let replay = SessionReplay::load(&config.log_path)?;
+    replay.render(output)?;
+
+    let Some(next_question_ref) = replay.next_question_ref else {
+        writeln!(output, "No saved follow-up question. Session complete.")?;
+        return Ok(());
+    };
+
+    let mut resumed_config = config.clone();
+    resumed_config.seed = next_question_ref;
+    run_session_from_current(
+        &resumed_config,
+        bank,
+        strategy,
+        input,
+        output,
+        replay.next_turn,
+        false,
+    )
+}
+
 fn render_question(question: &Question, output: &mut impl Write) -> Result<()> {
     writeln!(output, "\n{}", question.title)?;
     match &question.answer_kind {
-        AnswerKind::YesNo => writeln!(output, "Answer yes or no.")?,
+        AnswerKind::YesNo => writeln!(output, "Answer yes or no, or /end to end this session.")?,
         AnswerKind::Choice(options) => {
             for (index, option) in options.iter().enumerate() {
                 writeln!(output, "{}. {}", index + 1, option)?;
             }
+            writeln!(output, "Enter a choice, or /end to end this session.")?;
         }
-        AnswerKind::FreeText => writeln!(output, "Answer in your own words.")?,
+        AnswerKind::FreeText => writeln!(
+            output,
+            "Answer in your own words, or /end to end this session."
+        )?,
     }
     write!(output, "> ")?;
     output.flush()?;
     Ok(())
 }
 
-fn read_valid_answer(
+enum AnswerInput {
+    Answer(Answer),
+    End,
+}
+
+fn read_answer_or_end(
     kind: &AnswerKind,
     input: &mut impl BufRead,
     output: &mut impl Write,
-) -> Result<Answer> {
+) -> Result<AnswerInput> {
     loop {
         let mut raw = String::new();
         if input.read_line(&mut raw)? == 0 {
             return Err(QuizdomError::Parse("no answer provided".to_string()));
         }
         let raw = raw.trim().to_string();
-        if let Some(normalized) = normalize_answer(kind, &raw) {
-            return Ok(Answer { raw, normalized });
+        if raw == "/end" {
+            return Ok(AnswerInput::End);
         }
-        write!(output, "Please enter a valid answer: ")?;
+        if let Some(normalized) = normalize_answer(kind, &raw) {
+            return Ok(AnswerInput::Answer(Answer { raw, normalized }));
+        }
+        write!(output, "Please enter a valid answer or /end: ")?;
         output.flush()?;
     }
 }
@@ -339,16 +425,119 @@ struct SessionLogger {
     next_event: u64,
 }
 
+#[derive(Debug, Clone, Eq, PartialEq)]
+struct ReplayedAnswer {
+    turn: u64,
+    question_ref: String,
+    question_text: String,
+    raw_answer: String,
+    normalized_answer: String,
+}
+
+#[derive(Debug, Clone, Eq, PartialEq)]
+struct SessionReplay {
+    answers: Vec<ReplayedAnswer>,
+    next_question_ref: Option<String>,
+    next_turn: u64,
+}
+
+impl SessionReplay {
+    fn load(path: &Path) -> Result<Self> {
+        let file = File::open(path)?;
+        Self::from_reader(file)
+    }
+
+    fn from_reader(reader: impl Read) -> Result<Self> {
+        let reader = BufReader::new(reader);
+        let mut questions = BTreeMap::new();
+        let mut answers = Vec::new();
+        let mut next_question_ref = None;
+
+        for line in reader.lines() {
+            let line = line?;
+            if line.trim().is_empty() {
+                continue;
+            }
+            let value: Value = serde_json::from_str(&line)
+                .map_err(|error| QuizdomError::Parse(error.to_string()))?;
+            match value.get("event_type").and_then(Value::as_str) {
+                Some("question_presented") => {
+                    if let (Some(turn), Some(question_text)) = (
+                        value.get("turn").and_then(Value::as_u64),
+                        value.get("question_text").and_then(Value::as_str),
+                    ) {
+                        questions.insert(turn, question_text.to_string());
+                    }
+                }
+                Some("answer_recorded") => {
+                    let turn = json_u64(&value, "turn")?;
+                    let question_ref = json_string(&value, "question_ref")?;
+                    if next_question_ref.as_deref() == Some(question_ref.as_str()) {
+                        next_question_ref = None;
+                    }
+                    let question_text = questions.get(&turn).cloned().unwrap_or_default();
+                    answers.push(ReplayedAnswer {
+                        turn,
+                        question_ref,
+                        question_text,
+                        raw_answer: json_string(&value, "raw_answer")?,
+                        normalized_answer: json_string(&value, "normalized_answer")?,
+                    });
+                }
+                Some("next_question_selected") => {
+                    next_question_ref = Some(json_string(&value, "selected_next_question_ref")?);
+                }
+                Some("session_ended") => {}
+                _ => {}
+            }
+        }
+
+        let next_turn = answers.last().map(|answer| answer.turn + 1).unwrap_or(0);
+
+        Ok(Self {
+            answers,
+            next_question_ref,
+            next_turn,
+        })
+    }
+
+    fn render(&self, output: &mut impl Write) -> Result<()> {
+        writeln!(output, "Replaying previous session path:")?;
+        if self.answers.is_empty() {
+            writeln!(output, "(no answered questions yet)")?;
+        }
+        for answer in &self.answers {
+            writeln!(output, "\n[turn {}] {}", answer.turn, answer.question_text)?;
+            writeln!(output, "question_ref: {}", answer.question_ref)?;
+            writeln!(output, "answer: {}", answer.raw_answer)?;
+        }
+        Ok(())
+    }
+}
+
+fn json_string(value: &Value, key: &str) -> Result<String> {
+    value
+        .get(key)
+        .and_then(Value::as_str)
+        .map(str::to_string)
+        .ok_or_else(|| QuizdomError::Parse(format!("session log event missing {key}")))
+}
+
+fn json_u64(value: &Value, key: &str) -> Result<u64> {
+    value
+        .get(key)
+        .and_then(Value::as_u64)
+        .ok_or_else(|| QuizdomError::Parse(format!("session log event missing {key}")))
+}
+
 impl SessionLogger {
     fn open(path: &Path) -> Result<Self> {
         if let Some(parent) = path.parent() {
             fs::create_dir_all(parent)?;
         }
+        let next_event = next_event_number(path)?;
         let file = OpenOptions::new().create(true).append(true).open(path)?;
-        Ok(Self {
-            file,
-            next_event: 1,
-        })
+        Ok(Self { file, next_event })
     }
 
     fn session_started(
@@ -467,6 +656,23 @@ impl SessionLogger {
         self.file.flush()?;
         Ok(())
     }
+}
+
+fn next_event_number(path: &Path) -> Result<u64> {
+    if !path.exists() {
+        return Ok(1);
+    }
+
+    let file = File::open(path)?;
+    let count = BufReader::new(file)
+        .lines()
+        .filter(|line| {
+            line.as_ref()
+                .map(|line| !line.trim().is_empty())
+                .unwrap_or(false)
+        })
+        .count();
+    Ok(count as u64 + 1)
 }
 
 pub fn parse_question_show(output: &str) -> Result<Question> {
@@ -660,12 +866,12 @@ Tags: topic:free-will, answer:choice[libertarian, compatibilist], weight:42
     #[test]
     fn renders_all_question_kinds() {
         let cases = [
-            (AnswerKind::YesNo, "Answer yes or no."),
+            (AnswerKind::YesNo, "Answer yes or no, or /end"),
             (
                 AnswerKind::Choice(vec!["libertarian".to_string(), "compatibilist".to_string()]),
                 "2. compatibilist",
             ),
-            (AnswerKind::FreeText, "Answer in your own words."),
+            (AnswerKind::FreeText, "Answer in your own words, or /end"),
         ];
 
         for (answer_kind, expected) in cases {
@@ -674,6 +880,102 @@ Tags: topic:free-will, answer:choice[libertarian, compatibilist], weight:42
             let output = String::from_utf8(output).unwrap();
             assert!(output.contains(expected), "{output}");
         }
+    }
+
+    #[test]
+    fn resume_replays_exact_answered_path_and_continues_from_saved_next_question() {
+        let log = [
+            r#"{"event_id":"evt-000001","event_type":"session_started","occurred_at":"2026-05-31T17:00:00Z","session_id":"sess-test","user_id":"user","seed_question_ref":"Q-1"}"#,
+            r#"{"event_id":"evt-000002","event_type":"question_presented","occurred_at":"2026-05-31T17:00:01Z","session_id":"sess-test","user_id":"user","turn":0,"question_ref":"Q-1","question_text":"First question?","answer_mode":"yes-no"}"#,
+            r#"{"event_id":"evt-000003","event_type":"answer_recorded","occurred_at":"2026-05-31T17:00:02Z","session_id":"sess-test","user_id":"user","turn":0,"question_ref":"Q-1","answer_mode":"yes-no","raw_answer":"yes","normalized_answer":"yes"}"#,
+            r#"{"event_id":"evt-000004","event_type":"next_question_selected","occurred_at":"2026-05-31T17:00:03Z","session_id":"sess-test","user_id":"user","turn":0,"question_ref":"Q-1","selected_next_question_ref":"Q-2","selection_reason":"test"}"#,
+            r#"{"event_id":"evt-000005","event_type":"session_ended","occurred_at":"2026-05-31T17:00:04Z","session_id":"sess-test","user_id":"user","turn":0,"summary":"User ended session."}"#,
+        ]
+        .join("\n");
+        let replay = SessionReplay::from_reader(log.as_bytes()).unwrap();
+        let mut output = Vec::new();
+
+        replay.render(&mut output).unwrap();
+
+        let output = String::from_utf8(output).unwrap();
+        assert!(output.contains("First question?"));
+        assert!(output.contains("answer: yes"));
+        assert_eq!(replay.next_question_ref, Some("Q-2".to_string()));
+        assert_eq!(replay.next_turn, 1);
+    }
+
+    #[test]
+    fn answered_saved_next_question_clears_resume_target() {
+        let log = [
+            r#"{"event_id":"evt-000001","event_type":"question_presented","occurred_at":"2026-05-31T17:00:01Z","session_id":"sess-test","user_id":"user","turn":0,"question_ref":"Q-1","question_text":"First question?","answer_mode":"yes-no"}"#,
+            r#"{"event_id":"evt-000002","event_type":"answer_recorded","occurred_at":"2026-05-31T17:00:02Z","session_id":"sess-test","user_id":"user","turn":0,"question_ref":"Q-1","answer_mode":"yes-no","raw_answer":"yes","normalized_answer":"yes"}"#,
+            r#"{"event_id":"evt-000003","event_type":"next_question_selected","occurred_at":"2026-05-31T17:00:03Z","session_id":"sess-test","user_id":"user","turn":0,"question_ref":"Q-1","selected_next_question_ref":"Q-2","selection_reason":"test"}"#,
+            r#"{"event_id":"evt-000004","event_type":"question_presented","occurred_at":"2026-05-31T17:00:04Z","session_id":"sess-test","user_id":"user","turn":1,"question_ref":"Q-2","question_text":"Second question?","answer_mode":"yes-no"}"#,
+            r#"{"event_id":"evt-000005","event_type":"answer_recorded","occurred_at":"2026-05-31T17:00:05Z","session_id":"sess-test","user_id":"user","turn":1,"question_ref":"Q-2","answer_mode":"yes-no","raw_answer":"no","normalized_answer":"no"}"#,
+        ]
+        .join("\n");
+
+        let replay = SessionReplay::from_reader(log.as_bytes()).unwrap();
+
+        assert_eq!(replay.next_question_ref, None);
+        assert_eq!(replay.next_turn, 2);
+    }
+
+    #[test]
+    fn start_end_resume_round_trip_replays_path_and_finishes() {
+        let path = std::env::temp_dir().join(format!(
+            "quizdom-story-20-test-{}.jsonl",
+            std::process::id()
+        ));
+        let _ = fs::remove_file(&path);
+        let bank = FakeBank::new([
+            question("Q-1", 10, AnswerKind::YesNo),
+            question("Q-2", 5, AnswerKind::YesNo),
+        ])
+        .with_edges("Q-1", ["Q-2"]);
+        let strategy = DeterministicNextQuestionStrategy;
+        let config = CliConfig {
+            command: SessionCommand::Start,
+            seed: "Q-1".to_string(),
+            user_id: "test-user".to_string(),
+            session_id: "sess-test".to_string(),
+            log_path: path.clone(),
+        };
+        let mut start_output = Vec::new();
+
+        run_session(
+            &config,
+            &bank,
+            &strategy,
+            "yes\n/end\n".as_bytes(),
+            &mut start_output,
+        )
+        .unwrap();
+
+        let mut resume_output = Vec::new();
+        let mut resume_config = config.clone();
+        resume_config.command = SessionCommand::Resume;
+        resume_session(
+            &resume_config,
+            &bank,
+            &strategy,
+            "no\n".as_bytes(),
+            &mut resume_output,
+        )
+        .unwrap();
+
+        let resume_output = String::from_utf8(resume_output).unwrap();
+        assert!(resume_output.contains("Replaying previous session path:"));
+        assert!(resume_output.contains("[turn 0] Q-1"));
+        assert!(resume_output.contains("answer: yes"));
+        assert!(resume_output.contains("Q-2"));
+
+        let log = fs::read_to_string(&path).unwrap();
+        assert!(log.contains(r#""question_ref":"Q-1""#));
+        assert!(log.contains(r#""question_ref":"Q-2""#));
+        assert!(log.contains(r#""normalized_answer":"no""#));
+
+        let _ = fs::remove_file(path);
     }
 
     fn question(id: &str, weight: u32, answer_kind: AnswerKind) -> Question {
