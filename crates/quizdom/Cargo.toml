@@ -6,5 +6,6 @@ edition = "2021"
 [dependencies]
 chrono = { version = "0.4", default-features = false, features = ["clock"] }
 llm = { path = "../llm" }
+rustyline = "15"
 serde_json = "1"
 tokio = { version = "1", features = ["rt", "time"] }

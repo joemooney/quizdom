@@ -1,11 +1,13 @@
 use chrono::Utc;
 use llm::{AnthropicClient, ClaudeCliClient, LLMClient, Message};
+use rustyline::{Config as RustylineConfig, DefaultEditor, EditMode};
 use serde_json::json;
 use serde_json::Value;
 use std::collections::BTreeMap;
+use std::env;
 use std::fmt;
 use std::fs::{self, File, OpenOptions};
-use std::io::{self, BufRead, BufReader, Read, Write};
+use std::io::{self, BufRead, BufReader, IsTerminal, Read, Write};
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
 
@@ -1049,6 +1051,7 @@ fn run_session_from_current(
     mut recent_path: Vec<AnsweredQuestion>,
 ) -> Result<()> {
     let mut input = BufReader::new(input);
+    let mut free_text_input = FreeTextInput::from_stdin()?;
     let mut logger = SessionLogger::open(&config.log_path)?;
     let mut current = bank.load_question(&config.seed)?;
 
@@ -1071,9 +1074,21 @@ fn run_session_from_current(
         )?;
         let probed_terms = load_probed_terms(bank, &current);
         render_term_definitions(&probed_terms, output)?;
-        prompt_for_term_meaning(&probed_terms, strategy, term_persister, &mut input, output)?;
+        prompt_for_term_meaning(
+            &probed_terms,
+            strategy,
+            term_persister,
+            &mut input,
+            &mut free_text_input,
+            output,
+        )?;
         render_question(&current, output)?;
-        let answer = match read_answer_or_end(&current.answer_kind, &mut input, output)? {
+        let answer = match read_answer_or_end(
+            &current.answer_kind,
+            &mut input,
+            &mut free_text_input,
+            output,
+        )? {
             AnswerInput::Answer(answer) => answer,
             AnswerInput::End => {
                 writeln!(output, "Session ended.")?;
@@ -1147,6 +1162,7 @@ fn prompt_for_term_meaning(
     strategy: &dyn NextQuestionStrategy,
     term_persister: &dyn UserSpecificTermPersister,
     input: &mut impl BufRead,
+    free_text_input: &mut FreeTextInput,
     output: &mut impl Write,
 ) -> Result<()> {
     if definitions.len() < 2 {
@@ -1155,12 +1171,9 @@ fn prompt_for_term_meaning(
     // trace:STORY-42 | ai:codex
     let term_label = term_label(definitions);
     writeln!(output, "\nWhat do you mean by {term_label}?")?;
-    write!(output, "> ")?;
-    output.flush()?;
-    let mut raw = String::new();
-    if input.read_line(&mut raw)? == 0 {
+    let Some(raw) = free_text_input.read_line(input, output, "> ")? else {
         return Ok(());
-    }
+    };
     let meaning = raw.trim();
     if meaning.is_empty() || meaning == "/end" {
         return Ok(());
@@ -1181,12 +1194,9 @@ fn prompt_for_term_meaning(
             return Ok(());
         }
         writeln!(output, "What would make the shared definition fit better?")?;
-        write!(output, "> ")?;
-        output.flush()?;
-        let mut refinement = String::new();
-        if input.read_line(&mut refinement)? == 0 {
+        let Some(refinement) = free_text_input.read_line(input, output, "> ")? else {
             return Ok(());
-        }
+        };
         let refinement = refinement.trim();
         if refinement.is_empty() || refinement == "/end" {
             return Ok(());
@@ -1413,17 +1423,104 @@ enum AnswerInput {
     End,
 }
 
+enum FreeTextInput {
+    Plain,
+    Interactive(Box<DefaultEditor>),
+}
+
+impl FreeTextInput {
+    fn from_stdin() -> Result<Self> {
+        if io::stdin().is_terminal() {
+            Self::interactive()
+        } else {
+            Ok(Self::Plain)
+        }
+    }
+
+    fn interactive() -> Result<Self> {
+        // trace:STORY-55 | ai:codex
+        let config = RustylineConfig::builder()
+            .edit_mode(editor_edit_mode())
+            .build();
+        let editor = DefaultEditor::with_config(config)
+            .map_err(|error| QuizdomError::Io(io::Error::new(io::ErrorKind::Other, error)))?;
+        Ok(Self::Interactive(Box::new(editor)))
+    }
+
+    fn read_line(
+        &mut self,
+        input: &mut impl BufRead,
+        output: &mut impl Write,
+        prompt: &str,
+    ) -> Result<Option<String>> {
+        match self {
+            Self::Plain => {
+                write!(output, "{prompt}")?;
+                output.flush()?;
+                let mut raw = String::new();
+                if input.read_line(&mut raw)? == 0 {
+                    Ok(None)
+                } else {
+                    Ok(Some(raw.trim().to_string()))
+                }
+            }
+            Self::Interactive(editor) => match editor.readline(prompt) {
+                Ok(line) => {
+                    if !line.trim().is_empty() {
+                        let _ = editor.add_history_entry(line.as_str());
+                    }
+                    Ok(Some(line.trim().to_string()))
+                }
+                Err(rustyline::error::ReadlineError::Interrupted)
+                | Err(rustyline::error::ReadlineError::Eof) => Ok(None),
+                Err(error) => Err(QuizdomError::Io(io::Error::new(
+                    io::ErrorKind::Other,
+                    error,
+                ))),
+            },
+        }
+    }
+}
+
+fn editor_edit_mode() -> EditMode {
+    let editor = env::var("EDITOR")
+        .ok()
+        .or_else(|| env::var("VISUAL").ok())
+        .unwrap_or_default();
+    edit_mode_from_editor(&editor)
+}
+
+fn edit_mode_from_editor(editor: &str) -> EditMode {
+    let editor_name = Path::new(&editor)
+        .file_name()
+        .and_then(|name| name.to_str())
+        .unwrap_or(editor)
+        .to_ascii_lowercase();
+    match editor_name.as_str() {
+        "vi" | "vim" | "nvim" => EditMode::Vi,
+        _ => EditMode::Emacs,
+    }
+}
+
 fn read_answer_or_end(
     kind: &AnswerKind,
     input: &mut impl BufRead,
+    free_text_input: &mut FreeTextInput,
     output: &mut impl Write,
 ) -> Result<AnswerInput> {
     loop {
-        let mut raw = String::new();
-        if input.read_line(&mut raw)? == 0 {
-            return Err(QuizdomError::Parse("no answer provided".to_string()));
-        }
-        let raw = raw.trim().to_string();
+        let raw = match kind {
+            AnswerKind::FreeText => free_text_input
+                .read_line(input, output, "")?
+                .ok_or_else(|| QuizdomError::Parse("no answer provided".to_string()))?,
+            _ => {
+                let mut raw = String::new();
+                if input.read_line(&mut raw)? == 0 {
+                    return Err(QuizdomError::Parse("no answer provided".to_string()));
+                }
+                raw.trim().to_string()
+            }
+        };
         if raw == "/end" {
             return Ok(AnswerInput::End);
         }
@@ -2604,6 +2701,18 @@ scope: formal definition.
             normalize_answer(&AnswerKind::FreeText, "  because  "),
             Some("because".to_string())
         );
+    }
+
+    #[test]
+    fn editor_mode_uses_vi_for_vi_family_editors() {
+        assert_eq!(edit_mode_from_editor("nvim"), EditMode::Vi);
+        assert_eq!(edit_mode_from_editor("/usr/bin/vim"), EditMode::Vi);
+    }
+
+    #[test]
+    fn editor_mode_defaults_to_emacs_for_other_editors() {
+        assert_eq!(edit_mode_from_editor("code"), EditMode::Emacs);
+        assert_eq!(edit_mode_from_editor(""), EditMode::Emacs);
     }
 
     #[test]
