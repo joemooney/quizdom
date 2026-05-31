@@ -1,0 +1,24 @@
+id: 019e7e91-65c2-7661-b790-ef3f875086eb
+spec_id: Q-26
+agreed_id: Q-26
+prefix_override: Q
+title: Do you mean the ability to have chosen otherwise in exactly the same conditions?
+description: |
+  answer: yes-no
+
+  Use: follow-up that disambiguates a "yes" to the seed question toward the
+  libertarian sense (alternative possibilities under fixed prior conditions).
+  trace:STORY-16 | ai:claude
+status: Approved
+priority: High
+owner: ''
+feature: Uncategorized
+created_at: 2026-05-31T15:05:18.530288254Z
+modified_at: 2026-05-31T15:05:18.530288254Z
+req_type: Functional
+tags:
+- answer:yes-no
+- quality:neutral
+- seed
+- topic:free-will
+- weight:65
