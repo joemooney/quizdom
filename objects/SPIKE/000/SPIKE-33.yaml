@@ -8,7 +8,7 @@ priority: High
 owner: ''
 feature: Uncategorized
 created_at: 2026-05-31T15:40:10.028939190Z
-modified_at: 2026-05-31T15:40:10.028939190Z
+modified_at: 2026-05-31T15:42:56.946340408Z
 req_type: Spike
 tags:
 - ai-abstraction
@@ -16,3 +16,9 @@ tags:
 - reuse
 - rust
 - spike
+comments:
+- id: 019e7eb3-dbb2-71d2-98c4-d2b9dbfa8dd8
+  author: joe
+  content: 'Investigation complete (Explore). ~/ai/aida-chat = Leptos+Axum web UI, single crate. AI layer = raw reqwest to Anthropic /v1/messages (no SDK crate) + a Claude-CLI subprocess backend, unified behind an AgentEvent stream (TextDelta/ToolCall/Done/Error), custom SSE parser, tool-use loop (max_tool_iterations). Well-structured BUT coupled to aida-chat''s web UI + per-session SessionStore + SSE transport + aida-specific tools -> NOT cleanly extractable as-is. RECOMMENDATION (option d): build a minimal provider-agnostic ''llm'' crate in quizdom FIRST: LLMClient::call(system, &[Message], &[ToolDef]) -> (text, Vec<ToolCall>); Message/ToolDef/ToolCall types; AnthropicClient over reqwest (retries + stream aggregation); ClaudeCliClient optional later. NO AIDA tools/sessions/SSE. aida-chat adopts it later; both converge. Refs: src/server/backends/{anthropic,claude_cli}.rs, sessions.rs, config.rs.'
+  created_at: 2026-05-31T15:42:56.946340408Z
+  modified_at: 2026-05-31T15:42:56.946340408Z
