@@ -17,7 +17,7 @@ priority: High
 owner: ''
 feature: Uncategorized
 created_at: 2026-05-31T20:08:38.433839675Z
-modified_at: 2026-05-31T20:11:03.913530653Z
+modified_at: 2026-05-31T20:16:10.414911905Z
 req_type: Story
 tags:
 - bug
@@ -30,3 +30,9 @@ relationships:
 - rel_type: Child
   target_id: 019e7f9f-f1bf-7ab2-b508-291f0849be84
   created_at: 2026-05-31T20:08:40.491967104Z
+comments:
+- id: 019e7fae-00ae-7760-b2df-ace6d8b010be
+  author: joe
+  content: 'Implemented interactive free-text line editing with rustyline for TTY stdin only; non-TTY/test/scripted input keeps the existing generic read_line path. Edit mode follows EDITOR then VISUAL, selecting Vi for vi/vim/nvim and Emacs otherwise. Applied to free-text answers and semantic meaning/refinement prompts. Shipped in PR #14.'
+  created_at: 2026-05-31T20:16:10.414911905Z
+  modified_at: 2026-05-31T20:16:10.414911905Z
