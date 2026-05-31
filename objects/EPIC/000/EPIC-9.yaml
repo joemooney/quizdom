@@ -38,12 +38,12 @@ description: |-
     detected contradictions without touching the live loop.
   - (Later stories) contradictions surface as in-session questions and resolutions
     persist to the graph.
-status: InProgress
+status: Completed
 priority: Medium
 owner: ''
 feature: Uncategorized
 created_at: 2026-05-31T14:10:04.806294266Z
-modified_at: 2026-05-31T20:57:45.896753586Z
+modified_at: 2026-05-31T22:29:07.211409710Z
 req_type: Epic
 tags:
 - contradiction
