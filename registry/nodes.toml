@@ -1,0 +1,7 @@
+[[nodes]]
+id = "JM"
+user_id = 1
+hostname = "imac"
+email = "joe.mooney@gmail.com"
+clone_path = "/home/joe/ai/quizdom"
+registered = "2026-05-31T01:59:52.840875423Z"
