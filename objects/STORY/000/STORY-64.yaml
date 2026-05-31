@@ -8,7 +8,7 @@ priority: High
 owner: ''
 feature: Uncategorized
 created_at: 2026-05-31T21:10:08.679398558Z
-modified_at: 2026-05-31T21:23:48.077581546Z
+modified_at: 2026-05-31T21:26:53.548893460Z
 req_type: Story
 tags:
 - input
@@ -20,3 +20,9 @@ relationships:
 - rel_type: Child
   target_id: 019e7f9f-f1bf-7ab2-b508-291f0849be84
   created_at: 2026-05-31T21:10:11.116670869Z
+comments:
+- id: 019e7fee-bf6c-7c41-9589-6f99af19ae14
+  author: joe
+  content: 'Implemented discoverable quit input: Q/q now maps to the existing /end path, yes/no and choice prompts show [Q] Quit, and free-text prompts mention Q/Quit. Added focused tests for quit command recognition and prompt rendering. Verified with cargo fmt --all --check, cargo test --workspace, git diff --check, and a piped q CLI smoke confirming the session ends cleanly. Shipped in PR #21.'
+  created_at: 2026-05-31T21:26:53.548893460Z
+  modified_at: 2026-05-31T21:26:53.548893460Z
