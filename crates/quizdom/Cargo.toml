@@ -1,0 +1,9 @@
+[package]
+name = "quizdom"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+chrono = { version = "0.4", default-features = false, features = ["clock"] }
+serde_json = "1"
+

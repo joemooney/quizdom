@@ -28,3 +28,7 @@
 # reminders stay private. See the scaffolded file's own header
 # for usage guidance.
 CLAUDE.local.md
+
+# Rust build output and local quizdom session logs.
+/target/
+/data/
