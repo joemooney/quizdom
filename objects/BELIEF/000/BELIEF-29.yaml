@@ -1,0 +1,23 @@
+id: 019e7e91-87a9-74d0-95ba-c129569c0bbd
+spec_id: BELIEF-29
+agreed_id: BELIEF-29
+prefix_override: BELIEF
+title: Free will is compatible with causal determinism
+description: |
+  provenance: seed proposition (compatibilist position), hand-authored — not promoted
+  from a user session log.
+
+  interpretation: An agent can act freely even in a fully determined world, provided
+  the action flows from the agent's own uncoerced deliberation. Read under the
+  compatibilist term definition. trace:STORY-16 | ai:claude
+status: Approved
+priority: Medium
+owner: ''
+feature: Uncategorized
+created_at: 2026-05-31T15:05:27.209770228Z
+modified_at: 2026-05-31T15:05:27.209770228Z
+req_type: Functional
+tags:
+- seed
+- topic:free-will
+- weight:50
