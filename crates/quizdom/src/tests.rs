@@ -929,6 +929,109 @@ fn answered_saved_next_question_clears_resume_target() {
 }
 
 #[test]
+fn session_summaries_list_resumable_sessions_by_last_active() {
+    let dir =
+        std::env::temp_dir().join(format!("quizdom-story-65-list-test-{}", std::process::id()));
+    let _ = fs::remove_dir_all(&dir);
+    fs::create_dir_all(&dir).unwrap();
+    fs::write(
+        dir.join("older.jsonl"),
+        [
+            r#"{"event_id":"evt-000001","event_type":"session_started","occurred_at":"2026-05-31T10:00:00Z","session_id":"older","user_id":"user","branch_id":"main","seed_question_ref":"Q-1"}"#,
+            r#"{"event_id":"evt-000002","event_type":"question_presented","occurred_at":"2026-05-31T10:01:00Z","session_id":"older","user_id":"user","branch_id":"main","turn":0,"question_ref":"Q-1","question_text":"Older question?","answer_mode":"yes-no"}"#,
+            r#"{"event_id":"evt-000003","event_type":"answer_recorded","occurred_at":"2026-05-31T10:02:00Z","session_id":"older","user_id":"user","branch_id":"main","turn":0,"question_ref":"Q-1","answer_mode":"yes-no","raw_answer":"yes","normalized_answer":"yes"}"#,
+        ]
+        .join("\n"),
+    )
+    .unwrap();
+    fs::write(
+        dir.join("newer.jsonl"),
+        [
+            r#"{"event_id":"evt-000001","event_type":"session_started","occurred_at":"2026-05-31T11:00:00Z","session_id":"newer","user_id":"user","branch_id":"main","seed_question_ref":"Q-2"}"#,
+            r#"{"event_id":"evt-000002","event_type":"question_presented","occurred_at":"2026-05-31T11:01:00Z","session_id":"newer","user_id":"user","branch_id":"agree","turn":0,"question_ref":"Q-2","question_text":"Newer question?","answer_mode":"yes-no"}"#,
+            r#"{"event_id":"evt-000003","event_type":"answer_recorded","occurred_at":"2026-05-31T11:03:00Z","session_id":"newer","user_id":"user","branch_id":"agree","turn":0,"question_ref":"Q-2","answer_mode":"yes-no","raw_answer":"no","normalized_answer":"no"}"#,
+        ]
+        .join("\n"),
+    )
+    .unwrap();
+
+    let summaries = session_summaries(&dir).unwrap();
+
+    assert_eq!(summaries[0].session_id, "newer");
+    assert_eq!(summaries[0].branch_id.as_deref(), Some("agree"));
+    assert_eq!(
+        summaries[0].last_question_answered.as_deref(),
+        Some("Newer question?")
+    );
+    assert_eq!(summaries[1].session_id, "older");
+
+    let _ = fs::remove_dir_all(dir);
+}
+
+#[test]
+fn list_sessions_renders_resumable_sessions() {
+    let user = format!("story-65-list-user-{}", std::process::id());
+    let root = Path::new("data").join("users").join(&user);
+    let dir = root.join("sessions");
+    let _ = fs::remove_dir_all(&root);
+    fs::create_dir_all(&dir).unwrap();
+    fs::write(
+        dir.join("sess-list.jsonl"),
+        [
+            r#"{"event_id":"evt-000001","event_type":"session_started","occurred_at":"2026-05-31T13:00:00Z","session_id":"sess-list","user_id":"user","branch_id":"main","seed_question_ref":"Q-1"}"#,
+            r#"{"event_id":"evt-000002","event_type":"question_presented","occurred_at":"2026-05-31T13:01:00Z","session_id":"sess-list","user_id":"user","branch_id":"main","turn":0,"question_ref":"Q-1","question_text":"Listed question?","answer_mode":"yes-no"}"#,
+            r#"{"event_id":"evt-000003","event_type":"answer_recorded","occurred_at":"2026-05-31T13:02:00Z","session_id":"sess-list","user_id":"user","branch_id":"main","turn":0,"question_ref":"Q-1","answer_mode":"yes-no","raw_answer":"yes","normalized_answer":"yes"}"#,
+        ]
+        .join("\n"),
+    )
+    .unwrap();
+    let config = CliConfig::parse([
+        "session".to_string(),
+        "list".to_string(),
+        "--user".to_string(),
+        user.clone(),
+    ])
+    .unwrap();
+    let mut output = Vec::new();
+
+    list_sessions(&config, &mut output).unwrap();
+
+    let output = String::from_utf8(output).unwrap();
+    assert!(output.contains("Sessions for user"));
+    assert!(output.contains("sess-list"));
+    assert!(output.contains("Listed question?"));
+
+    let _ = fs::remove_dir_all(root);
+}
+
+#[test]
+fn resume_without_session_uses_latest_session_log() {
+    let user = format!("story-65-user-{}", std::process::id());
+    let dir = Path::new("data").join("users").join(&user).join("sessions");
+    let _ = fs::remove_dir_all(Path::new("data").join("users").join(&user));
+    fs::create_dir_all(&dir).unwrap();
+    fs::write(
+        dir.join("latest.jsonl"),
+        r#"{"event_id":"evt-000001","event_type":"session_started","occurred_at":"2026-05-31T12:00:00Z","session_id":"latest","user_id":"user","branch_id":"main","seed_question_ref":"Q-1"}"#,
+    )
+    .unwrap();
+    let config = CliConfig::parse([
+        "session".to_string(),
+        "resume".to_string(),
+        "--user".to_string(),
+        user.clone(),
+    ])
+    .unwrap();
+
+    let resolved = resolve_resume_config(config).unwrap();
+
+    assert_eq!(resolved.session_id, "latest");
+    assert_eq!(resolved.log_path, dir.join("latest.jsonl"));
+
+    let _ = fs::remove_dir_all(Path::new("data").join("users").join(user));
+}
+
+#[test]
 fn start_end_resume_round_trip_replays_path_and_finishes() {
     let path = std::env::temp_dir().join(format!(
         "quizdom-story-20-test-{}.jsonl",
@@ -946,7 +1049,9 @@ fn start_end_resume_round_trip_replays_path_and_finishes() {
         seed: "Q-1".to_string(),
         user_id: "test-user".to_string(),
         session_id: "sess-test".to_string(),
+        session_id_provided: true,
         log_path: path.clone(),
+        log_path_provided: true,
         branch_id: "main".to_string(),
         proposition: None,
         agree_seed: None,
@@ -977,6 +1082,9 @@ fn start_end_resume_round_trip_replays_path_and_finishes() {
     .unwrap();
 
     let resume_output = String::from_utf8(resume_output).unwrap();
+    assert!(resume_output.contains("RECAP:"));
+    assert!(resume_output.contains("last question: Q-1"));
+    assert!(resume_output.contains("your answer: yes"));
     assert!(resume_output.contains("Replaying previous session path for branch 'main':"));
     assert!(resume_output.contains("[turn 0] Q-1"));
     assert!(resume_output.contains("answer: yes"));
@@ -1007,7 +1115,9 @@ fn forked_agree_and_disagree_branches_are_recoverable_independently() {
         seed: "Q-1".to_string(),
         user_id: "test-user".to_string(),
         session_id: "sess-test".to_string(),
+        session_id_provided: true,
         log_path: path.clone(),
+        log_path_provided: true,
         branch_id: "main".to_string(),
         proposition: Some("Free will requires alternatives".to_string()),
         agree_seed: Some("Q-agree".to_string()),
@@ -1112,7 +1222,9 @@ fn test_config(path: &Path, seed: &str) -> CliConfig {
         seed: seed.to_string(),
         user_id: "test-user".to_string(),
         session_id: "sess-test".to_string(),
+        session_id_provided: true,
         log_path: path.to_path_buf(),
+        log_path_provided: true,
         branch_id: "main".to_string(),
         proposition: None,
         agree_seed: None,
