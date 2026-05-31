@@ -8,7 +8,7 @@ priority: High
 owner: ''
 feature: Uncategorized
 created_at: 2026-05-31T14:31:35.896222731Z
-modified_at: 2026-05-31T17:38:07.912247948Z
+modified_at: 2026-05-31T17:38:09.399311148Z
 req_type: Story
 tags:
 - architecture
@@ -23,3 +23,9 @@ relationships:
   target_id: 019e7e66-5b3b-72a1-a52f-b55a1a8ce5fb
   created_at: 2026-05-31T14:32:14.398020939Z
   created_by: joe
+comments:
+- id: 019e7f1d-5577-7090-9166-3ac2ccebf724
+  author: joe
+  content: 'Satisfied alongside STORY-17 (PR #3, commit e84a2be). The NextQuestionStrategy trait (lib.rs:83) is the pluggable seam; DeterministicNextQuestionStrategy implements it (lib.rs:93); the loop depends only on ''&dyn NextQuestionStrategy'' (lib.rs:234), so an EPIC-7 LLM strategy slots in without touching the loop. Acceptance fully met. Verified by test deterministic_strategy_uses_highest_weight_then_lowest_id.'
+  created_at: 2026-05-31T17:38:09.399311148Z
+  modified_at: 2026-05-31T17:38:09.399311148Z
