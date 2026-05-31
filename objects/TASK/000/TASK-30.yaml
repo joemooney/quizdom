@@ -43,7 +43,7 @@ priority: Medium
 owner: joe
 feature: Uncategorized
 created_at: 2026-05-31T15:07:46.435019935Z
-modified_at: 2026-05-31T15:08:03.415625964Z
+modified_at: 2026-05-31T15:25:29.156956471Z
 req_type: Task
 tags:
 - from-implementer:STORY-16
@@ -60,3 +60,9 @@ relationships:
   target_id: 019e7e66-78f6-7972-b865-2ca1b648e9e0
   created_at: 2026-05-31T15:08:03.415618848Z
   created_by: joe
+comments:
+- id: 019e7ea3-dec4-7612-837d-cc487f38a37d
+  author: joe
+  content: Verified by advisor (aida graph Q-23 --tree empty; rel list shows the 4 custom edges). Filed upstream as ~/ai/aida FR-282 (the actionable feature request). quizdom workaround captured in ADR-31 (app-side one-hop rel-list traversal). This stays as the quizdom-side external-dependency record; collapse when FR-282 lands.
+  created_at: 2026-05-31T15:25:29.156956471Z
+  modified_at: 2026-05-31T15:25:29.156956471Z
