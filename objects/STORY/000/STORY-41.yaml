@@ -3,12 +3,12 @@ spec_id: STORY-41
 agreed_id: STORY-41
 title: Loaded-term detection + surface competing bank definitions
 description: 'Detect a loaded term in the current turn: graph-driven (the question probes TERM nodes) and/or LLM-flagged (a loaded term in a free-text answer). Surface the competing bank definitions for that term (walk probes edges; aida rel list <Q> --type probes; aida show <TERM>). Foundational for EPIC-8. ## Acceptance: given Q-23 (which probes free-will TERMs), the session surfaces libertarian vs compatibilist to the user; LLM-flag path covered by a mocked test. Depends on EPIC-6 loop + graph schema.'
-status: Approved
+status: InProgress
 priority: High
 owner: ''
 feature: Uncategorized
 created_at: 2026-05-31T19:38:05.710404372Z
-modified_at: 2026-05-31T19:38:05.710404372Z
+modified_at: 2026-05-31T19:40:01.251068866Z
 req_type: Story
 tags:
 - graph
