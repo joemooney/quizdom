@@ -3,7 +3,7 @@ spec_id: STORY-14
 agreed_id: STORY-14
 title: 'Schema doc: node types, edge vocabulary, tag/weight conventions'
 description: 'Author the canonical graph-schema doc (docs/architecture or docs/plans): node types (Q/term/BELIEF), custom edge list (begets/probes/refines/contradicts/agrees/disagrees), tag conventions including weight:N encoding, and a worked example subgraph. Blocking foundation for all other EPIC-5 work and the reference every doer reads. ## Acceptance: doc exists, lists all node+edge types, shows one example subgraph, defines weight encoding.'
-status: Approved
+status: Completed
 priority: High
 owner: ''
 feature: Uncategorized
