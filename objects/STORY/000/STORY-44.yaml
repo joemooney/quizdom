@@ -8,7 +8,7 @@ priority: Medium
 owner: ''
 feature: Uncategorized
 created_at: 2026-05-31T19:38:20.663837979Z
-modified_at: 2026-05-31T20:55:42.620730098Z
+modified_at: 2026-05-31T20:59:36.127837473Z
 req_type: Story
 tags:
 - persistence
@@ -23,3 +23,9 @@ relationships:
   target_id: 019e7f8b-4a67-7030-b881-fe03c0c9e336
   created_at: 2026-05-31T19:38:45.153404893Z
   created_by: joe
+comments:
+- id: 019e7fd5-c33f-75e3-9c8d-d12162b5a868
+  author: joe
+  content: 'Implemented settled term persistence for semantic honing: adopted shared definitions and promoted user-specific TERM definitions now produce term_interpreted JSONL events with term_ref/raw_definition/adopted_definition, and the session carries the settled definition forward so later questions probing the same term render the pinned meaning instead of re-asking. User-specific definitions still promote through aida add --type term before being logged. Verified with cargo fmt --all --check, cargo test --workspace, and git diff --check. Shipped in PR #18.'
+  created_at: 2026-05-31T20:59:36.127837473Z
+  modified_at: 2026-05-31T20:59:36.127837473Z
