@@ -32,3 +32,8 @@ CLAUDE.local.md
 # Rust build output and local quizdom session logs.
 /target/
 /data/
+
+# Local secrets — API keys (ANTHROPIC_API_KEY etc.). NEVER commit.
+.env
+.env.*
+!.env.example
