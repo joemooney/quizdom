@@ -3,12 +3,12 @@ spec_id: STORY-58
 agreed_id: STORY-58
 title: Surface contradictions as in-session follow-up questions
 description: 'Integrate detection into the live loop (session.rs): when a contradiction is detected for the user''s current positions, present it as a follow-up question. SEQUENCE AFTER the EPIC-50 input-cluster work to avoid session.rs collisions. ## Acceptance: a detected contradiction surfaces as an in-session question; covered by tests. Depends on the contradiction module + session loop.'
-status: InProgress
+status: Completed
 priority: Medium
 owner: ''
 feature: Uncategorized
 created_at: 2026-05-31T20:35:58.641742153Z
-modified_at: 2026-05-31T21:52:51.676781674Z
+modified_at: 2026-05-31T21:52:56.102867359Z
 req_type: Story
 tags:
 - contradiction
