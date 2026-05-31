@@ -10,20 +10,20 @@ use std::path::Path;
 pub(crate) fn render_question(question: &Question, output: &mut impl Write) -> Result<()> {
     writeln!(output, "\n{}", question.title)?;
     match &question.answer_kind {
-        AnswerKind::YesNo => writeln!(output, "[Y] Yes  [N] No  [X] eXplore  [P] Punt")?,
+        AnswerKind::YesNo => writeln!(output, "[Y] Yes  [N] No  [X] eXplore  [P] Punt  [Q] Quit")?,
         AnswerKind::Choice(options) => {
             for (index, option) in options.iter().enumerate() {
                 writeln!(output, "{}. {}", index + 1, option)?;
             }
             writeln!(
                 output,
-                "[1-{}] Choose  [X] eXplore  [P] Punt",
+                "[1-{}] Choose  [X] eXplore  [P] Punt  [Q] Quit",
                 options.len()
             )?;
         }
         AnswerKind::FreeText => writeln!(
             output,
-            "Answer in your own words, or /end to end this session."
+            "Answer in your own words, or Q/Quit to end this session."
         )?,
     }
     write!(output, "> ")?;
@@ -143,7 +143,7 @@ pub(crate) fn read_answer_or_end(
                 .ok_or_else(|| QuizdomError::Parse("no answer provided".to_string()))?,
             _ => read_control_answer_or_line(input, output, kind)?,
         };
-        if raw == "/end" {
+        if is_end_command(&raw) {
             return Ok(AnswerInput::End);
         }
         if let Some(normalized) = normalize_answer(kind, &raw) {
@@ -190,6 +190,7 @@ fn read_single_key_answer(output: &mut impl Write, kind: &AnswerKind) -> Result<
             KeyCode::Char('n') | KeyCode::Char('N') if matches!(kind, AnswerKind::YesNo) => "n",
             KeyCode::Char('x') | KeyCode::Char('X') => "x",
             KeyCode::Char('p') | KeyCode::Char('P') => "p",
+            KeyCode::Char('q') | KeyCode::Char('Q') => "/end",
             KeyCode::Char(character) if matches!(kind, AnswerKind::Choice(_)) => {
                 if character.is_ascii_digit() {
                     write!(output, "{character}\n")?;
@@ -205,6 +206,13 @@ fn read_single_key_answer(output: &mut impl Write, kind: &AnswerKind) -> Result<
         output.flush()?;
         return Ok(Some(raw.to_string()));
     }
+}
+
+pub(crate) fn is_end_command(raw: &str) -> bool {
+    matches!(
+        raw.trim().to_ascii_lowercase().as_str(),
+        "/end" | "q" | "quit"
+    )
 }
 
 pub(crate) fn normalize_answer(kind: &AnswerKind, raw: &str) -> Option<String> {
