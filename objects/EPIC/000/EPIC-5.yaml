@@ -1,0 +1,17 @@
+id: 019e7e5e-a5e1-78b2-9419-9523f83fab27
+spec_id: EPIC-5
+agreed_id: EPIC-5
+title: Domain graph model on AIDA
+description: Define node types (question, belief, definition) and typed edges (begets, contradicts, refines, agrees, disagrees) plus quality tags/weights, modeled as AIDA objects + relationships per ADR-3. The foundation every other EPIC builds on; primary proving ground for VIS-2.
+status: Draft
+priority: High
+owner: ''
+feature: Uncategorized
+created_at: 2026-05-31T14:09:52.609763049Z
+modified_at: 2026-05-31T14:09:52.609763049Z
+req_type: Epic
+tags:
+- aida
+- epic
+- graph
+- substrate
