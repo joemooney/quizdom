@@ -8,7 +8,7 @@ priority: Medium
 owner: ''
 feature: Uncategorized
 created_at: 2026-05-31T21:33:40.046948804Z
-modified_at: 2026-05-31T22:36:50.841484220Z
+modified_at: 2026-05-31T22:36:51.814557285Z
 req_type: Story
 tags:
 - analysis
@@ -20,3 +20,9 @@ relationships:
 - rel_type: Child
   target_id: 019e7e5e-e038-77b0-a462-602c6b7db9df
   created_at: 2026-05-31T21:33:46.367119671Z
+comments:
+- id: 019e802e-cee6-7392-98e0-9ec97e55c7cc
+  author: joe
+  content: 'Implementing as a new signals.rs module: analyze_session_log reads the JSONL session log and tallies per-question presented/answered/punted counts + branch depth (from next_question_selected edges); QuestionSignalStats::signal classifies high-punt-rate->Unhelpful, deep-branch->Insightful, else Neutral; apply_log_signals feeds the STORY-66 re-weighting engine via QuestionBank + QuestionReweighter. No session-loop edits.'
+  created_at: 2026-05-31T22:36:51.814557285Z
+  modified_at: 2026-05-31T22:36:51.814557285Z
