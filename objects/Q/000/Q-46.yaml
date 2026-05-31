@@ -1,0 +1,24 @@
+id: 019e7f8e-6251-7732-94ec-d127fb452290
+spec_id: Q-46
+agreed_id: Q-46
+prefix_override: Q
+title: If the different choice isn't random and isn't fixed by anything that differed beforehand, what is it that makes it yours rather than just uncaused?
+description: |-
+  LLM-generated quizdom question.
+
+  answer: free-text
+  origin: Q-45
+
+  Generated from origin question: If absolutely nothing about you or the situation differed beforehand, would a different choice be anything more than random chance?
+status: Approved
+priority: Medium
+owner: ''
+feature: Uncategorized
+created_at: 2026-05-31T19:41:38.257713705Z
+modified_at: 2026-05-31T19:41:38.257713705Z
+req_type: Functional
+tags:
+- answer:free-text
+- seed
+- topic:free-will
+- weight:50
