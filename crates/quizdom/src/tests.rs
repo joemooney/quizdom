@@ -1,0 +1,1015 @@
+use crate::bank::*;
+use crate::error::*;
+use crate::honing::*;
+use crate::input::*;
+use crate::model::*;
+use crate::persist::{
+    AidaCliGeneratedQuestionPersister, AidaCliUserSpecificTermPersister, CommandRunner,
+    UserSpecificTermPersister,
+};
+use crate::session::*;
+use crate::strategy::*;
+use llm::{AnthropicClient, LLMClient, LLMError, LLMFuture, Message, ToolDef};
+use rustyline::EditMode;
+use std::cell::RefCell;
+use std::collections::HashMap;
+use std::fs;
+use std::os::unix::process::ExitStatusExt;
+use std::path::Path;
+use std::process::{ExitStatus, Output};
+use std::rc::Rc;
+
+#[test]
+fn parses_question_answer_kind_and_weight_from_aida_show() {
+    let output = r#"ID: Q-99
+Title: Pick a definition
+Tags: topic:free-will, answer:choice[libertarian, compatibilist], weight:42
+"#;
+
+    let question = parse_question_show(output).unwrap();
+
+    assert_eq!(question.id, "Q-99");
+    assert_eq!(question.title, "Pick a definition");
+    assert_eq!(
+        question.answer_kind,
+        AnswerKind::Choice(vec!["libertarian".to_string(), "compatibilist".to_string()])
+    );
+    assert_eq!(question.weight, 42);
+}
+
+#[test]
+fn parses_begets_relationships_from_aida_rel_list() {
+    let output = r#"FROM  TYPE    TO    TITLE
+  Q-23  begets  Q-26  Do you mean the ability…
+  Q-23  begets  Q-27  Can a choice be free?
+
+2 edges
+"#;
+
+    let refs = parse_begets_rel_list(output);
+
+    assert_eq!(
+        refs,
+        vec![
+            QuestionRef {
+                id: "Q-26".to_string()
+            },
+            QuestionRef {
+                id: "Q-27".to_string()
+            }
+        ]
+    );
+}
+
+#[test]
+fn parses_probes_relationships_from_aida_rel_list() {
+    let output = r#"FROM  TYPE    TO       TITLE
+  Q-23  probes  TERM-24  free will / libertarian
+  Q-23  probes  TERM-25  free will / compatibilist
+
+2 edges
+"#;
+
+    let refs = parse_probes_rel_list(output);
+
+    assert_eq!(
+        refs,
+        vec![
+            TermRef {
+                id: "TERM-24".to_string()
+            },
+            TermRef {
+                id: "TERM-25".to_string()
+            }
+        ]
+    );
+}
+
+#[test]
+fn parses_term_definition_from_aida_show() {
+    let output = r#"ID: TERM-24
+Title: free will / libertarian
+Tags: seed, definition:academic, topic:free-will, weight:60
+
+source: libertarian free will.
+
+definition: An agent has free will only if the agent could genuinely have chosen
+otherwise under the same conditions.
+
+scope: formal definition.
+"#;
+
+    let term = parse_term_show(output).unwrap();
+
+    assert_eq!(term.id, "TERM-24");
+    assert_eq!(term.title, "free will / libertarian");
+    assert!(term.tags.contains(&"definition:academic".to_string()));
+    assert_eq!(
+            term.definition,
+            "An agent has free will only if the agent could genuinely have chosen otherwise under the same conditions."
+        );
+}
+
+#[test]
+fn deterministic_strategy_uses_highest_weight_then_lowest_id() {
+    let bank = FakeBank::new([
+        question("Q-1", 0, AnswerKind::YesNo),
+        question("Q-3", 80, AnswerKind::YesNo),
+        question("Q-2", 80, AnswerKind::YesNo),
+    ])
+    .with_edges("Q-1", ["Q-3", "Q-2"]);
+
+    let next = DeterministicNextQuestionStrategy
+        .next_question(
+            &bank.load_question("Q-1").unwrap(),
+            &strategy_context("yes"),
+            &bank,
+        )
+        .unwrap()
+        .unwrap();
+
+    assert_eq!(next.id, "Q-2");
+}
+
+#[test]
+fn parses_llm_backend_selection() {
+    assert_eq!(
+        parse_llm_backend("claude-cli").unwrap(),
+        LlmBackendKind::ClaudeCli
+    );
+    assert_eq!(
+        parse_llm_backend("anthropic").unwrap(),
+        LlmBackendKind::Anthropic
+    );
+    assert!(parse_llm_backend("other").is_err());
+}
+
+#[test]
+fn llm_strategy_selects_existing_candidate_from_model_json() {
+    let bank = FakeBank::new([
+        question("Q-1", 0, AnswerKind::YesNo),
+        question("Q-2", 40, AnswerKind::FreeText),
+        question("Q-3", 10, AnswerKind::YesNo),
+    ])
+    .with_edges("Q-1", ["Q-2", "Q-3"]);
+    let strategy = LlmNextQuestionStrategy::new(MockLlm::ok(r#"{"action":"select","id":"Q-3"}"#));
+
+    let next = strategy
+        .next_question(
+            &bank.load_question("Q-1").unwrap(),
+            &strategy_context("because it matters"),
+            &bank,
+        )
+        .unwrap()
+        .unwrap();
+
+    assert_eq!(next.id, "Q-3");
+}
+
+#[test]
+fn llm_strategy_returns_generated_question_in_memory() {
+    let bank = FakeBank::new([question("Q-1", 0, AnswerKind::YesNo)]);
+    let strategy = LlmNextQuestionStrategy::new(MockLlm::ok(
+        r#"{"action":"generate","question":"What do you mean by responsibility?","answer_mode":"free-text"}"#,
+    ));
+
+    let next = strategy
+        .next_question(
+            &bank.load_question("Q-1").unwrap(),
+            &strategy_context("yes"),
+            &bank,
+        )
+        .unwrap()
+        .unwrap();
+
+    assert_eq!(next.id, "generated:llm");
+    assert_eq!(next.title, "What do you mean by responsibility?");
+    assert_eq!(next.answer_kind, AnswerKind::FreeText);
+}
+
+#[test]
+fn llm_strategy_persists_generated_question_when_configured() {
+    let bank = FakeBank::new([question_with_tags(
+        "Q-1",
+        0,
+        AnswerKind::YesNo,
+        ["topic:free-will", "answer:yes-no", "weight:70"],
+    )]);
+    let runner = RecordingCommandRunner::new([
+        command_output(true, "Added: Q-42\n", ""),
+        command_output(true, "relationship added\n", ""),
+    ]);
+    let strategy = LlmNextQuestionStrategy::with_generated_question_persister(
+        MockLlm::ok(
+            r#"{"action":"generate","question":"What definition of responsibility are you using?","answer_mode":"free-text"}"#,
+        ),
+        AidaCliGeneratedQuestionPersister::new("aida", runner.clone()),
+    );
+
+    let next = strategy
+        .next_question(
+            &bank.load_question("Q-1").unwrap(),
+            &strategy_context("yes"),
+            &bank,
+        )
+        .unwrap()
+        .unwrap();
+
+    assert_eq!(next.id, "Q-42");
+    assert_eq!(
+        next.tags,
+        vec![
+            "topic:free-will".to_string(),
+            "answer:free-text".to_string(),
+            "weight:50".to_string(),
+            "seed".to_string()
+        ]
+    );
+    assert_eq!(
+            runner.calls(),
+            vec![
+                strings([
+                    "aida",
+                    "add",
+                    "--prefix",
+                    "Q",
+                    "--type",
+                    "functional",
+                    "--status",
+                    "approved",
+                    "--priority",
+                    "medium",
+                    "--title",
+                    "What definition of responsibility are you using?",
+                    "--description",
+                    "LLM-generated quizdom question.\n\nanswer: free-text\norigin: Q-1\n\nGenerated from origin question: Q-1",
+                    "--tags",
+                    "topic:free-will,answer:free-text,weight:50,seed",
+                ]),
+                strings([
+                    "aida", "rel", "add", "--from", "Q-1", "--to", "Q-42", "--type", "begets",
+                ]),
+            ]
+        );
+}
+
+#[test]
+fn llm_strategy_prefers_near_identical_existing_candidate_over_duplicate() {
+    let bank = FakeBank::new([
+        question("Q-1", 0, AnswerKind::YesNo),
+        Question {
+            id: "Q-2".to_string(),
+            title: "What definition of responsibility are you using?".to_string(),
+            tags: vec!["topic:free-will".to_string(), "weight:50".to_string()],
+            answer_kind: AnswerKind::FreeText,
+            weight: 50,
+        },
+    ])
+    .with_edges("Q-1", ["Q-2"]);
+    let runner = RecordingCommandRunner::new([]);
+    let strategy = LlmNextQuestionStrategy::with_generated_question_persister(
+        MockLlm::ok(
+            r#"{"action":"generate","question":"  What definition of responsibility are you using?  ","answer_mode":"free-text"}"#,
+        ),
+        AidaCliGeneratedQuestionPersister::new("aida", runner.clone()),
+    );
+
+    let next = strategy
+        .next_question(
+            &bank.load_question("Q-1").unwrap(),
+            &strategy_context("yes"),
+            &bank,
+        )
+        .unwrap()
+        .unwrap();
+
+    assert_eq!(next.id, "Q-2");
+    assert!(runner.calls().is_empty());
+}
+
+#[test]
+fn llm_strategy_falls_back_to_deterministic_on_model_error() {
+    let bank = FakeBank::new([
+        question("Q-1", 0, AnswerKind::YesNo),
+        question("Q-3", 80, AnswerKind::YesNo),
+        question("Q-2", 80, AnswerKind::YesNo),
+    ])
+    .with_edges("Q-1", ["Q-3", "Q-2"]);
+    let strategy = LlmNextQuestionStrategy::new(MockLlm::err(LLMError::Provider(
+        "provider unavailable".to_string(),
+    )));
+
+    let next = strategy
+        .next_question(
+            &bank.load_question("Q-1").unwrap(),
+            &strategy_context("yes"),
+            &bank,
+        )
+        .unwrap()
+        .unwrap();
+
+    assert_eq!(next.id, "Q-2");
+}
+
+#[test]
+fn llm_strategy_flags_loaded_terms_from_free_text_answer() {
+    let strategy = LlmNextQuestionStrategy::new(MockLlm::ok(r#"{"loaded_terms":["free will"]}"#));
+    let current = question("Q-1", 0, AnswerKind::FreeText);
+
+    let terms = strategy
+        .loaded_terms(
+            &current,
+            &Answer {
+                raw: "I mean freedom from coercion".to_string(),
+                normalized: "I mean freedom from coercion".to_string(),
+            },
+        )
+        .unwrap();
+
+    assert_eq!(terms, vec!["free will".to_string()]);
+}
+
+#[test]
+fn session_surfaces_probed_competing_definitions() {
+    let path = std::env::temp_dir().join(format!(
+        "quizdom-story-41-test-{}.jsonl",
+        std::process::id()
+    ));
+    let _ = fs::remove_file(&path);
+    let bank = FakeBank::new([question_with_tags(
+        "Q-23",
+        70,
+        AnswerKind::YesNo,
+        ["topic:free-will", "answer:yes-no", "weight:70"],
+    )])
+    .with_probes("Q-23", ["TERM-24", "TERM-25"])
+    .with_terms([
+        term(
+            "TERM-24",
+            "free will / libertarian",
+            "An agent could genuinely have chosen otherwise.",
+        ),
+        term(
+            "TERM-25",
+            "free will / compatibilist",
+            "The action flows from the agent's own reasons without coercion.",
+        ),
+    ]);
+    let config = test_config(&path, "Q-23");
+    let mut output = Vec::new();
+
+    run_session(
+        &config,
+        &bank,
+        &DeterministicNextQuestionStrategy,
+        "I mean acting from my own reasons.\nyes\n".as_bytes(),
+        &mut output,
+    )
+    .unwrap();
+
+    let output = String::from_utf8(output).unwrap();
+    assert!(output.contains("Terms to distinguish:"));
+    assert!(output.contains("free will / libertarian"));
+    assert!(output.contains("free will / compatibilist"));
+    assert!(output.contains("chosen otherwise"));
+    assert!(output.contains("without coercion"));
+
+    let _ = fs::remove_file(path);
+}
+
+#[test]
+fn loaded_term_definitions_filter_by_llm_flag() {
+    let definitions = vec![
+        term(
+            "TERM-24",
+            "free will / libertarian",
+            "could choose otherwise",
+        ),
+        term(
+            "TERM-30",
+            "responsibility / moral",
+            "accountable for an act",
+        ),
+    ];
+
+    let filtered = definitions_for_loaded_terms(&definitions, &["free will".to_string()]);
+
+    assert_eq!(filtered, vec![definitions[0].clone()]);
+}
+
+#[test]
+fn llm_strategy_maps_user_meaning_to_closest_term_definition() {
+    let definitions = free_will_terms();
+    let strategy = LlmNextQuestionStrategy::new(MockLlm::ok(
+        r#"{"term_id":"TERM-25","rationale":"The user emphasized acting from reasons without coercion."}"#,
+    ));
+
+    let proposal = strategy
+        .map_term_meaning(
+            "free will",
+            "I mean acting from my own reasons without being forced.",
+            &definitions,
+        )
+        .unwrap()
+        .unwrap();
+
+    assert_eq!(proposal.term_id, "TERM-25");
+    assert_eq!(proposal.term_title, "free will / compatibilist");
+    assert!(proposal.definition.contains("without coercion"));
+    assert!(proposal.rationale.contains("without coercion"));
+}
+
+#[test]
+fn deterministic_strategy_skips_term_mapping_offline() {
+    let proposal = DeterministicNextQuestionStrategy
+        .map_term_meaning(
+            "free will",
+            "I mean acting from my own reasons.",
+            &free_will_terms(),
+        )
+        .unwrap();
+
+    assert_eq!(proposal, None);
+}
+
+#[test]
+fn session_asks_user_meaning_and_renders_mapping_proposal() {
+    let path = std::env::temp_dir().join(format!(
+        "quizdom-story-42-test-{}.jsonl",
+        std::process::id()
+    ));
+    let _ = fs::remove_file(&path);
+    let bank = FakeBank::new([question_with_tags(
+        "Q-23",
+        70,
+        AnswerKind::YesNo,
+        ["topic:free-will", "answer:yes-no", "weight:70"],
+    )])
+    .with_probes("Q-23", ["TERM-24", "TERM-25"])
+    .with_terms(free_will_terms());
+    let strategy = LlmNextQuestionStrategy::new(MockLlm::ok(
+        r#"{"term_id":"TERM-25","rationale":"The user emphasized reasons without coercion."}"#,
+    ));
+    let config = test_config(&path, "Q-23");
+    let mut output = Vec::new();
+
+    run_session(
+        &config,
+        &bank,
+        &strategy,
+        "Acting from my own reasons without coercion.\nyes\nyes\n".as_bytes(),
+        &mut output,
+    )
+    .unwrap();
+
+    let output = String::from_utf8(output).unwrap();
+    assert!(output.contains("What do you mean by free will?"));
+    assert!(output.contains("That sounds closest to free will / compatibilist"));
+    assert!(output.contains("Does this capture it?"));
+    assert!(output.contains("Adopted free will / compatibilist."));
+    assert!(output.contains("without coercion"));
+
+    let _ = fs::remove_file(path);
+}
+
+#[test]
+fn rejected_mapping_mints_user_specific_term_after_steering() {
+    let path = std::env::temp_dir().join(format!(
+        "quizdom-story-43-test-{}.jsonl",
+        std::process::id()
+    ));
+    let _ = fs::remove_file(&path);
+    let bank = FakeBank::new([question_with_tags(
+        "Q-23",
+        70,
+        AnswerKind::YesNo,
+        ["topic:free-will", "answer:yes-no", "weight:70"],
+    )])
+    .with_probes("Q-23", ["TERM-24", "TERM-25"])
+    .with_terms(free_will_terms());
+    let strategy = LlmNextQuestionStrategy::new(MockLlm::ok(
+        r#"{"term_id":"TERM-25","rationale":"The user emphasized reasons without coercion."}"#,
+    ));
+    let runner = RecordingCommandRunner::new([command_output(true, "Added: TERM-99\n", "")]);
+    let persister = AidaCliUserSpecificTermPersister::new("aida", runner.clone());
+    let config = test_config(&path, "Q-23");
+    let mut output = Vec::new();
+
+    run_session_with_term_persister(
+        &config,
+        &bank,
+        &strategy,
+        &persister,
+        "A self-authored cause.\nno\nIt must originate outside the causal chain.\nyes\n".as_bytes(),
+        &mut output,
+    )
+    .unwrap();
+
+    let output = String::from_utf8(output).unwrap();
+    assert!(output.contains("What would make the shared definition fit better?"));
+    assert!(output.contains("Recorded a user-specific definition"));
+    assert_eq!(
+            runner.calls(),
+            vec![strings([
+                "aida",
+                "add",
+                "--type",
+                "term",
+                "--status",
+                "approved",
+                "--priority",
+                "medium",
+                "--title",
+                "free will / user-specific",
+                "--description",
+                "source: user-specific quizdom steering fallback.\n\ndefinition: It must originate outside the causal chain.\n\nscope: user-specific definition captured only after shared bank definitions did not fit.",
+                "--tags",
+                "topic:free-will,definition:user-specific,weight:40",
+            ])]
+        );
+
+    let _ = fs::remove_file(path);
+}
+
+#[test]
+fn user_specific_term_persister_maps_aida_add_output() {
+    let runner = RecordingCommandRunner::new([command_output(true, "Added: TERM-88\n", "")]);
+    let persister = AidaCliUserSpecificTermPersister::new("aida", runner);
+
+    let term = persister
+        .persist_user_specific_term(
+            "free will",
+            "Free will means being an uncaused source.",
+            &free_will_terms(),
+        )
+        .unwrap();
+
+    assert_eq!(term.id, "TERM-88");
+    assert_eq!(term.title, "free will / user-specific");
+    assert!(term.tags.contains(&"definition:user-specific".to_string()));
+    assert_eq!(term.definition, "Free will means being an uncaused source.");
+}
+
+#[test]
+#[ignore = "requires ANTHROPIC_API_KEY and makes a live provider call"]
+fn live_llm_strategy_smoke() {
+    if std::env::var("ANTHROPIC_API_KEY").is_err() {
+        return;
+    }
+    let bank = FakeBank::new([
+        question("Q-1", 0, AnswerKind::YesNo),
+        question("Q-2", 10, AnswerKind::FreeText),
+    ])
+    .with_edges("Q-1", ["Q-2"]);
+    let strategy = LlmNextQuestionStrategy::new(AnthropicClient::from_env().unwrap());
+
+    let next = strategy
+        .next_question(
+            &bank.load_question("Q-1").unwrap(),
+            &strategy_context("yes"),
+            &bank,
+        )
+        .unwrap();
+
+    assert!(next.is_some());
+}
+
+#[test]
+fn accepts_all_answer_kinds() {
+    assert_eq!(
+        normalize_answer(&AnswerKind::YesNo, "Y"),
+        Some("yes".to_string())
+    );
+    assert_eq!(
+        normalize_answer(
+            &AnswerKind::Choice(vec!["one".to_string(), "two".to_string()]),
+            "2"
+        ),
+        Some("two".to_string())
+    );
+    assert_eq!(
+        normalize_answer(&AnswerKind::FreeText, "  because  "),
+        Some("because".to_string())
+    );
+}
+
+#[test]
+fn editor_mode_uses_vi_for_vi_family_editors() {
+    assert_eq!(edit_mode_from_editor("nvim"), EditMode::Vi);
+    assert_eq!(edit_mode_from_editor("/usr/bin/vim"), EditMode::Vi);
+}
+
+#[test]
+fn editor_mode_defaults_to_emacs_for_other_editors() {
+    assert_eq!(edit_mode_from_editor("code"), EditMode::Emacs);
+    assert_eq!(edit_mode_from_editor(""), EditMode::Emacs);
+}
+
+#[test]
+fn renders_all_question_kinds() {
+    let cases = [
+        (AnswerKind::YesNo, "Answer yes or no, or /end"),
+        (
+            AnswerKind::Choice(vec!["libertarian".to_string(), "compatibilist".to_string()]),
+            "2. compatibilist",
+        ),
+        (AnswerKind::FreeText, "Answer in your own words, or /end"),
+    ];
+
+    for (answer_kind, expected) in cases {
+        let mut output = Vec::new();
+        render_question(&question("Q-test", 0, answer_kind), &mut output).unwrap();
+        let output = String::from_utf8(output).unwrap();
+        assert!(output.contains(expected), "{output}");
+    }
+}
+
+#[test]
+fn resume_replays_exact_answered_path_and_continues_from_saved_next_question() {
+    let log = [
+            r#"{"event_id":"evt-000001","event_type":"session_started","occurred_at":"2026-05-31T17:00:00Z","session_id":"sess-test","user_id":"user","seed_question_ref":"Q-1"}"#,
+            r#"{"event_id":"evt-000002","event_type":"question_presented","occurred_at":"2026-05-31T17:00:01Z","session_id":"sess-test","user_id":"user","turn":0,"question_ref":"Q-1","question_text":"First question?","answer_mode":"yes-no"}"#,
+            r#"{"event_id":"evt-000003","event_type":"answer_recorded","occurred_at":"2026-05-31T17:00:02Z","session_id":"sess-test","user_id":"user","turn":0,"question_ref":"Q-1","answer_mode":"yes-no","raw_answer":"yes","normalized_answer":"yes"}"#,
+            r#"{"event_id":"evt-000004","event_type":"next_question_selected","occurred_at":"2026-05-31T17:00:03Z","session_id":"sess-test","user_id":"user","turn":0,"question_ref":"Q-1","selected_next_question_ref":"Q-2","selection_reason":"test"}"#,
+            r#"{"event_id":"evt-000005","event_type":"session_ended","occurred_at":"2026-05-31T17:00:04Z","session_id":"sess-test","user_id":"user","turn":0,"summary":"User ended session."}"#,
+        ]
+        .join("\n");
+    let replay = SessionReplay::from_reader(log.as_bytes(), "main").unwrap();
+    let mut output = Vec::new();
+
+    replay.render(&mut output).unwrap();
+
+    let output = String::from_utf8(output).unwrap();
+    assert!(output.contains("First question?"));
+    assert!(output.contains("answer: yes"));
+    assert_eq!(replay.next_question_ref, Some("Q-2".to_string()));
+    assert_eq!(replay.next_turn, 1);
+}
+
+#[test]
+fn answered_saved_next_question_clears_resume_target() {
+    let log = [
+            r#"{"event_id":"evt-000001","event_type":"question_presented","occurred_at":"2026-05-31T17:00:01Z","session_id":"sess-test","user_id":"user","turn":0,"question_ref":"Q-1","question_text":"First question?","answer_mode":"yes-no"}"#,
+            r#"{"event_id":"evt-000002","event_type":"answer_recorded","occurred_at":"2026-05-31T17:00:02Z","session_id":"sess-test","user_id":"user","turn":0,"question_ref":"Q-1","answer_mode":"yes-no","raw_answer":"yes","normalized_answer":"yes"}"#,
+            r#"{"event_id":"evt-000003","event_type":"next_question_selected","occurred_at":"2026-05-31T17:00:03Z","session_id":"sess-test","user_id":"user","turn":0,"question_ref":"Q-1","selected_next_question_ref":"Q-2","selection_reason":"test"}"#,
+            r#"{"event_id":"evt-000004","event_type":"question_presented","occurred_at":"2026-05-31T17:00:04Z","session_id":"sess-test","user_id":"user","turn":1,"question_ref":"Q-2","question_text":"Second question?","answer_mode":"yes-no"}"#,
+            r#"{"event_id":"evt-000005","event_type":"answer_recorded","occurred_at":"2026-05-31T17:00:05Z","session_id":"sess-test","user_id":"user","turn":1,"question_ref":"Q-2","answer_mode":"yes-no","raw_answer":"no","normalized_answer":"no"}"#,
+        ]
+        .join("\n");
+
+    let replay = SessionReplay::from_reader(log.as_bytes(), "main").unwrap();
+
+    assert_eq!(replay.next_question_ref, None);
+    assert_eq!(replay.next_turn, 2);
+}
+
+#[test]
+fn start_end_resume_round_trip_replays_path_and_finishes() {
+    let path = std::env::temp_dir().join(format!(
+        "quizdom-story-20-test-{}.jsonl",
+        std::process::id()
+    ));
+    let _ = fs::remove_file(&path);
+    let bank = FakeBank::new([
+        question("Q-1", 10, AnswerKind::YesNo),
+        question("Q-2", 5, AnswerKind::YesNo),
+    ])
+    .with_edges("Q-1", ["Q-2"]);
+    let strategy = DeterministicNextQuestionStrategy;
+    let config = CliConfig {
+        command: SessionCommand::Start,
+        seed: "Q-1".to_string(),
+        user_id: "test-user".to_string(),
+        session_id: "sess-test".to_string(),
+        log_path: path.clone(),
+        branch_id: "main".to_string(),
+        proposition: None,
+        agree_seed: None,
+        disagree_seed: None,
+        strategy: StrategyKind::Deterministic,
+    };
+    let mut start_output = Vec::new();
+
+    run_session(
+        &config,
+        &bank,
+        &strategy,
+        "yes\n/end\n".as_bytes(),
+        &mut start_output,
+    )
+    .unwrap();
+
+    let mut resume_output = Vec::new();
+    let mut resume_config = config.clone();
+    resume_config.command = SessionCommand::Resume;
+    resume_session(
+        &resume_config,
+        &bank,
+        &strategy,
+        "no\n".as_bytes(),
+        &mut resume_output,
+    )
+    .unwrap();
+
+    let resume_output = String::from_utf8(resume_output).unwrap();
+    assert!(resume_output.contains("Replaying previous session path for branch 'main':"));
+    assert!(resume_output.contains("[turn 0] Q-1"));
+    assert!(resume_output.contains("answer: yes"));
+    assert!(resume_output.contains("Q-2"));
+
+    let log = fs::read_to_string(&path).unwrap();
+    assert!(log.contains(r#""question_ref":"Q-1""#));
+    assert!(log.contains(r#""question_ref":"Q-2""#));
+    assert!(log.contains(r#""normalized_answer":"no""#));
+
+    let _ = fs::remove_file(path);
+}
+
+#[test]
+fn forked_agree_and_disagree_branches_are_recoverable_independently() {
+    let path = std::env::temp_dir().join(format!(
+        "quizdom-story-19-test-{}.jsonl",
+        std::process::id()
+    ));
+    let _ = fs::remove_file(&path);
+    let bank = FakeBank::new([
+        question("Q-agree", 10, AnswerKind::YesNo),
+        question("Q-disagree", 10, AnswerKind::YesNo),
+    ]);
+    let strategy = DeterministicNextQuestionStrategy;
+    let fork_config = CliConfig {
+        command: SessionCommand::Fork,
+        seed: "Q-1".to_string(),
+        user_id: "test-user".to_string(),
+        session_id: "sess-test".to_string(),
+        log_path: path.clone(),
+        branch_id: "main".to_string(),
+        proposition: Some("Free will requires alternatives".to_string()),
+        agree_seed: Some("Q-agree".to_string()),
+        disagree_seed: Some("Q-disagree".to_string()),
+        strategy: StrategyKind::Deterministic,
+    };
+    let mut fork_output = Vec::new();
+    fork_session(&fork_config, &mut fork_output).unwrap();
+
+    let mut agree_config = fork_config.clone();
+    agree_config.command = SessionCommand::Resume;
+    agree_config.branch_id = "agree".to_string();
+    let mut agree_output = Vec::new();
+    resume_session(
+        &agree_config,
+        &bank,
+        &strategy,
+        "yes\n".as_bytes(),
+        &mut agree_output,
+    )
+    .unwrap();
+
+    let mut disagree_config = fork_config.clone();
+    disagree_config.command = SessionCommand::Resume;
+    disagree_config.branch_id = "disagree".to_string();
+    let mut disagree_output = Vec::new();
+    resume_session(
+        &disagree_config,
+        &bank,
+        &strategy,
+        "no\n".as_bytes(),
+        &mut disagree_output,
+    )
+    .unwrap();
+
+    let agree_output = String::from_utf8(agree_output).unwrap();
+    let disagree_output = String::from_utf8(disagree_output).unwrap();
+    assert!(agree_output.contains("branch 'agree'"));
+    assert!(agree_output.contains("Q-agree"));
+    assert!(disagree_output.contains("branch 'disagree'"));
+    assert!(disagree_output.contains("Q-disagree"));
+
+    let agree_replay = SessionReplay::load(&path, "agree").unwrap();
+    let disagree_replay = SessionReplay::load(&path, "disagree").unwrap();
+    assert_eq!(agree_replay.answers[0].question_ref, "Q-agree");
+    assert_eq!(agree_replay.answers[0].normalized_answer, "yes");
+    assert_eq!(disagree_replay.answers[0].question_ref, "Q-disagree");
+    assert_eq!(disagree_replay.answers[0].normalized_answer, "no");
+
+    let _ = fs::remove_file(path);
+}
+
+fn question(id: &str, weight: u32, answer_kind: AnswerKind) -> Question {
+    question_with_tags(id, weight, answer_kind, [format!("weight:{weight}")])
+}
+
+fn question_with_tags(
+    id: &str,
+    weight: u32,
+    answer_kind: AnswerKind,
+    tags: impl IntoIterator<Item = impl Into<String>>,
+) -> Question {
+    Question {
+        id: id.to_string(),
+        title: id.to_string(),
+        tags: tags.into_iter().map(Into::into).collect(),
+        answer_kind,
+        weight,
+    }
+}
+
+fn term(id: &str, title: &str, definition: &str) -> TermDefinition {
+    TermDefinition {
+        id: id.to_string(),
+        title: title.to_string(),
+        tags: vec![
+            "topic:free-will".to_string(),
+            "definition:academic".to_string(),
+        ],
+        definition: definition.to_string(),
+    }
+}
+
+fn free_will_terms() -> Vec<TermDefinition> {
+    vec![
+        term(
+            "TERM-24",
+            "free will / libertarian",
+            "An agent could genuinely have chosen otherwise.",
+        ),
+        term(
+            "TERM-25",
+            "free will / compatibilist",
+            "The action flows from the agent's own reasons without coercion.",
+        ),
+    ]
+}
+
+fn test_config(path: &Path, seed: &str) -> CliConfig {
+    CliConfig {
+        command: SessionCommand::Start,
+        seed: seed.to_string(),
+        user_id: "test-user".to_string(),
+        session_id: "sess-test".to_string(),
+        log_path: path.to_path_buf(),
+        branch_id: "main".to_string(),
+        proposition: None,
+        agree_seed: None,
+        disagree_seed: None,
+        strategy: StrategyKind::Deterministic,
+    }
+}
+
+fn strategy_context(raw: &str) -> StrategyContext {
+    StrategyContext {
+        answer: Answer {
+            raw: raw.to_string(),
+            normalized: raw.to_string(),
+        },
+        recent_path: Vec::new(),
+    }
+}
+
+#[derive(Clone)]
+struct MockLlm {
+    result: std::result::Result<(String, Vec<llm::ToolCall>), LLMError>,
+}
+
+impl MockLlm {
+    fn ok(text: &str) -> Self {
+        Self {
+            result: Ok((text.to_string(), Vec::new())),
+        }
+    }
+
+    fn err(error: LLMError) -> Self {
+        Self { result: Err(error) }
+    }
+}
+
+impl LLMClient for MockLlm {
+    fn call<'a>(
+        &'a self,
+        _system: &'a str,
+        _messages: &'a [Message],
+        _tools: &'a [ToolDef],
+    ) -> LLMFuture<'a> {
+        Box::pin(std::future::ready(self.result.clone()))
+    }
+}
+
+#[derive(Clone)]
+struct RecordingCommandRunner {
+    calls: Rc<RefCell<Vec<Vec<String>>>>,
+    outputs: Rc<RefCell<Vec<Output>>>,
+}
+
+impl RecordingCommandRunner {
+    fn new(outputs: impl IntoIterator<Item = Output>) -> Self {
+        Self {
+            calls: Rc::new(RefCell::new(Vec::new())),
+            outputs: Rc::new(RefCell::new(outputs.into_iter().collect())),
+        }
+    }
+
+    fn calls(&self) -> Vec<Vec<String>> {
+        self.calls.borrow().clone()
+    }
+}
+
+impl CommandRunner for RecordingCommandRunner {
+    fn run(&self, program: &str, args: &[String]) -> Result<Output> {
+        let mut call = vec![program.to_string()];
+        call.extend(args.iter().cloned());
+        self.calls.borrow_mut().push(call);
+        if self.outputs.borrow().is_empty() {
+            return Err(QuizdomError::Aida("unexpected command".to_string()));
+        }
+        Ok(self.outputs.borrow_mut().remove(0))
+    }
+}
+
+fn command_output(success: bool, stdout: &str, stderr: &str) -> Output {
+    Output {
+        status: if success {
+            ExitStatus::from_raw(0)
+        } else {
+            ExitStatus::from_raw(1)
+        },
+        stdout: stdout.as_bytes().to_vec(),
+        stderr: stderr.as_bytes().to_vec(),
+    }
+}
+
+fn strings(items: impl IntoIterator<Item = &'static str>) -> Vec<String> {
+    items.into_iter().map(str::to_string).collect()
+}
+
+struct FakeBank {
+    questions: HashMap<String, Question>,
+    edges: HashMap<String, Vec<QuestionRef>>,
+    probes: HashMap<String, Vec<TermRef>>,
+    terms: HashMap<String, TermDefinition>,
+}
+
+impl FakeBank {
+    fn new(questions: impl IntoIterator<Item = Question>) -> Self {
+        Self {
+            questions: questions
+                .into_iter()
+                .map(|question| (question.id.clone(), question))
+                .collect(),
+            edges: HashMap::new(),
+            probes: HashMap::new(),
+            terms: HashMap::new(),
+        }
+    }
+
+    fn with_edges(mut self, from: &str, to: impl IntoIterator<Item = &'static str>) -> Self {
+        self.edges.insert(
+            from.to_string(),
+            to.into_iter()
+                .map(|id| QuestionRef { id: id.to_string() })
+                .collect(),
+        );
+        self
+    }
+
+    fn with_probes(mut self, from: &str, to: impl IntoIterator<Item = &'static str>) -> Self {
+        self.probes.insert(
+            from.to_string(),
+            to.into_iter()
+                .map(|id| TermRef { id: id.to_string() })
+                .collect(),
+        );
+        self
+    }
+
+    fn with_terms(mut self, terms: impl IntoIterator<Item = TermDefinition>) -> Self {
+        self.terms = terms
+            .into_iter()
+            .map(|term| (term.id.clone(), term))
+            .collect();
+        self
+    }
+}
+
+impl QuestionBank for FakeBank {
+    fn load_question(&self, id: &str) -> Result<Question> {
+        self.questions
+            .get(id)
+            .cloned()
+            .ok_or_else(|| QuizdomError::Parse(format!("missing {id}")))
+    }
+
+    fn begets(&self, id: &str) -> Result<Vec<QuestionRef>> {
+        Ok(self.edges.get(id).cloned().unwrap_or_default())
+    }
+
+    fn probes(&self, id: &str) -> Result<Vec<TermRef>> {
+        Ok(self.probes.get(id).cloned().unwrap_or_default())
+    }
+
+    fn load_term(&self, id: &str) -> Result<TermDefinition> {
+        self.terms
+            .get(id)
+            .cloned()
+            .ok_or_else(|| QuizdomError::Parse(format!("missing {id}")))
+    }
+}
