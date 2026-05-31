@@ -1,0 +1,17 @@
+id: 019e7e5e-6e6e-76e3-a004-1a89f431fc5d
+spec_id: ADR-3
+agreed_id: ADR-3
+title: Domain data lives in the AIDA store (dogfood substrate)
+description: 'Model quizdom''s domain data — questions, beliefs, definitions, edges (begets/contradicts/refines/agrees), quality tags and weights — as objects + typed relationships in the AIDA git-canonical store, rather than a separate store. Directly serves VIS-2 (AIDA as general-purpose substrate). Accepted risk: AIDA may strain on graph traversal, edge semantics, and per-edge weighting/scale; where it does, file an AIDA finding rather than working around it silently. Revisit if the strain blocks core UX.'
+status: Approved
+priority: High
+owner: ''
+feature: Uncategorized
+created_at: 2026-05-31T14:09:38.414646686Z
+modified_at: 2026-05-31T14:09:38.414646686Z
+req_type: Decision
+tags:
+- aida
+- architecture
+- decision
+- substrate
