@@ -7,7 +7,7 @@ priority: Medium
 owner: joe
 feature: Uncategorized
 created_at: 2026-05-31T14:18:44.260654725Z
-modified_at: 2026-05-31T14:18:44.260654725Z
+modified_at: 2026-05-31T14:49:19.085347282Z
 req_type: Task
 tags:
 - from-advisor:VIS-2
@@ -15,3 +15,9 @@ tags:
 - linked:EPIC-5
 - linked:VIS-2
 - severity:major
+comments:
+- id: 019e7e82-c1ed-7aa1-b82c-8fac61c55c9e
+  author: joe
+  content: 'Triaged via ADR-22: tags are the intended pattern for ANNOTATION; quizdom''s v1 selection is a bounded in-app max/weighted-sample over one node''s begets successors, so no substrate field is needed yet. Leaving this finding OPEN as a recurrence-driver (per observation-discipline: let recurrence promote it). Recur this when in-app weight re-parsing hurts OR we want weighted traversal inside ''aida graph'' / cross-bank numeric queries — that''s the operational driver that would justify a scoped selection_weight:u8 field in ~/ai/aida.'
+  created_at: 2026-05-31T14:49:19.085347282Z
+  modified_at: 2026-05-31T14:49:19.085347282Z
