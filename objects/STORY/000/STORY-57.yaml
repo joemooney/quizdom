@@ -8,7 +8,7 @@ priority: High
 owner: ''
 feature: Uncategorized
 created_at: 2026-05-31T20:35:53.771171332Z
-modified_at: 2026-05-31T20:44:15.368394992Z
+modified_at: 2026-05-31T20:48:07.400321574Z
 req_type: Story
 tags:
 - contradiction
@@ -20,3 +20,9 @@ relationships:
 - rel_type: Child
   target_id: 019e7e5e-d586-7d73-84cc-19c6d739ae38
   created_at: 2026-05-31T20:35:55.395519520Z
+comments:
+- id: 019e7fcb-40e8-7e61-8974-d2fd1c766883
+  author: joe
+  content: 'Implemented self-contained crates/quizdom/src/contradiction.rs (no session.rs edits). Graph-based detection walks adopted beliefs'' contradicts edges via aida rel list (ContradictsEdges trait, AidaCliContradictsEdges impl); LLM-based semantic detection via LLMClient (default claude-cli, --no-llm/--backend to control), graceful degradation to graph-only when the backend is unavailable. Standalone ''quizdom contradictions --user <id>|--session <id>|--log <path>'' reads adopted beliefs from per-user session logs and lists merged findings (graph precedence). 12 new tests: rel-list parsing, graph pair/dedupe/unadopted, semantic index-mapping/out-of-range/invalid-json, session-log sourcing + branch filter, CLI no-beliefs path. Dispatch added in main.rs only.'
+  created_at: 2026-05-31T20:48:07.400321574Z
+  modified_at: 2026-05-31T20:48:07.400321574Z
