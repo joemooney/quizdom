@@ -15,3 +15,7 @@ tags:
 - semantics
 - steering
 - story
+relationships:
+- rel_type: Child
+  target_id: 019e7e5e-c7e6-7681-b5a9-b6be6ada3033
+  created_at: 2026-05-31T19:38:17.191408332Z
