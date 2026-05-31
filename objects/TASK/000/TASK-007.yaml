@@ -7,9 +7,15 @@ priority: High
 owner: ''
 feature: Uncategorized
 created_at: 2026-05-31T01:59:54.418870253Z
-modified_at: 2026-05-31T14:13:10.189667528Z
+modified_at: 2026-05-31T14:13:12.008256728Z
 req_type: Task
 tags:
 - first-task
 - from-aida-init
 - scaffolding
+comments:
+- id: 019e7e61-b0c8-71a3-b8bc-78c0c3d03abc
+  author: joe
+  content: Commit dcb2438 references this requirement
+  created_at: 2026-05-31T14:13:12.008256728Z
+  modified_at: 2026-05-31T14:13:12.008256728Z
