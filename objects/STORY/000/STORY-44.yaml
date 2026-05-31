@@ -3,12 +3,12 @@ spec_id: STORY-44
 agreed_id: STORY-44
 title: Record the user's settled definition; downstream questions use it
 description: 'Persist the user''s adopted definition for a term (per ADR-12: in the per-user session log; promote a notable bespoke definition to a TERM node). Make downstream questions in the session use the user''s pinned meaning. ## Acceptance: the settled definition is recorded and re-applied later in the session; promotion of a bespoke definition creates a TERM reachable via aida. Depends on the steering story + ADR-12.'
-status: Approved
+status: InProgress
 priority: Medium
 owner: ''
 feature: Uncategorized
 created_at: 2026-05-31T19:38:20.663837979Z
-modified_at: 2026-05-31T19:38:45.153416799Z
+modified_at: 2026-05-31T20:55:42.620730098Z
 req_type: Story
 tags:
 - persistence
