@@ -15,3 +15,7 @@ tags:
 - session
 - story
 - strategy
+relationships:
+- rel_type: Child
+  target_id: 019e7e5e-b073-7671-b834-ce12b2104736
+  created_at: 2026-05-31T14:31:37.022958464Z
