@@ -7,7 +7,7 @@ use std::fmt;
 use std::fs::{self, File, OpenOptions};
 use std::io::{self, BufRead, BufReader, Read, Write};
 use std::path::{Path, PathBuf};
-use std::process::Command;
+use std::process::{Command, Output};
 
 const DEFAULT_SEED: &str = "Q-23";
 const DEFAULT_USER: &str = "local-user";
@@ -84,6 +84,14 @@ pub trait QuestionBank {
     fn begets(&self, id: &str) -> Result<Vec<QuestionRef>>;
 }
 
+pub trait GeneratedQuestionPersister {
+    fn persist_generated_question(
+        &self,
+        origin: &Question,
+        question: &Question,
+    ) -> Result<Question>;
+}
+
 pub trait NextQuestionStrategy {
     fn next_question(
         &self,
@@ -108,6 +116,18 @@ pub struct AnsweredQuestion {
 }
 
 pub struct DeterministicNextQuestionStrategy;
+
+pub struct NoopGeneratedQuestionPersister;
+
+impl GeneratedQuestionPersister for NoopGeneratedQuestionPersister {
+    fn persist_generated_question(
+        &self,
+        _origin: &Question,
+        question: &Question,
+    ) -> Result<Question> {
+        Ok(question.clone())
+    }
+}
 
 impl NextQuestionStrategy for DeterministicNextQuestionStrategy {
     fn next_question(
@@ -199,6 +219,9 @@ fn apply_llm_decision(text: &str, candidates: &[Question]) -> Result<Option<Ques
                 .ok_or_else(|| {
                     QuizdomError::Parse("LLM generate decision missing question".to_string())
                 })?;
+            if let Some(existing) = find_near_identical_question(title, candidates) {
+                return Ok(Some(existing.clone()));
+            }
             let answer_kind = match value
                 .get("answer_mode")
                 .and_then(Value::as_str)
@@ -229,9 +252,30 @@ fn apply_llm_decision(text: &str, candidates: &[Question]) -> Result<Option<Ques
     }
 }
 
-pub struct LlmNextQuestionStrategy<C> {
+fn find_near_identical_question<'a>(
+    title: &str,
+    candidates: &'a [Question],
+) -> Option<&'a Question> {
+    let normalized_title = normalize_question_title(title);
+    candidates
+        .iter()
+        .find(|candidate| normalize_question_title(&candidate.title) == normalized_title)
+}
+
+fn normalize_question_title(title: &str) -> String {
+    title
+        .trim()
+        .trim_end_matches('?')
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ")
+        .to_ascii_lowercase()
+}
+
+pub struct LlmNextQuestionStrategy<C, P = NoopGeneratedQuestionPersister> {
     client: C,
     deterministic: DeterministicNextQuestionStrategy,
+    generated_question_persister: P,
 }
 
 impl<C> LlmNextQuestionStrategy<C> {
@@ -239,13 +283,25 @@ impl<C> LlmNextQuestionStrategy<C> {
         Self {
             client,
             deterministic: DeterministicNextQuestionStrategy,
+            generated_question_persister: NoopGeneratedQuestionPersister,
         }
     }
 }
 
-impl<C> NextQuestionStrategy for LlmNextQuestionStrategy<C>
+impl<C, P> LlmNextQuestionStrategy<C, P> {
+    pub fn with_generated_question_persister(client: C, generated_question_persister: P) -> Self {
+        Self {
+            client,
+            deterministic: DeterministicNextQuestionStrategy,
+            generated_question_persister,
+        }
+    }
+}
+
+impl<C, P> NextQuestionStrategy for LlmNextQuestionStrategy<C, P>
 where
     C: LLMClient,
+    P: GeneratedQuestionPersister,
 {
     fn next_question(
         &self,
@@ -261,9 +317,10 @@ where
     }
 }
 
-impl<C> LlmNextQuestionStrategy<C>
+impl<C, P> LlmNextQuestionStrategy<C, P>
 where
     C: LLMClient,
+    P: GeneratedQuestionPersister,
 {
     fn llm_next_question(
         &self,
@@ -283,7 +340,14 @@ where
                     .call(SOCRATIC_SYSTEM_PROMPT, &[Message::user(prompt)], &[]),
             )
             .map_err(|error| QuizdomError::Aida(error.to_string()))?;
-        apply_llm_decision(&text, &candidates)
+        let next = apply_llm_decision(&text, &candidates)?;
+        match next {
+            Some(question) if question.id == "generated:llm" => self
+                .generated_question_persister
+                .persist_generated_question(current, &question)
+                .map(Some),
+            other => Ok(other),
+        }
     }
 }
 
@@ -325,6 +389,146 @@ impl QuestionBank for AidaCliQuestionBank {
             &output.stdout,
         )))
     }
+}
+
+trait CommandRunner {
+    fn run(&self, program: &str, args: &[String]) -> Result<Output>;
+}
+
+struct SystemCommandRunner;
+
+impl CommandRunner for SystemCommandRunner {
+    fn run(&self, program: &str, args: &[String]) -> Result<Output> {
+        Command::new(program)
+            .args(args)
+            .output()
+            .map_err(Into::into)
+    }
+}
+
+struct AidaCliGeneratedQuestionPersister<R = SystemCommandRunner> {
+    command: String,
+    runner: R,
+}
+
+impl Default for AidaCliGeneratedQuestionPersister<SystemCommandRunner> {
+    fn default() -> Self {
+        Self {
+            command: "aida".to_string(),
+            runner: SystemCommandRunner,
+        }
+    }
+}
+
+impl<R> AidaCliGeneratedQuestionPersister<R>
+where
+    R: CommandRunner,
+{
+    #[cfg(test)]
+    fn new(command: impl Into<String>, runner: R) -> Self {
+        Self {
+            command: command.into(),
+            runner,
+        }
+    }
+}
+
+impl<R> GeneratedQuestionPersister for AidaCliGeneratedQuestionPersister<R>
+where
+    R: CommandRunner,
+{
+    fn persist_generated_question(
+        &self,
+        origin: &Question,
+        question: &Question,
+    ) -> Result<Question> {
+        // trace:STORY-38 | ai:codex
+        let topic = question_topic(origin);
+        let tags = generated_question_tags(&topic, &question.answer_kind);
+        let description = generated_question_description(question, origin);
+        let add_args = vec![
+            "add".to_string(),
+            "--prefix".to_string(),
+            "Q".to_string(),
+            "--type".to_string(),
+            "functional".to_string(),
+            "--status".to_string(),
+            "approved".to_string(),
+            "--priority".to_string(),
+            "medium".to_string(),
+            "--title".to_string(),
+            question.title.clone(),
+            "--description".to_string(),
+            description,
+            "--tags".to_string(),
+            tags.join(","),
+        ];
+        let add_output = self.runner.run(&self.command, &add_args)?;
+        if !add_output.status.success() {
+            return Err(QuizdomError::Aida(
+                String::from_utf8_lossy(&add_output.stderr).to_string(),
+            ));
+        }
+        let id = parse_added_question_id(&String::from_utf8_lossy(&add_output.stdout))?;
+        let rel_args = vec![
+            "rel".to_string(),
+            "add".to_string(),
+            "--from".to_string(),
+            origin.id.clone(),
+            "--to".to_string(),
+            id.clone(),
+            "--type".to_string(),
+            "begets".to_string(),
+        ];
+        let rel_output = self.runner.run(&self.command, &rel_args)?;
+        if !rel_output.status.success() {
+            return Err(QuizdomError::Aida(
+                String::from_utf8_lossy(&rel_output.stderr).to_string(),
+            ));
+        }
+
+        let mut persisted = question.clone();
+        persisted.id = id;
+        persisted.tags = tags;
+        persisted.weight = 50;
+        Ok(persisted)
+    }
+}
+
+fn question_topic(question: &Question) -> String {
+    question
+        .tags
+        .iter()
+        .find_map(|tag| tag.strip_prefix("topic:"))
+        .filter(|topic| !topic.trim().is_empty())
+        .unwrap_or("generated")
+        .to_string()
+}
+
+fn generated_question_tags(topic: &str, answer_kind: &AnswerKind) -> Vec<String> {
+    vec![
+        format!("topic:{topic}"),
+        format!("answer:{}", answer_kind.mode()),
+        "weight:50".to_string(),
+        "seed".to_string(),
+    ]
+}
+
+fn generated_question_description(question: &Question, origin: &Question) -> String {
+    format!(
+        "LLM-generated quizdom question.\n\nanswer: {}\norigin: {}\n\nGenerated from origin question: {}",
+        question.answer_kind.mode(),
+        origin.id,
+        origin.title
+    )
+}
+
+fn parse_added_question_id(output: &str) -> Result<String> {
+    output
+        .split(|character: char| character.is_whitespace() || character == ':')
+        .find(|token| token.starts_with("Q-"))
+        .map(str::to_string)
+        .ok_or_else(|| QuizdomError::Parse("aida add output did not include Q id".to_string()))
 }
 
 #[derive(Debug, Clone)]
@@ -478,7 +682,10 @@ fn build_strategy(config: &CliConfig) -> Option<Box<dyn NextQuestionStrategy>> {
     match config.strategy {
         StrategyKind::Deterministic => None,
         StrategyKind::Llm => AnthropicClient::from_env().ok().map(|client| {
-            Box::new(LlmNextQuestionStrategy::new(client)) as Box<dyn NextQuestionStrategy>
+            Box::new(LlmNextQuestionStrategy::with_generated_question_persister(
+                client,
+                AidaCliGeneratedQuestionPersister::default(),
+            )) as Box<dyn NextQuestionStrategy>
         }),
     }
 }
@@ -1175,7 +1382,11 @@ pub fn parse_begets_rel_list(output: &str) -> Vec<QuestionRef> {
 mod tests {
     use super::*;
     use llm::{LLMError, LLMFuture, ToolDef};
+    use std::cell::RefCell;
     use std::collections::HashMap;
+    use std::os::unix::process::ExitStatusExt;
+    use std::process::{ExitStatus, Output};
+    use std::rc::Rc;
 
     #[test]
     fn parses_question_answer_kind_and_weight_from_aida_show() {
@@ -1282,6 +1493,106 @@ Tags: topic:free-will, answer:choice[libertarian, compatibilist], weight:42
         assert_eq!(next.id, "generated:llm");
         assert_eq!(next.title, "What do you mean by responsibility?");
         assert_eq!(next.answer_kind, AnswerKind::FreeText);
+    }
+
+    #[test]
+    fn llm_strategy_persists_generated_question_when_configured() {
+        let bank = FakeBank::new([question_with_tags(
+            "Q-1",
+            0,
+            AnswerKind::YesNo,
+            ["topic:free-will", "answer:yes-no", "weight:70"],
+        )]);
+        let runner = RecordingCommandRunner::new([
+            command_output(true, "Added: Q-42\n", ""),
+            command_output(true, "relationship added\n", ""),
+        ]);
+        let strategy = LlmNextQuestionStrategy::with_generated_question_persister(
+            MockLlm::ok(
+                r#"{"action":"generate","question":"What definition of responsibility are you using?","answer_mode":"free-text"}"#,
+            ),
+            AidaCliGeneratedQuestionPersister::new("aida", runner.clone()),
+        );
+
+        let next = strategy
+            .next_question(
+                &bank.load_question("Q-1").unwrap(),
+                &strategy_context("yes"),
+                &bank,
+            )
+            .unwrap()
+            .unwrap();
+
+        assert_eq!(next.id, "Q-42");
+        assert_eq!(
+            next.tags,
+            vec![
+                "topic:free-will".to_string(),
+                "answer:free-text".to_string(),
+                "weight:50".to_string(),
+                "seed".to_string()
+            ]
+        );
+        assert_eq!(
+            runner.calls(),
+            vec![
+                strings([
+                    "aida",
+                    "add",
+                    "--prefix",
+                    "Q",
+                    "--type",
+                    "functional",
+                    "--status",
+                    "approved",
+                    "--priority",
+                    "medium",
+                    "--title",
+                    "What definition of responsibility are you using?",
+                    "--description",
+                    "LLM-generated quizdom question.\n\nanswer: free-text\norigin: Q-1\n\nGenerated from origin question: Q-1",
+                    "--tags",
+                    "topic:free-will,answer:free-text,weight:50,seed",
+                ]),
+                strings([
+                    "aida", "rel", "add", "--from", "Q-1", "--to", "Q-42", "--type", "begets",
+                ]),
+            ]
+        );
+    }
+
+    #[test]
+    fn llm_strategy_prefers_near_identical_existing_candidate_over_duplicate() {
+        let bank = FakeBank::new([
+            question("Q-1", 0, AnswerKind::YesNo),
+            Question {
+                id: "Q-2".to_string(),
+                title: "What definition of responsibility are you using?".to_string(),
+                tags: vec!["topic:free-will".to_string(), "weight:50".to_string()],
+                answer_kind: AnswerKind::FreeText,
+                weight: 50,
+            },
+        ])
+        .with_edges("Q-1", ["Q-2"]);
+        let runner = RecordingCommandRunner::new([]);
+        let strategy = LlmNextQuestionStrategy::with_generated_question_persister(
+            MockLlm::ok(
+                r#"{"action":"generate","question":"  What definition of responsibility are you using?  ","answer_mode":"free-text"}"#,
+            ),
+            AidaCliGeneratedQuestionPersister::new("aida", runner.clone()),
+        );
+
+        let next = strategy
+            .next_question(
+                &bank.load_question("Q-1").unwrap(),
+                &strategy_context("yes"),
+                &bank,
+            )
+            .unwrap()
+            .unwrap();
+
+        assert_eq!(next.id, "Q-2");
+        assert!(runner.calls().is_empty());
     }
 
     #[test]
@@ -1542,10 +1853,19 @@ Tags: topic:free-will, answer:choice[libertarian, compatibilist], weight:42
     }
 
     fn question(id: &str, weight: u32, answer_kind: AnswerKind) -> Question {
+        question_with_tags(id, weight, answer_kind, [format!("weight:{weight}")])
+    }
+
+    fn question_with_tags(
+        id: &str,
+        weight: u32,
+        answer_kind: AnswerKind,
+        tags: impl IntoIterator<Item = impl Into<String>>,
+    ) -> Question {
         Question {
             id: id.to_string(),
             title: id.to_string(),
-            tags: vec![format!("weight:{weight}")],
+            tags: tags.into_iter().map(Into::into).collect(),
             answer_kind,
             weight,
         }
@@ -1587,6 +1907,53 @@ Tags: topic:free-will, answer:choice[libertarian, compatibilist], weight:42
         ) -> LLMFuture<'a> {
             Box::pin(std::future::ready(self.result.clone()))
         }
+    }
+
+    #[derive(Clone)]
+    struct RecordingCommandRunner {
+        calls: Rc<RefCell<Vec<Vec<String>>>>,
+        outputs: Rc<RefCell<Vec<Output>>>,
+    }
+
+    impl RecordingCommandRunner {
+        fn new(outputs: impl IntoIterator<Item = Output>) -> Self {
+            Self {
+                calls: Rc::new(RefCell::new(Vec::new())),
+                outputs: Rc::new(RefCell::new(outputs.into_iter().collect())),
+            }
+        }
+
+        fn calls(&self) -> Vec<Vec<String>> {
+            self.calls.borrow().clone()
+        }
+    }
+
+    impl CommandRunner for RecordingCommandRunner {
+        fn run(&self, program: &str, args: &[String]) -> Result<Output> {
+            let mut call = vec![program.to_string()];
+            call.extend(args.iter().cloned());
+            self.calls.borrow_mut().push(call);
+            if self.outputs.borrow().is_empty() {
+                return Err(QuizdomError::Aida("unexpected command".to_string()));
+            }
+            Ok(self.outputs.borrow_mut().remove(0))
+        }
+    }
+
+    fn command_output(success: bool, stdout: &str, stderr: &str) -> Output {
+        Output {
+            status: if success {
+                ExitStatus::from_raw(0)
+            } else {
+                ExitStatus::from_raw(1)
+            },
+            stdout: stdout.as_bytes().to_vec(),
+            stderr: stderr.as_bytes().to_vec(),
+        }
+    }
+
+    fn strings(items: impl IntoIterator<Item = &'static str>) -> Vec<String> {
+        items.into_iter().map(str::to_string).collect()
     }
 
     struct FakeBank {
