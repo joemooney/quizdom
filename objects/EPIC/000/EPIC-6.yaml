@@ -68,12 +68,12 @@ description: |-
   Session length / termination UX — purely user-driven (quit anytime) vs an
   optional max-depth or "until contradiction" auto-stop. Defaulting to user-driven
   with a flagged stopping point; revisit once we feel the loop.
-status: Approved
+status: Completed
 priority: High
 owner: ''
 feature: Uncategorized
 created_at: 2026-05-31T14:09:55.315076807Z
-modified_at: 2026-05-31T17:47:29.215446300Z
+modified_at: 2026-05-31T18:06:34.475910058Z
 req_type: Epic
 tags:
 - core
