@@ -8,12 +8,12 @@ description: |-
   Fixes (session.rs CliConfig::parse — codex-1's lane, NOT claude-2's strategy.rs): (1) accept a POSITIONAL session id for resume: 'quizdom session resume <session-id>'; keep --session as an alias. (2) Accept the id with OR without the 'sess-' prefix (user tried bare '1780256438'). (3) Make 'session --help' / 'session resume --help' print real help: subcommands (start/resume/list/fork), key flags, and a resume example. Bare 'session resume' already resolves to latest (STORY-65) — keep that.
 
   ## Acceptance: 'session resume <id>' works positionally (with/without sess- prefix); '--session' still works; bare 'session resume' = latest; 'session --help' prints real help; tests cover positional + flag + bare + help.
-status: Approved
+status: InProgress
 priority: High
 owner: ''
 feature: Uncategorized
 created_at: 2026-05-31T22:01:42.038457866Z
-modified_at: 2026-05-31T22:01:42.038457866Z
+modified_at: 2026-05-31T22:09:30.015368904Z
 req_type: Bug
 tags:
 - bug
