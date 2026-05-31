@@ -3,12 +3,12 @@ spec_id: STORY-36
 agreed_id: STORY-36
 title: 'AnthropicClient: reqwest impl of LLMClient (retries, streaming, config, caching)'
 description: 'Implement AnthropicClient over reqwest against /v1/messages: retries, stream aggregation, model+ANTHROPIC_API_KEY config, prompt caching. ## Acceptance: implements LLMClient; unit-tested against a mocked transport (no live API in tests). Depends on the llm-crate surface.'
-status: Approved
+status: InProgress
 priority: High
 owner: ''
 feature: Uncategorized
 created_at: 2026-05-31T17:45:58.755373637Z
-modified_at: 2026-05-31T17:46:40.234730839Z
+modified_at: 2026-05-31T18:51:02.038401290Z
 req_type: Story
 tags:
 - anthropic
