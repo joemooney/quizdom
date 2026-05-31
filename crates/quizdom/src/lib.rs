@@ -11,7 +11,7 @@ mod strategy;
 
 pub use bank::{
     parse_begets_rel_list, parse_probes_rel_list, parse_question_show, parse_term_show,
-    AidaCliQuestionBank, QuestionBank,
+    rewrite_weight_and_quality_tags, AidaCliQuestionBank, QuestionBank,
 };
 pub use contradiction::{
     beliefs_from_session_log, detect_graph_contradictions, detect_semantic_contradictions,
@@ -22,9 +22,12 @@ pub use error::{QuizdomError, Result};
 pub use model::{
     Answer, AnswerKind, Question, QuestionRef, TermDefinition, TermMappingProposal, TermRef,
 };
-pub use persist::{GeneratedQuestionPersister, NoopGeneratedQuestionPersister};
+pub use persist::{
+    GeneratedQuestionPersister, NoopGeneratedQuestionPersister, NoopQuestionReweighter,
+    QuestionReweighter,
+};
 pub use session::run_cli;
-pub use strategy::{AnsweredQuestion, StrategyContext};
+pub use strategy::{reweight, AnsweredQuestion, QualitySignal, StrategyContext};
 pub use strategy::{
     DeterministicNextQuestionStrategy, LlmNextQuestionStrategy, NextQuestionStrategy,
 };
