@@ -8,7 +8,7 @@ priority: High
 owner: ''
 feature: Uncategorized
 created_at: 2026-05-31T14:18:17.787088554Z
-modified_at: 2026-05-31T14:37:57.855081941Z
+modified_at: 2026-05-31T14:37:59.432745830Z
 req_type: Story
 tags:
 - docs
@@ -35,3 +35,8 @@ comments:
   content: 'Schema doc authored by codex; landed by advisor on branch feat/story-14-graph-schema as PR #1 (https://github.com/joemooney/quizdom/pull/1). Status walked back Completed -> in-progress: completed means merged. Will flip to completed when PR #1 merges.'
   created_at: 2026-05-31T14:35:40.316503909Z
   modified_at: 2026-05-31T14:35:40.316503909Z
+- id: 019e7e78-6308-7c43-9f87-97c5ec0707b7
+  author: joe
+  content: 'PR #1 merged to master; docs/architecture/graph-schema.md is canonical. Meets acceptance incl. worked free-will subgraph and a concrete weight:0-100 encoding. Now truly Completed.'
+  created_at: 2026-05-31T14:37:59.432745830Z
+  modified_at: 2026-05-31T14:37:59.432745830Z
