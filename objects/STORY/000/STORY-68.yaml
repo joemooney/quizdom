@@ -1,0 +1,18 @@
+id: 019e7ff4-f34e-7a82-8e83-4d9bad68596b
+spec_id: STORY-68
+agreed_id: STORY-68
+title: Derive quality signals from session logs (punt rate, branch productivity)
+description: 'In bank.rs/an analysis fn (reads JSONL logs, NO session loop edits): derive per-question signals — e.g. high punt rate -> unhelpful, leads-to-deep-branches -> insightful — and feed the re-weighting engine. ## Acceptance: given logs, computes per-question signals and applies re-weighting; tested against sample logs. Depends on the re-weighting engine.'
+status: Approved
+priority: Medium
+owner: ''
+feature: Uncategorized
+created_at: 2026-05-31T21:33:40.046948804Z
+modified_at: 2026-05-31T21:33:40.046948804Z
+req_type: Story
+tags:
+- analysis
+- curation
+- logs
+- signals
+- story
