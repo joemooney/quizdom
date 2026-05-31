@@ -10,7 +10,58 @@ them.
 
 ## Project overview
 
-quizdom
+**quizdom** (quiz + wisdom) is a Socratic, branching belief-exploration tool —
+not trivia, no correct answers. It maps and challenges a user's beliefs about
+existential questions via yes/no, multiple-choice, and free-text questions,
+persisting a graph of understanding. See `OVERVIEW.md` and `aida show VIS-1`.
+A hidden goal (`VIS-2`) is to dogfood and improve AIDA as a general-purpose
+data substrate.
+
+## Architecture & key decisions
+
+- **Stack: Rust** (`ADR-32`). Cargo workspace; the app is `crates/quizdom`
+  (binary). A provider-agnostic `llm` crate is coming in EPIC-7 (`ADR-34`) —
+  built fresh here, not extracted from `~/ai/aida-chat`.
+- **Data lives in AIDA** (`ADR-3`): no separate DB. The domain graph is AIDA
+  objects — `Q-*` questions, `TERM-*` definitions (`--type term`), `BELIEF-*`
+  propositions — joined by custom edges (`begets`/`probes`/`refines`/
+  `contradicts`/`agrees`/`disagrees`). Canonical schema:
+  `docs/architecture/graph-schema.md`. The app reads/writes by shelling out to
+  the `aida` CLI.
+- **Graph traversal is app-side** (`ADR-31`): `aida graph`/`query_graph` cannot
+  follow custom edges (upstream `~/ai/aida` FR-282), so we walk one hop at a
+  time via `aida rel list <node> --type <edge>`.
+- **Interface: CLI/TUI** (`ADR-4`); web deferred. **Weighting** uses `weight:N`
+  tags computed in-app (`ADR-22`).
+
+## Development
+
+```bash
+cargo test                 # workspace tests
+cargo run -p quizdom       # run the CLI session loop (reads seed data via aida)
+cargo build                # build
+```
+
+Layout: `Cargo.toml` (workspace) · `crates/quizdom/{src/main.rs,src/lib.rs}`.
+
+## Agent working discipline
+
+Rules for driving the multi-agent fleet on this project (learned the hard way —
+see the VIS-2 findings):
+
+- **Routing by agent type** — route **codex/antigravity** work via AIDA
+  **briefs** (`aida brief <agent> <SPEC> --note ...`); route **Claude Code**
+  implementers via the **queue** (`aida queue add <SPEC> --for implementer`,
+  picked up with `/aida-pickup`). codex has no `aida-pickup` skill. Never
+  queue+brief the same spec (the channels collide).
+- **Always launch implementers isolated** — start every implementer session
+  with `aida session start --owns <SPEC> --base main` so it runs in its own
+  sibling worktree + lease. Never `git checkout -b` in the shared main
+  worktree (causes lease/role bleed, scope bleed, and stale-branch breakage).
+- **Ship via branch + PR to `main`** (`ADR-21`). A spec is `Completed` only
+  when its PR **merges**; while a PR is open it's `in-progress`. Pure
+  AIDA-store data (e.g. seed clusters) lands via `aida push --store-only`, not
+  a code PR. Default branch is `main`.
 
 ## Discipline for AIDA-using sessions
 
