@@ -2,13 +2,55 @@ id: 019e7e5e-c7e6-7681-b5a9-b6be6ada3033
 spec_id: EPIC-8
 agreed_id: EPIC-8
 title: Semantic honing & definition steering
-description: 'When a loaded term appears (e.g. ''free will''), drill into the user''s meaning via free-text input and steer toward a formal/academic/public definition before falling back to a bespoke user-specific one. Dual Socratic purpose: elicit self-understanding AND teach semantic nuance.'
-status: Draft
+description: |-
+  When a loaded term appears (e.g. "free will"), drill into what the USER means via
+  free-text input, then steer them toward a formal / academic / public definition
+  before settling for a bespoke user-specific one. Dual Socratic purpose: elicit the
+  user's self-understanding AND teach them semantic distinctions they hadn't noticed.
+  Builds on the session loop (EPIC-6) + LLM strategy (EPIC-7) + the graph's TERM
+  nodes (`definition:formal|academic|public|user-specific`) and `probes` edges.
+
+  ## Flow
+
+  1. **Detect** a loaded term — either the current question `probes` TERM nodes
+     (graph-driven, cheap) or the LLM flags a loaded term in a free-text answer.
+  2. **Surface** the competing bank definitions for that term (e.g. free-will
+     libertarian vs compatibilist), teaching the distinction.
+  3. **Capture** the user's own meaning via free-text, and use the LLM to map it to
+     the CLOSEST formal definition ("that sounds compatibilist — does X capture it?").
+  4. **Steer** toward adopting a shared definition. Only if none fits, mint a
+     `definition:user-specific` TERM as a last resort (allowed, but aimed against).
+  5. **Record** the user's settled definition for the term (per-user, per ADR-12:
+     in the session log; promote a notable bespoke definition to a TERM node), so
+     downstream questions use the user's pinned meaning.
+
+  Honing runs INSIDE the existing loop: the LLM strategy can return a honing
+  sub-question (definition clarification) as a special next-question kind, rather
+  than a separate mode.
+
+  ## Acceptance
+
+  - Given a question that probes TERMs (e.g. Q-23 → free-will definitions), the
+    session surfaces the competing definitions to the user.
+  - The user's free-text meaning is mapped by the LLM to the closest formal
+    definition and proposed back for confirmation.
+  - If confirmed, the user's adopted definition is recorded; if nothing fits, a
+    `definition:user-specific` TERM is minted (tagged, linked) only after steering.
+  - Downstream questions in the session use the user's settled meaning.
+  - Deterministic/offline path degrades gracefully (surface bank definitions
+    without LLM mapping when no LLM backend is selected).
+
+  ## Verify
+
+  Run a session on Q-23, answer "yes", get drawn into "what do you mean by free
+  will?", see libertarian vs compatibilist surfaced, type a free-text meaning, and
+  get steered to the matching formal definition (or a tagged bespoke one).
+status: Approved
 priority: Medium
 owner: ''
 feature: Uncategorized
 created_at: 2026-05-31T14:10:01.318758757Z
-modified_at: 2026-05-31T14:10:01.318758757Z
+modified_at: 2026-05-31T19:38:04.728954997Z
 req_type: Epic
 tags:
 - epic
