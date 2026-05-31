@@ -10,12 +10,12 @@ description: |-
   Workaround: pass --strategy llm on resume.
 
   ## Acceptance: a session started with --strategy llm resumes WITH llm by default (no need to re-pass); an explicit --strategy on resume overrides; the strategy/backend is recorded in the session log; tests cover restore + explicit-override.
-status: Approved
+status: InProgress
 priority: High
 owner: ''
 feature: Uncategorized
 created_at: 2026-05-31T22:26:19.385687365Z
-modified_at: 2026-05-31T22:26:19.385687365Z
+modified_at: 2026-05-31T22:31:48.397481193Z
 req_type: Bug
 tags:
 - bug
