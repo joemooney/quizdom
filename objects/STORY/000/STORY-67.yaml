@@ -3,12 +3,12 @@ spec_id: STORY-67
 agreed_id: STORY-67
 title: Weighted-probabilistic successor selection (sample by weight; weight:0 excluded)
 description: 'Enhance strategy.rs selection from strict highest-weight to WEIGHTED SAMPLING across eligible begets-successors so variety emerges; weight:0 never auto-selected; honor STORY-48 from-answer filtering first. Deterministic test seam (inject the RNG/choice). ## Acceptance: selection samples proportional to weight; weight:0 excluded; from-answer filter still applies; tests cover distribution + exclusion. Depends on the re-weighting engine.'
-status: Approved
+status: InProgress
 priority: Medium
 owner: ''
 feature: Uncategorized
 created_at: 2026-05-31T21:33:35.720820049Z
-modified_at: 2026-05-31T21:33:35.720820049Z
+modified_at: 2026-05-31T22:21:34.218594885Z
 req_type: Story
 tags:
 - curation
