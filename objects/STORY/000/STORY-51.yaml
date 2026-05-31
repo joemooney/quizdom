@@ -8,7 +8,7 @@ priority: High
 owner: ''
 feature: Uncategorized
 created_at: 2026-05-31T20:01:17.344680316Z
-modified_at: 2026-05-31T20:42:43.204349056Z
+modified_at: 2026-05-31T20:46:09.785786062Z
 req_type: Story
 tags:
 - crossterm
@@ -20,3 +20,9 @@ relationships:
 - rel_type: Child
   target_id: 019e7f9f-f1bf-7ab2-b508-291f0849be84
   created_at: 2026-05-31T20:01:18.515792814Z
+comments:
+- id: 019e7fc9-7579-7c63-baac-4b0e835e2583
+  author: joe
+  content: 'Implemented single-key answer controls in input.rs with crossterm raw-mode reads for interactive TTY yes/no and choice prompts, falling back to line input when raw mode is unavailable or stdin is non-TTY. Yes/no prompts render [Y/N/X/P], choice prompts accept digits plus X/P, and free-text continues using the STORY-55 rustyline path with x/p escape commands normalized to explore/punt. Verified with cargo fmt --all --check, cargo test --workspace, git diff --check, and a piped-input fallback smoke. Shipped in PR #16.'
+  created_at: 2026-05-31T20:46:09.785786062Z
+  modified_at: 2026-05-31T20:46:09.785786062Z
