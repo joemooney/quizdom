@@ -1,4 +1,11 @@
 - user_id: joe
+  requirement_id: 019e7e66-5b3b-72a1-a52f-b55a1a8ce5fb
+  position: 0
+  added_by: joe
+  note: Foundation for EPIC-5. Write the graph-schema doc (node/edge/tag conventions) per EPIC-5 acceptance. Unblocks STORY-15/16.
+  added_at: 2026-05-31T14:19:11.169341107Z
+  for_role: implementer
+- user_id: joe
   requirement_id: 019e7bc2-5732-77e1-9251-faab7572dcea
   position: 1000
   added_by: joe
