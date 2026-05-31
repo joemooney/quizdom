@@ -872,11 +872,11 @@ fn renders_all_question_kinds() {
     let cases = [
         (
             AnswerKind::YesNo,
-            "[Y] Yes  [N] No  [X] eXplore  [P] Punt  [Q] Quit",
+            "[Y] Yes  [N] No  [X] eXplore  [P] Punt  [B] Back  [Q] Quit",
         ),
         (
             AnswerKind::Choice(vec!["libertarian".to_string(), "compatibilist".to_string()]),
-            "[1-2] Choose  [X] eXplore  [P] Punt  [Q] Quit",
+            "[1-2] Choose  [X] eXplore  [P] Punt  [B] Back  [Q] Quit",
         ),
         (AnswerKind::FreeText, "Answer in your own words, or Q/Quit"),
     ];
@@ -1137,6 +1137,106 @@ fn live_session_surfaces_graph_contradiction_as_follow_up_question() {
     let _ = fs::remove_file(path);
 }
 
+// trace:STORY-69 | ai:codex
+#[test]
+fn back_and_forward_browse_answered_path_without_truncating() {
+    let path = std::env::temp_dir().join(format!(
+        "quizdom-story-69-browse-test-{}.jsonl",
+        std::process::id()
+    ));
+    let _ = fs::remove_file(&path);
+    let bank = story_69_branching_bank();
+    let strategy = DeterministicNextQuestionStrategy;
+    let config = test_config(&path, "Q-1");
+    let mut output = Vec::new();
+
+    run_session(
+        &config,
+        &bank,
+        &strategy,
+        "yes\nyes\nb\nb\nf\nf\n/end\n".as_bytes(),
+        &mut output,
+    )
+    .unwrap();
+
+    let output = String::from_utf8(output).unwrap();
+    assert!(output.contains("Reviewing answer 2/2:"));
+    assert!(output.contains("saved answer: yes"));
+    assert!(output.contains("Reviewing answer 1/2:"));
+    assert!(
+        output.contains("[Y] Yes  [N] No  [X] eXplore  [P] Punt  [B] Back  [F] Forward  [Q] Quit")
+    );
+
+    let log = fs::read_to_string(&path).unwrap();
+    assert!(!log.contains(r#""event_type":"path_truncated""#));
+    let replay = SessionReplay::load(&path, "main").unwrap();
+    assert_eq!(replay.answers.len(), 2);
+    assert_eq!(replay.answers[0].question_ref, "Q-1");
+    assert_eq!(replay.answers[1].question_ref, "Q-yes");
+    assert_eq!(replay.next_question_ref.as_deref(), Some("Q-3"));
+
+    let _ = fs::remove_file(path);
+}
+
+// trace:STORY-69 | ai:codex
+#[test]
+fn revising_reviewed_answer_truncates_tail_and_resume_replays_revised_path() {
+    let path = std::env::temp_dir().join(format!(
+        "quizdom-story-69-revise-test-{}.jsonl",
+        std::process::id()
+    ));
+    let _ = fs::remove_file(&path);
+    let bank = story_69_branching_bank();
+    let strategy = DeterministicNextQuestionStrategy;
+    let config = test_config(&path, "Q-1");
+    let mut output = Vec::new();
+
+    run_session(
+        &config,
+        &bank,
+        &strategy,
+        "yes\nyes\nb\nb\nno\nno\n".as_bytes(),
+        &mut output,
+    )
+    .unwrap();
+
+    let output = String::from_utf8(output).unwrap();
+    assert!(output.contains("Reviewing answer 1/2:"));
+    assert!(output.contains("Q-no"));
+
+    let log = fs::read_to_string(&path).unwrap();
+    assert!(log.contains(r#""event_type":"path_truncated""#));
+    assert!(log.contains(r#""from_turn":0"#));
+
+    let replay = SessionReplay::load(&path, "main").unwrap();
+    assert_eq!(replay.answers.len(), 2);
+    assert_eq!(replay.answers[0].question_ref, "Q-1");
+    assert_eq!(replay.answers[0].normalized_answer, "no");
+    assert_eq!(replay.answers[1].question_ref, "Q-no");
+    assert_eq!(replay.answers[1].normalized_answer, "no");
+    assert_eq!(replay.next_question_ref, None);
+
+    let mut resume_output = Vec::new();
+    let mut resume_config = config.clone();
+    resume_config.command = SessionCommand::Resume;
+    resume_session(
+        &resume_config,
+        &bank,
+        &strategy,
+        "/end\n".as_bytes(),
+        &mut resume_output,
+    )
+    .unwrap();
+
+    let resume_output = String::from_utf8(resume_output).unwrap();
+    assert!(resume_output.contains("[turn 0] Q-1"));
+    assert!(resume_output.contains("answer: no"));
+    assert!(resume_output.contains("[turn 1] Q-no"));
+    assert!(!resume_output.contains("[turn 1] Q-yes"));
+
+    let _ = fs::remove_file(path);
+}
+
 #[test]
 fn forked_agree_and_disagree_branches_are_recoverable_independently() {
     let path = std::env::temp_dir().join(format!(
@@ -1253,6 +1353,27 @@ fn free_will_terms() -> Vec<TermDefinition> {
             "The action flows from the agent's own reasons without coercion.",
         ),
     ]
+}
+
+fn story_69_branching_bank() -> FakeBank {
+    FakeBank::new([
+        question("Q-1", 10, AnswerKind::YesNo),
+        question_with_tags(
+            "Q-yes",
+            10,
+            AnswerKind::YesNo,
+            ["weight:10", "from-answer:yes"],
+        ),
+        question_with_tags(
+            "Q-no",
+            10,
+            AnswerKind::YesNo,
+            ["weight:10", "from-answer:no"],
+        ),
+        question("Q-3", 1, AnswerKind::YesNo),
+    ])
+    .with_edges("Q-1", ["Q-yes", "Q-no"])
+    .with_edges("Q-yes", ["Q-3"])
 }
 
 fn test_config(path: &Path, seed: &str) -> CliConfig {

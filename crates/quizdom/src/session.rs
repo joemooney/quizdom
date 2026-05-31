@@ -8,7 +8,10 @@ use crate::honing::{
     definitions_for_loaded_terms, load_probed_terms, prompt_for_term_meaning,
     render_settled_term_definition, render_term_definitions, term_label, SettledTermDefinition,
 };
-use crate::input::{read_answer_or_end, render_question, AnswerInput, FreeTextInput};
+use crate::input::{
+    read_answer_or_end, render_question, render_question_for, AnswerInput, FreeTextInput,
+    InputContext,
+};
 use crate::model::{Answer, AnswerKind, Question, TermDefinition};
 #[cfg(test)]
 use crate::persist::NoopUserSpecificTermPersister;
@@ -403,6 +406,7 @@ fn run_session_from_current(
     let mut current = bank.load_question(&config.seed)?;
     let mut settled_terms = Vec::new();
     let mut surfaced_contradictions = BTreeSet::new();
+    let mut pending_revision: Option<(usize, Question, Answer)> = None;
 
     if write_start_event {
         logger.session_started(
@@ -414,40 +418,96 @@ fn run_session_from_current(
     }
 
     loop {
-        let answered_turn = turn;
-        logger.question_presented(
-            &config.session_id,
-            &config.user_id,
-            &config.branch_id,
-            answered_turn,
-            &current,
-        )?;
-        let probed_terms = load_probed_terms(bank, &current);
-        if let Some(settled) = settled_definition_for(&probed_terms, &settled_terms) {
-            render_settled_term_definition(settled, output)?;
-        } else {
-            render_term_definitions(&probed_terms, output)?;
-        }
-        render_question(&current, output)?;
-        let answer = match read_answer_or_end(
-            &current.answer_kind,
-            &mut input,
-            &mut free_text_input,
-            output,
-        )? {
-            AnswerInput::Answer(answer) => answer,
-            AnswerInput::End => {
-                writeln!(output, "Session ended.")?;
-                logger.session_ended(
+        let (answered_turn, answer) =
+            if let Some((index, revised_question, revised_answer)) = pending_revision.take() {
+                // trace:STORY-69 | ai:codex
+                truncate_session_path(
+                    config,
+                    &mut logger,
+                    index as u64,
+                    &mut recent_path,
+                    &mut surfaced_contradictions,
+                )?;
+                current = revised_question;
+                turn = index as u64;
+                logger.question_presented(
+                    &config.session_id,
+                    &config.user_id,
+                    &config.branch_id,
+                    turn,
+                    &current,
+                )?;
+                (turn, revised_answer)
+            } else {
+                let answered_turn = turn;
+                logger.question_presented(
                     &config.session_id,
                     &config.user_id,
                     &config.branch_id,
                     answered_turn,
-                    "User ended session.",
+                    &current,
                 )?;
-                break;
-            }
-        };
+                let probed_terms = load_probed_terms(bank, &current);
+                if let Some(settled) = settled_definition_for(&probed_terms, &settled_terms) {
+                    render_settled_term_definition(settled, output)?;
+                } else {
+                    render_term_definitions(&probed_terms, output)?;
+                }
+                render_question_for(&current, InputContext::Frontier, output)?;
+                let answer = match read_answer_or_end(
+                    &current.answer_kind,
+                    InputContext::Frontier,
+                    &mut input,
+                    &mut free_text_input,
+                    output,
+                )? {
+                    AnswerInput::Answer(answer) => answer,
+                    AnswerInput::Back => {
+                        match browse_answered_path(
+                            bank,
+                            &recent_path,
+                            &mut input,
+                            &mut free_text_input,
+                            output,
+                        )? {
+                            ReviewOutcome::Frontier => continue,
+                            ReviewOutcome::Revised {
+                                index,
+                                question,
+                                answer,
+                            } => {
+                                pending_revision = Some((index, question, answer));
+                                continue;
+                            }
+                            ReviewOutcome::End => {
+                                writeln!(output, "Session ended.")?;
+                                logger.session_ended(
+                                    &config.session_id,
+                                    &config.user_id,
+                                    &config.branch_id,
+                                    answered_turn,
+                                    "User ended session.",
+                                )?;
+                                break;
+                            }
+                        }
+                    }
+                    AnswerInput::Forward => continue,
+                    AnswerInput::End => {
+                        writeln!(output, "Session ended.")?;
+                        logger.session_ended(
+                            &config.session_id,
+                            &config.user_id,
+                            &config.branch_id,
+                            answered_turn,
+                            "User ended session.",
+                        )?;
+                        break;
+                    }
+                };
+                (answered_turn, answer)
+            };
+        let probed_terms = load_probed_terms(bank, &current);
         if answer.normalized == "explore" {
             // trace:STORY-52 | ai:codex
             if let Some(settled) = settled_definition_for(&probed_terms, &settled_terms) {
@@ -604,7 +664,13 @@ fn ask_contradiction_follow_up(
         &question,
     )?;
     render_question(&question, output)?;
-    match read_answer_or_end(&question.answer_kind, input, free_text_input, output)? {
+    match read_answer_or_end(
+        &question.answer_kind,
+        InputContext::Frontier,
+        input,
+        free_text_input,
+        output,
+    )? {
         AnswerInput::Answer(answer) => {
             logger.answer_recorded(
                 &config.session_id,
@@ -627,7 +693,102 @@ fn ask_contradiction_follow_up(
             )?;
             Ok(true)
         }
+        AnswerInput::Back | AnswerInput::Forward => Ok(false),
     }
+}
+
+enum ReviewOutcome {
+    Frontier,
+    Revised {
+        index: usize,
+        question: Question,
+        answer: Answer,
+    },
+    End,
+}
+
+fn browse_answered_path(
+    bank: &dyn QuestionBank,
+    recent_path: &[AnsweredQuestion],
+    input: &mut impl BufRead,
+    free_text_input: &mut FreeTextInput,
+    output: &mut impl Write,
+) -> Result<ReviewOutcome> {
+    if recent_path.is_empty() {
+        writeln!(output, "No previous answers to review.")?;
+        return Ok(ReviewOutcome::Frontier);
+    }
+    let mut cursor = recent_path.len() - 1;
+    loop {
+        let reviewed = &recent_path[cursor];
+        let question = bank.load_question(&reviewed.question_ref)?;
+        render_reviewed_answer(cursor, recent_path.len(), reviewed, output)?;
+        render_question_for(&question, InputContext::Review, output)?;
+        match read_answer_or_end(
+            &question.answer_kind,
+            InputContext::Review,
+            input,
+            free_text_input,
+            output,
+        )? {
+            AnswerInput::Back => {
+                if cursor == 0 {
+                    writeln!(output, "Already at the first answered question.")?;
+                } else {
+                    cursor -= 1;
+                }
+            }
+            AnswerInput::Forward => {
+                if cursor + 1 == recent_path.len() {
+                    return Ok(ReviewOutcome::Frontier);
+                }
+                cursor += 1;
+            }
+            AnswerInput::Answer(answer) => {
+                if answer.normalized == reviewed.normalized_answer {
+                    writeln!(output, "Answer unchanged; still reviewing the saved path.")?;
+                    continue;
+                }
+                return Ok(ReviewOutcome::Revised {
+                    index: cursor,
+                    question,
+                    answer,
+                });
+            }
+            AnswerInput::End => return Ok(ReviewOutcome::End),
+        }
+    }
+}
+
+fn render_reviewed_answer(
+    cursor: usize,
+    total: usize,
+    answer: &AnsweredQuestion,
+    output: &mut impl Write,
+) -> Result<()> {
+    // trace:STORY-69 | ai:codex
+    writeln!(output, "\nReviewing answer {}/{}:", cursor + 1, total)?;
+    writeln!(output, "{}", answer.question_text)?;
+    writeln!(output, "saved answer: {}", answer.raw_answer)?;
+    Ok(())
+}
+
+fn truncate_session_path(
+    config: &CliConfig,
+    logger: &mut SessionLogger,
+    from_turn: u64,
+    recent_path: &mut Vec<AnsweredQuestion>,
+    surfaced_contradictions: &mut BTreeSet<(String, String)>,
+) -> Result<()> {
+    recent_path.truncate(from_turn as usize);
+    surfaced_contradictions.clear();
+    logger.path_truncated(
+        &config.session_id,
+        &config.user_id,
+        &config.branch_id,
+        from_turn,
+        "User revised a reviewed answer.",
+    )
 }
 
 fn settled_definition_for<'a>(
@@ -915,6 +1076,15 @@ impl SessionReplay {
                         normalized_answer: json_string(&value, "normalized_answer")?,
                     });
                 }
+                Some("path_truncated") => {
+                    if event_branch(&value) != branch_id {
+                        continue;
+                    }
+                    let from_turn = json_u64(&value, "from_turn")?;
+                    questions.retain(|turn, _| *turn < from_turn);
+                    answers.retain(|answer| answer.turn < from_turn);
+                    next_question_ref = None;
+                }
                 Some("next_question_selected") => {
                     if event_branch(&value) != branch_id {
                         continue;
@@ -1086,6 +1256,27 @@ impl SessionLogger {
             "answer_mode": question.answer_kind.mode(),
             "raw_answer": answer.raw,
             "normalized_answer": answer.normalized,
+        }))
+    }
+
+    fn path_truncated(
+        &mut self,
+        session_id: &str,
+        user_id: &str,
+        branch_id: &str,
+        from_turn: u64,
+        reason: &str,
+    ) -> Result<()> {
+        let event_id = self.event_id();
+        self.write(json!({
+            "event_id": event_id,
+            "event_type": "path_truncated",
+            "occurred_at": Utc::now().to_rfc3339(),
+            "session_id": session_id,
+            "user_id": user_id,
+            "branch_id": branch_id,
+            "from_turn": from_turn,
+            "reason": reason,
         }))
     }
 
