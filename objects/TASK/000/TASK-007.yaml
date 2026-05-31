@@ -2,12 +2,12 @@ id: 019e7bc2-5732-77e1-9251-faab7572dcea
 spec_id: TASK-007
 title: Commit AIDA scaffolding (initial setup)
 description: 'After aida init, the scaffolded files are untracked. Run: git add . && git commit -m ''chore: scaffold AIDA''. The .gitignore deny-by-default rules (.aida/* + !.aida/config.toml) ensure only the right files get committed. Run ''aida queue done TASK-007'' after the commit lands.'
-status: InProgress
+status: Completed
 priority: High
 owner: ''
 feature: Uncategorized
 created_at: 2026-05-31T01:59:54.418870253Z
-modified_at: 2026-05-31T14:13:12.008256728Z
+modified_at: 2026-05-31T14:13:20.597815491Z
 req_type: Task
 tags:
 - first-task
