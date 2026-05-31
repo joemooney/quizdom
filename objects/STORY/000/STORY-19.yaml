@@ -8,7 +8,7 @@ priority: Medium
 owner: ''
 feature: Uncategorized
 created_at: 2026-05-31T14:31:40.271296227Z
-modified_at: 2026-05-31T17:49:19.208503300Z
+modified_at: 2026-05-31T17:55:04.707007234Z
 req_type: Story
 tags:
 - both-sides
@@ -23,3 +23,9 @@ relationships:
   target_id: 019e7e72-74bb-7c52-aa82-9f4b5c79e45b
   created_at: 2026-05-31T14:32:15.581738237Z
   created_by: joe
+comments:
+- id: 019e7f2c-d383-7890-af66-d4b0a6809076
+  author: mcp
+  content: 'Implementation complete via Codex and merged in PR #5. Added `quizdom session fork` to record agree/disagree branch forks from a proposition, branch-aware JSONL events, branch-scoped replay/resume, and tests proving agree/disagree branches are independently recoverable and walkable. Verified with cargo test and a live fork/resume smoke using Q-26 and Q-27.'
+  created_at: 2026-05-31T17:55:04.706999010Z
+  modified_at: 2026-05-31T17:55:04.706999010Z
