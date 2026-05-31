@@ -1,7 +1,8 @@
 use crate::bank::{AidaCliQuestionBank, QuestionBank};
 use crate::contradiction::{
-    beliefs_from_session_log, detect_graph_contradictions, AidaCliContradictsEdges, Contradiction,
-    ContradictsEdges,
+    beliefs_from_session_log, detect_graph_contradictions, AidaCliContradictionResolutionPersister,
+    AidaCliContradictsEdges, Contradiction, ContradictionResolution,
+    ContradictionResolutionPersister, ContradictsEdges,
 };
 use crate::error::{QuizdomError, Result};
 use crate::honing::{
@@ -401,12 +402,14 @@ pub(crate) fn run_session_with_term_persister(
     output: &mut impl Write,
 ) -> Result<()> {
     let contradiction_edges = AidaCliContradictsEdges::default();
+    let contradiction_resolution_persister = AidaCliContradictionResolutionPersister::default();
     run_session_from_current(
         config,
         bank,
         strategy,
         term_persister,
         &contradiction_edges,
+        &contradiction_resolution_persister,
         input,
         output,
         0,
@@ -424,12 +427,34 @@ pub(crate) fn run_session_with_contradiction_edges(
     input: impl Read,
     output: &mut impl Write,
 ) -> Result<()> {
+    run_session_with_contradiction_edges_and_resolution_persister(
+        config,
+        bank,
+        strategy,
+        edges,
+        &crate::contradiction::NoopContradictionResolutionPersister,
+        input,
+        output,
+    )
+}
+
+#[cfg(test)]
+pub(crate) fn run_session_with_contradiction_edges_and_resolution_persister(
+    config: &CliConfig,
+    bank: &dyn QuestionBank,
+    strategy: &dyn NextQuestionStrategy,
+    edges: &dyn ContradictsEdges,
+    resolution_persister: &dyn ContradictionResolutionPersister,
+    input: impl Read,
+    output: &mut impl Write,
+) -> Result<()> {
     run_session_from_current(
         config,
         bank,
         strategy,
         &NoopUserSpecificTermPersister,
         edges,
+        resolution_persister,
         input,
         output,
         0,
@@ -444,6 +469,7 @@ fn run_session_from_current(
     strategy: &dyn NextQuestionStrategy,
     term_persister: &dyn UserSpecificTermPersister,
     contradiction_edges: &dyn ContradictsEdges,
+    contradiction_resolution_persister: &dyn ContradictionResolutionPersister,
     input: impl Read,
     output: &mut impl Write,
     mut turn: u64,
@@ -605,6 +631,7 @@ fn run_session_from_current(
                 &contradiction,
                 &mut input,
                 &mut free_text_input,
+                contradiction_resolution_persister,
                 output,
             )? {
                 break;
@@ -694,6 +721,7 @@ fn ask_contradiction_follow_up(
     contradiction: &Contradiction,
     input: &mut impl BufRead,
     free_text_input: &mut FreeTextInput,
+    resolution_persister: &dyn ContradictionResolutionPersister,
     output: &mut impl Write,
 ) -> Result<bool> {
     let question = Question {
@@ -722,6 +750,16 @@ fn ask_contradiction_follow_up(
         output,
     )? {
         AnswerInput::Answer(answer) => {
+            let resolution = resolution_persister.persist_resolution(contradiction, &answer.raw)?;
+            logger.contradiction_resolved(
+                &config.session_id,
+                &config.user_id,
+                &config.branch_id,
+                turn,
+                contradiction,
+                &answer,
+                resolution.as_ref(),
+            )?;
             logger.answer_recorded(
                 &config.session_id,
                 &config.user_id,
@@ -900,6 +938,7 @@ fn resume_session_with_term_persister(
         strategy,
         term_persister,
         &AidaCliContradictsEdges::default(),
+        &AidaCliContradictionResolutionPersister::default(),
         input,
         output,
         replay.next_turn,
@@ -1306,6 +1345,37 @@ impl SessionLogger {
             "answer_mode": question.answer_kind.mode(),
             "raw_answer": answer.raw,
             "normalized_answer": answer.normalized,
+        }))
+    }
+
+    fn contradiction_resolved(
+        &mut self,
+        session_id: &str,
+        user_id: &str,
+        branch_id: &str,
+        turn: u64,
+        contradiction: &Contradiction,
+        answer: &Answer,
+        resolution: Option<&ContradictionResolution>,
+    ) -> Result<()> {
+        // trace:STORY-59 | ai:codex
+        let event_id = self.event_id();
+        self.write(json!({
+            "event_id": event_id,
+            "event_type": "contradiction_resolved",
+            "occurred_at": Utc::now().to_rfc3339(),
+            "session_id": session_id,
+            "user_id": user_id,
+            "branch_id": branch_id,
+            "turn": turn,
+            "left_belief_ref": contradiction.left_id,
+            "left_belief": contradiction.left,
+            "right_belief_ref": contradiction.right_id,
+            "right_belief": contradiction.right,
+            "raw_resolution": answer.raw,
+            "normalized_resolution": answer.normalized,
+            "kept_side": resolution.map(|resolution| resolution.kept_side.as_str()),
+            "graph_ref": resolution.and_then(|resolution| resolution.graph_ref.as_deref()),
         }))
     }
 
