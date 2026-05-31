@@ -92,6 +92,14 @@ pub struct TermDefinition {
     pub definition: String,
 }
 
+#[derive(Debug, Clone, Eq, PartialEq)]
+pub struct TermMappingProposal {
+    pub term_id: String,
+    pub term_title: String,
+    pub definition: String,
+    pub rationale: String,
+}
+
 pub trait QuestionBank {
     fn load_question(&self, id: &str) -> Result<Question>;
     fn begets(&self, id: &str) -> Result<Vec<QuestionRef>>;
@@ -121,6 +129,15 @@ pub trait NextQuestionStrategy {
 
     fn loaded_terms(&self, _current: &Question, _answer: &Answer) -> Result<Vec<String>> {
         Ok(Vec::new())
+    }
+
+    fn map_term_meaning(
+        &self,
+        _term_label: &str,
+        _meaning: &str,
+        _definitions: &[TermDefinition],
+    ) -> Result<Option<TermMappingProposal>> {
+        Ok(None)
     }
 }
 
@@ -342,6 +359,16 @@ where
     fn loaded_terms(&self, current: &Question, answer: &Answer) -> Result<Vec<String>> {
         self.llm_loaded_terms(current, answer).or(Ok(Vec::new()))
     }
+
+    fn map_term_meaning(
+        &self,
+        term_label: &str,
+        meaning: &str,
+        definitions: &[TermDefinition],
+    ) -> Result<Option<TermMappingProposal>> {
+        self.llm_map_term_meaning(term_label, meaning, definitions)
+            .or(Ok(None))
+    }
 }
 
 impl<C, P> LlmNextQuestionStrategy<C, P>
@@ -395,6 +422,30 @@ where
             ))
             .map_err(|error| QuizdomError::Aida(error.to_string()))?;
         parse_loaded_terms(&text)
+    }
+
+    fn llm_map_term_meaning(
+        &self,
+        term_label: &str,
+        meaning: &str,
+        definitions: &[TermDefinition],
+    ) -> Result<Option<TermMappingProposal>> {
+        if definitions.is_empty() {
+            return Ok(None);
+        }
+        let prompt = term_mapping_prompt(term_label, meaning, definitions);
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_time()
+            .build()
+            .map_err(QuizdomError::Io)?;
+        let (text, _tool_calls) = runtime
+            .block_on(self.client.call(
+                "Map the user's term meaning to the closest formal bank definition.",
+                &[Message::user(prompt)],
+                &[],
+            ))
+            .map_err(|error| QuizdomError::Aida(error.to_string()))?;
+        parse_term_mapping(&text, definitions)
     }
 }
 
@@ -841,6 +892,7 @@ fn run_session_from_current(
         )?;
         let probed_terms = load_probed_terms(bank, &current);
         render_term_definitions(&probed_terms, output)?;
+        prompt_for_term_meaning(&probed_terms, strategy, &mut input, output)?;
         render_question(&current, output)?;
         let answer = match read_answer_or_end(&current.answer_kind, &mut input, output)? {
             AnswerInput::Answer(answer) => answer,
@@ -908,6 +960,71 @@ fn run_session_from_current(
         }
     }
 
+    Ok(())
+}
+
+fn prompt_for_term_meaning(
+    definitions: &[TermDefinition],
+    strategy: &dyn NextQuestionStrategy,
+    input: &mut impl BufRead,
+    output: &mut impl Write,
+) -> Result<()> {
+    if definitions.len() < 2 {
+        return Ok(());
+    }
+    // trace:STORY-42 | ai:codex
+    let term_label = term_label(definitions);
+    writeln!(output, "\nWhat do you mean by {term_label}?")?;
+    write!(output, "> ")?;
+    output.flush()?;
+    let mut raw = String::new();
+    if input.read_line(&mut raw)? == 0 {
+        return Ok(());
+    }
+    let meaning = raw.trim();
+    if meaning.is_empty() || meaning == "/end" {
+        return Ok(());
+    }
+    if let Some(proposal) = strategy
+        .map_term_meaning(&term_label, meaning, definitions)
+        .unwrap_or(None)
+    {
+        render_term_mapping_proposal(&proposal, output)?;
+    }
+    Ok(())
+}
+
+fn term_label(definitions: &[TermDefinition]) -> String {
+    definitions
+        .iter()
+        .find_map(|definition| {
+            definition
+                .tags
+                .iter()
+                .find_map(|tag| tag.strip_prefix("topic:"))
+        })
+        .map(|topic| topic.replace('-', " "))
+        .unwrap_or_else(|| {
+            definitions
+                .first()
+                .map(|definition| normalize_loaded_term(&definition.title))
+                .filter(|term| !term.is_empty())
+                .unwrap_or_else(|| "this term".to_string())
+        })
+}
+
+fn render_term_mapping_proposal(
+    proposal: &TermMappingProposal,
+    output: &mut impl Write,
+) -> Result<()> {
+    writeln!(
+        output,
+        "That sounds closest to {}: {} Does this capture it?",
+        proposal.term_title, proposal.definition
+    )?;
+    if !proposal.rationale.trim().is_empty() {
+        writeln!(output, "Reason: {}", proposal.rationale.trim())?;
+    }
     Ok(())
 }
 
@@ -1621,6 +1738,48 @@ fn parse_loaded_terms(text: &str) -> Result<Vec<String>> {
         .collect())
 }
 
+fn term_mapping_prompt(term_label: &str, meaning: &str, definitions: &[TermDefinition]) -> String {
+    let mut prompt =
+        format!("Loaded term: {term_label}\nUser meaning: {meaning}\n\nBank definitions:\n");
+    for definition in definitions {
+        prompt.push_str(&format!(
+            "- {} | {} | {}\n",
+            definition.id, definition.title, definition.definition
+        ));
+    }
+    prompt.push_str(
+        "\nReturn only JSON: {\"term_id\":\"TERM-...\",\"rationale\":\"short reason\"}. Choose the closest formal/academic bank definition.",
+    );
+    prompt
+}
+
+fn parse_term_mapping(
+    text: &str,
+    definitions: &[TermDefinition],
+) -> Result<Option<TermMappingProposal>> {
+    let value: Value = serde_json::from_str(text.trim())
+        .map_err(|error| QuizdomError::Parse(format!("invalid term-mapping JSON: {error}")))?;
+    let Some(term_id) = value.get("term_id").and_then(Value::as_str) else {
+        return Ok(None);
+    };
+    let Some(definition) = definitions
+        .iter()
+        .find(|definition| definition.id == term_id)
+    else {
+        return Ok(None);
+    };
+    Ok(Some(TermMappingProposal {
+        term_id: definition.id.clone(),
+        term_title: definition.title.clone(),
+        definition: definition.definition.clone(),
+        rationale: value
+            .get("rationale")
+            .and_then(Value::as_str)
+            .unwrap_or("")
+            .to_string(),
+    }))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1976,7 +2135,7 @@ scope: formal definition.
             &config,
             &bank,
             &DeterministicNextQuestionStrategy,
-            "yes\n".as_bytes(),
+            "I mean acting from my own reasons.\nyes\n".as_bytes(),
             &mut output,
         )
         .unwrap();
@@ -2009,6 +2168,80 @@ scope: formal definition.
         let filtered = definitions_for_loaded_terms(&definitions, &["free will".to_string()]);
 
         assert_eq!(filtered, vec![definitions[0].clone()]);
+    }
+
+    #[test]
+    fn llm_strategy_maps_user_meaning_to_closest_term_definition() {
+        let definitions = free_will_terms();
+        let strategy = LlmNextQuestionStrategy::new(MockLlm::ok(
+            r#"{"term_id":"TERM-25","rationale":"The user emphasized acting from reasons without coercion."}"#,
+        ));
+
+        let proposal = strategy
+            .map_term_meaning(
+                "free will",
+                "I mean acting from my own reasons without being forced.",
+                &definitions,
+            )
+            .unwrap()
+            .unwrap();
+
+        assert_eq!(proposal.term_id, "TERM-25");
+        assert_eq!(proposal.term_title, "free will / compatibilist");
+        assert!(proposal.definition.contains("without coercion"));
+        assert!(proposal.rationale.contains("without coercion"));
+    }
+
+    #[test]
+    fn deterministic_strategy_skips_term_mapping_offline() {
+        let proposal = DeterministicNextQuestionStrategy
+            .map_term_meaning(
+                "free will",
+                "I mean acting from my own reasons.",
+                &free_will_terms(),
+            )
+            .unwrap();
+
+        assert_eq!(proposal, None);
+    }
+
+    #[test]
+    fn session_asks_user_meaning_and_renders_mapping_proposal() {
+        let path = std::env::temp_dir().join(format!(
+            "quizdom-story-42-test-{}.jsonl",
+            std::process::id()
+        ));
+        let _ = fs::remove_file(&path);
+        let bank = FakeBank::new([question_with_tags(
+            "Q-23",
+            70,
+            AnswerKind::YesNo,
+            ["topic:free-will", "answer:yes-no", "weight:70"],
+        )])
+        .with_probes("Q-23", ["TERM-24", "TERM-25"])
+        .with_terms(free_will_terms());
+        let strategy = LlmNextQuestionStrategy::new(MockLlm::ok(
+            r#"{"term_id":"TERM-25","rationale":"The user emphasized reasons without coercion."}"#,
+        ));
+        let config = test_config(&path, "Q-23");
+        let mut output = Vec::new();
+
+        run_session(
+            &config,
+            &bank,
+            &strategy,
+            "Acting from my own reasons without coercion.\nyes\n".as_bytes(),
+            &mut output,
+        )
+        .unwrap();
+
+        let output = String::from_utf8(output).unwrap();
+        assert!(output.contains("What do you mean by free will?"));
+        assert!(output.contains("That sounds closest to free will / compatibilist"));
+        assert!(output.contains("Does this capture it?"));
+        assert!(output.contains("without coercion"));
+
+        let _ = fs::remove_file(path);
     }
 
     #[test]
@@ -2273,6 +2506,21 @@ scope: formal definition.
             ],
             definition: definition.to_string(),
         }
+    }
+
+    fn free_will_terms() -> Vec<TermDefinition> {
+        vec![
+            term(
+                "TERM-24",
+                "free will / libertarian",
+                "An agent could genuinely have chosen otherwise.",
+            ),
+            term(
+                "TERM-25",
+                "free will / compatibilist",
+                "The action flows from the agent's own reasons without coercion.",
+            ),
+        ]
     }
 
     fn test_config(path: &Path, seed: &str) -> CliConfig {
