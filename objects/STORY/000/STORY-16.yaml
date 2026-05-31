@@ -8,7 +8,7 @@ priority: High
 owner: ''
 feature: Uncategorized
 created_at: 2026-05-31T14:18:25.398745821Z
-modified_at: 2026-05-31T15:21:10.505041855Z
+modified_at: 2026-05-31T15:21:12.270550129Z
 req_type: Story
 tags:
 - graph
@@ -38,3 +38,8 @@ comments:
   content: 'Seed ''free will'' cluster created as real AIDA objects (instantiates docs/architecture/graph-schema.md worked example): Q-23 (seed Q), TERM-24 (libertarian) + TERM-25 (compatibilist), Q-26 + Q-27 (follow-ups), BELIEF-28 + BELIEF-29. Edges (8, 5 custom types): probes Q-23->TERM-24/25, begets Q-23->Q-26/27, probes Q-27->BELIEF-29, refines TERM-24->TERM-25, disagrees BELIEF-28->BELIEF-29. Acceptance: ''aida rel list Q-23 shows custom edges'' PASSES; ''aida query_graph traverses Q->definitions->follow-ups'' FAILS — query_graph/aida graph ignore custom edge types (returns 0 nodes from Q-23). Filed as VIS-2 finding TASK-30. NOT marked Completed pending advisor decision on the acceptance tension.'
   created_at: 2026-05-31T15:08:04.320464484Z
   modified_at: 2026-05-31T15:08:04.320464484Z
+- id: 019e7e9f-f34e-7dd2-9410-0d652e25de46
+  author: joe
+  content: 'ADVISOR DECISION (accept-with-finding): the ''aida query_graph traverses Q->definitions->follow-ups'' acceptance clause is superseded by VIS-2 finding TASK-30 — query_graph/aida graph cannot follow custom edge types, an AIDA gap, not a data defect. The cluster meets STORY-16''s intent: real AIDA objects exist (Q-23, TERM-24/25, Q-26/27, BELIEF-28/29), all custom edges present, fully traversable via ''aida rel list'' / ''aida rel list --type <edge>'' and composable into app-side BFS. query_graph custom-edge traversal tracked in TASK-30. Closing Completed.'
+  created_at: 2026-05-31T15:21:12.270550129Z
+  modified_at: 2026-05-31T15:21:12.270550129Z
