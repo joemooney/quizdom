@@ -12,3 +12,10 @@
   note: Auto-queued by 'aida init' onboarding task (TASK-007)
   added_at: 2026-05-31T01:59:55.330178985Z
   for_role: implementer
+- user_id: joe
+  requirement_id: 019e7e66-78f6-7972-b865-2ca1b648e9e0
+  position: 2000
+  added_by: joe
+  note: Seed 'free will' cluster as real AIDA objects (Q + 2 term defs + probes/begets edges). Model is specified in EPIC-5; validates the schema via aida query_graph.
+  added_at: 2026-05-31T14:19:12.338020084Z
+  for_role: implementer
