@@ -3,12 +3,12 @@ spec_id: STORY-59
 agreed_id: STORY-59
 title: Record contradiction resolutions in the belief graph
 description: 'On the user''s response to a surfaced contradiction, persist the resolution: add/confirm a contradicts edge and note which side the user kept (or a reconciling refinement). ## Acceptance: a resolution writes a contradicts edge + the kept side to the graph, reachable via aida. Depends on the surface story + graph schema.'
-status: Approved
+status: InProgress
 priority: Medium
 owner: ''
 feature: Uncategorized
 created_at: 2026-05-31T20:36:02.943431338Z
-modified_at: 2026-05-31T20:36:02.943431338Z
+modified_at: 2026-05-31T22:22:03.253751295Z
 req_type: Story
 tags:
 - contradiction
