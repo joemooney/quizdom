@@ -3,12 +3,12 @@ spec_id: STORY-68
 agreed_id: STORY-68
 title: Derive quality signals from session logs (punt rate, branch productivity)
 description: 'In bank.rs/an analysis fn (reads JSONL logs, NO session loop edits): derive per-question signals — e.g. high punt rate -> unhelpful, leads-to-deep-branches -> insightful — and feed the re-weighting engine. ## Acceptance: given logs, computes per-question signals and applies re-weighting; tested against sample logs. Depends on the re-weighting engine.'
-status: InProgress
+status: Completed
 priority: Medium
 owner: ''
 feature: Uncategorized
 created_at: 2026-05-31T21:33:40.046948804Z
-modified_at: 2026-05-31T22:36:51.814557285Z
+modified_at: 2026-05-31T22:40:54.063902435Z
 req_type: Story
 tags:
 - analysis
@@ -26,3 +26,7 @@ comments:
   content: 'Implementing as a new signals.rs module: analyze_session_log reads the JSONL session log and tallies per-question presented/answered/punted counts + branch depth (from next_question_selected edges); QuestionSignalStats::signal classifies high-punt-rate->Unhelpful, deep-branch->Insightful, else Neutral; apply_log_signals feeds the STORY-66 re-weighting engine via QuestionBank + QuestionReweighter. No session-loop edits.'
   created_at: 2026-05-31T22:36:51.814557285Z
   modified_at: 2026-05-31T22:36:51.814557285Z
+implementation_info:
+  implemented: false
+  completed_at: 2026-05-31T22:40:54.063902435Z
+  completion_sha: e031779cdf50fcdaf9ac8680bad8ad80e1ae282e
