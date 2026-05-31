@@ -8,7 +8,7 @@ priority: High
 owner: ''
 feature: Uncategorized
 created_at: 2026-05-31T14:18:25.398745821Z
-modified_at: 2026-05-31T15:08:04.320464484Z
+modified_at: 2026-05-31T15:21:10.505041855Z
 req_type: Story
 tags:
 - graph
@@ -22,6 +22,10 @@ relationships:
 - rel_type: References
   target_id: 019e7e66-5b3b-72a1-a52f-b55a1a8ce5fb
   created_at: 2026-05-31T14:19:10.126022289Z
+  created_by: joe
+- rel_type: References
+  target_id: 019e7e93-a783-7933-bc21-57dd7a9c4186
+  created_at: 2026-05-31T15:21:10.505034010Z
   created_by: joe
 comments:
 - id: 019e7e78-6cea-7cc2-af7f-ca065e21f562
