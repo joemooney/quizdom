@@ -8,7 +8,7 @@ priority: High
 owner: ''
 feature: Uncategorized
 created_at: 2026-05-31T21:33:31.057653884Z
-modified_at: 2026-05-31T21:42:49.121298707Z
+modified_at: 2026-05-31T21:58:01.520487628Z
 req_type: Story
 tags:
 - bank
@@ -20,3 +20,9 @@ relationships:
 - rel_type: Child
   target_id: 019e7e5e-e038-77b0-a462-602c6b7db9df
   created_at: 2026-05-31T21:33:32.210786092Z
+comments:
+- id: 019e800b-4030-75e3-91f9-518e736b44f4
+  author: joe
+  content: 'Re-weighting engine implemented across strategy.rs (QualitySignal enum + pure reweight() clamped to [0,100] + quality_tag mapping), bank.rs (rewrite_weight_and_quality_tags: pure single-valued tag rewrite), persist.rs (QuestionReweighter trait + AidaCliQuestionReweighter persisting via ''aida edit <ID> --tags'' replace-semantics, plus NoopQuestionReweighter). 14 unit tests added (mocked CommandRunner); disjoint from session.rs. cargo test: 119 pass, fmt clean, 0 warnings.'
+  created_at: 2026-05-31T21:58:01.520487628Z
+  modified_at: 2026-05-31T21:58:01.520487628Z
