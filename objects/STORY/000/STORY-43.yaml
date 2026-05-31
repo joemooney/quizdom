@@ -1,0 +1,17 @@
+id: 019e7f8b-4a67-7030-b881-fe03c0c9e336
+spec_id: STORY-43
+agreed_id: STORY-43
+title: Steering loop + bespoke user-specific fallback (aimed against)
+description: 'Steer the user to adopt a matched shared definition. Only if none fits, mint a definition:user-specific TERM (aida add --type term, tag definition:user-specific) as a last resort — allowed but aimed against per VIS-1. ## Acceptance: confirmation adopts the formal definition; a no-match path mints a tagged user-specific TERM only after steering; both covered by tests. Depends on the mapping story.'
+status: Approved
+priority: High
+owner: ''
+feature: Uncategorized
+created_at: 2026-05-31T19:38:15.527141355Z
+modified_at: 2026-05-31T19:38:15.527141355Z
+req_type: Story
+tags:
+- definitions
+- semantics
+- steering
+- story
