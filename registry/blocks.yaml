@@ -1,0 +1,9 @@
+blocks:
+- node_id: JM
+  owner: joe.mooney@gmail.com
+  hostname: imac
+  type_prefix: '*'
+  range_start: 1
+  range_end: 1000
+  next: 1
+  allocated_at: 2026-05-31T01:59:52.886199699Z
