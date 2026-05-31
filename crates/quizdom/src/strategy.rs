@@ -60,6 +60,146 @@ impl NextQuestionStrategy for DeterministicNextQuestionStrategy {
     }
 }
 
+// trace:STORY-67 | ai:claude
+/// The randomness seam for weighted-probabilistic selection. Implementors
+/// return a value in `[0, total)`; injecting a fixed sampler makes selection
+/// fully deterministic under test.
+pub trait WeightSampler {
+    /// A value in `[0, total)`. `total` is guaranteed to be greater than zero.
+    fn roll(&self, total: u64) -> u64;
+}
+
+// trace:STORY-67 | ai:claude
+/// Map a `roll` in `[0, sum(weights))` to the index whose proportional slice of
+/// the line it lands in. Each entry occupies a slice as wide as its weight, so
+/// the chance of an index is `weight[i] / sum(weights)`. Returns `None` only
+/// when every weight is zero (an empty or all-excluded candidate set).
+///
+/// Pure and total — the deterministic core of weighted sampling. The roll is
+/// reduced modulo the total as a defensive guard so an out-of-range sampler can
+/// never panic or fall off the end.
+fn weighted_index(weights: &[u32], roll: u64) -> Option<usize> {
+    let total: u64 = weights.iter().map(|&weight| u64::from(weight)).sum();
+    if total == 0 {
+        return None;
+    }
+    let target = roll % total;
+    let mut cumulative = 0u64;
+    for (index, &weight) in weights.iter().enumerate() {
+        cumulative += u64::from(weight);
+        if target < cumulative {
+            return Some(index);
+        }
+    }
+    // Unreachable while total > 0, but stay total rather than panicking.
+    weights.iter().rposition(|&weight| weight > 0)
+}
+
+// trace:STORY-67 | ai:claude
+/// A small, dependency-free xorshift64 sampler seeded from the wall clock.
+/// Good enough to spread successor selection across a session; not for
+/// cryptographic use.
+pub struct XorShiftWeightSampler {
+    state: std::cell::Cell<u64>,
+}
+
+impl XorShiftWeightSampler {
+    /// Seed explicitly — used by tests that want a reproducible sequence.
+    pub fn with_seed(seed: u64) -> Self {
+        // A zero seed makes xorshift degenerate; nudge it off zero.
+        Self {
+            state: std::cell::Cell::new(if seed == 0 { 0x9E3779B97F4A7C15 } else { seed }),
+        }
+    }
+
+    /// Seed from the current time so successive sessions diverge.
+    pub fn from_entropy() -> Self {
+        let seed = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|elapsed| elapsed.as_nanos() as u64)
+            .unwrap_or(0x9E3779B97F4A7C15);
+        Self::with_seed(seed)
+    }
+
+    fn next_u64(&self) -> u64 {
+        let mut x = self.state.get();
+        x ^= x << 13;
+        x ^= x >> 7;
+        x ^= x << 17;
+        self.state.set(x);
+        x
+    }
+}
+
+impl Default for XorShiftWeightSampler {
+    fn default() -> Self {
+        Self::from_entropy()
+    }
+}
+
+impl WeightSampler for XorShiftWeightSampler {
+    fn roll(&self, total: u64) -> u64 {
+        self.next_u64() % total
+    }
+}
+
+// trace:STORY-67 | ai:claude
+/// Selects the next question by sampling eligible `begets`-successors in
+/// proportion to their weight, so heavier questions surface more often while
+/// lighter ones still get a turn and variety emerges (STORY-67). `weight:0`
+/// successors are never selected, and STORY-48 from-answer filtering is honored
+/// first (only the highest relevance tier participates). The `WeightSampler`
+/// seam keeps the choice deterministic under test.
+pub struct WeightedNextQuestionStrategy<S = XorShiftWeightSampler> {
+    sampler: S,
+}
+
+impl WeightedNextQuestionStrategy {
+    /// A strategy seeded from the wall clock.
+    pub fn from_entropy() -> Self {
+        Self {
+            sampler: XorShiftWeightSampler::from_entropy(),
+        }
+    }
+}
+
+impl<S> WeightedNextQuestionStrategy<S> {
+    /// Inject a sampler — the deterministic test seam.
+    pub fn with_sampler(sampler: S) -> Self {
+        Self { sampler }
+    }
+}
+
+impl Default for WeightedNextQuestionStrategy {
+    fn default() -> Self {
+        Self::from_entropy()
+    }
+}
+
+impl<S> NextQuestionStrategy for WeightedNextQuestionStrategy<S>
+where
+    S: WeightSampler,
+{
+    fn next_question(
+        &self,
+        current: &Question,
+        context: &StrategyContext,
+        bank: &dyn QuestionBank,
+    ) -> Result<Option<Question>> {
+        let eligible = eligible_for_sampling(current, &context.answer, bank)?;
+        let weights = eligible
+            .iter()
+            .map(|question| question.weight)
+            .collect::<Vec<_>>();
+        let total: u64 = weights.iter().map(|&weight| u64::from(weight)).sum();
+        if total == 0 {
+            return Ok(None);
+        }
+        let roll = self.sampler.roll(total);
+        Ok(weighted_index(&weights, roll).map(|index| eligible[index].clone()))
+    }
+}
+
 fn successor_questions(current: &Question, bank: &dyn QuestionBank) -> Result<Vec<Question>> {
     bank.begets(&current.id)?
         .into_iter()
@@ -89,14 +229,15 @@ fn answer_tag_matches(tag_value: &str, answer: &Answer) -> bool {
             || needle == answer.raw.trim().to_ascii_lowercase())
 }
 
-/// Successors eligible for the current answer, ordered by answer relevance,
-/// then weight, then id. Successors conditioned on a different answer are
-/// dropped so different answers branch to different follow-ups (STORY-48).
-fn relevant_successors(
+/// Successors eligible for the current answer paired with their STORY-48
+/// relevance score, ordered by relevance, then weight, then id. Successors
+/// conditioned on a different answer are dropped so different answers branch to
+/// different follow-ups (STORY-48).
+fn scored_successors(
     current: &Question,
     answer: &Answer,
     bank: &dyn QuestionBank,
-) -> Result<Vec<Question>> {
+) -> Result<Vec<(u8, Question)>> {
     let mut successors = successor_questions(current, bank)?
         .into_iter()
         .filter_map(|question| {
@@ -110,10 +251,46 @@ fn relevant_successors(
             .then_with(|| right.weight.cmp(&left.weight))
             .then_with(|| left.id.cmp(&right.id))
     });
-    Ok(successors
+    Ok(successors)
+}
+
+/// Successors eligible for the current answer, ordered by answer relevance,
+/// then weight, then id. Successors conditioned on a different answer are
+/// dropped so different answers branch to different follow-ups (STORY-48).
+fn relevant_successors(
+    current: &Question,
+    answer: &Answer,
+    bank: &dyn QuestionBank,
+) -> Result<Vec<Question>> {
+    Ok(scored_successors(current, answer, bank)?
         .into_iter()
         .map(|(_, question)| question)
         .collect())
+}
+
+// trace:STORY-67 | ai:claude
+/// Successors eligible for *weighted-probabilistic* selection: the highest
+/// available STORY-48 relevance tier only — so answer-conditioned branches keep
+/// strict precedence over unconditional follow-ons — with every `weight:0`
+/// successor excluded, since a zero-weight question is never auto-selected.
+/// Ordered by id so a given roll maps to a stable choice.
+fn eligible_for_sampling(
+    current: &Question,
+    answer: &Answer,
+    bank: &dyn QuestionBank,
+) -> Result<Vec<Question>> {
+    let scored = scored_successors(current, answer, bank)?;
+    let Some(top_relevance) = scored.first().map(|(relevance, _)| *relevance) else {
+        return Ok(Vec::new());
+    };
+    let mut eligible = scored
+        .into_iter()
+        .take_while(|(relevance, _)| *relevance == top_relevance)
+        .map(|(_, question)| question)
+        .filter(|question| question.weight > 0)
+        .collect::<Vec<_>>();
+    eligible.sort_by(|left, right| left.id.cmp(&right.id));
+    Ok(eligible)
 }
 
 // trace:STORY-48 | ai:claude
@@ -546,5 +723,60 @@ mod reweight_tests {
         assert_eq!(QualitySignal::Neutral.quality_tag(), "quality:neutral");
         assert_eq!(QualitySignal::Unhelpful.quality_tag(), "quality:unhelpful");
         assert_eq!(QualitySignal::Punted.quality_tag(), "quality:punted");
+    }
+}
+
+// trace:STORY-67 | ai:claude
+#[cfg(test)]
+mod weighted_index_tests {
+    use super::{weighted_index, WeightSampler, XorShiftWeightSampler};
+
+    #[test]
+    fn empty_or_all_zero_weights_select_nothing() {
+        assert_eq!(weighted_index(&[], 0), None);
+        assert_eq!(weighted_index(&[0, 0, 0], 7), None);
+    }
+
+    #[test]
+    fn each_roll_lands_in_its_proportional_slice() {
+        // Weights 3 and 1 partition [0, 4): rolls 0..3 -> index 0, roll 3 -> index 1.
+        let weights = [3, 1];
+        assert_eq!(weighted_index(&weights, 0), Some(0));
+        assert_eq!(weighted_index(&weights, 1), Some(0));
+        assert_eq!(weighted_index(&weights, 2), Some(0));
+        assert_eq!(weighted_index(&weights, 3), Some(1));
+    }
+
+    #[test]
+    fn sweeping_every_roll_matches_the_weight_distribution() {
+        let weights = [5u32, 2, 1];
+        let total: u64 = weights.iter().map(|&weight| u64::from(weight)).sum();
+        let mut counts = [0u32; 3];
+        for roll in 0..total {
+            let index = weighted_index(&weights, roll).unwrap();
+            counts[index] += 1;
+        }
+        // Each index is chosen exactly as many times as its weight.
+        assert_eq!(counts, weights);
+    }
+
+    #[test]
+    fn out_of_range_roll_is_reduced_modulo_total() {
+        // A sampler that over-shoots must still resolve to a real index.
+        assert_eq!(weighted_index(&[3, 1], 4), Some(0));
+        assert_eq!(weighted_index(&[3, 1], 7), Some(1));
+    }
+
+    #[test]
+    fn seeded_sampler_is_reproducible_and_in_range() {
+        let total = 10;
+        let first = XorShiftWeightSampler::with_seed(42);
+        let second = XorShiftWeightSampler::with_seed(42);
+        for _ in 0..32 {
+            let a = first.roll(total);
+            let b = second.roll(total);
+            assert_eq!(a, b);
+            assert!(a < total);
+        }
     }
 }
