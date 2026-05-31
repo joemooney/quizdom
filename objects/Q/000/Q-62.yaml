@@ -1,0 +1,24 @@
+id: 019e7fd6-95cb-7361-9e60-350581f84b8e
+spec_id: Q-62
+agreed_id: Q-62
+prefix_override: Q
+title: You now grant the soul authors only the action, not the reaction — and you judge a path by whether its outcome is 'satisfactory' enough to keep or roll back. But that standard of 'satisfactory' is doing the real work. Does it come from the soul (in which case it's the soul's fixed nature deciding again — prior cause), or from the reaction the soul didn't author (in which case the world, not your will, sets what counts as fit)? If from neither, what is left to make the rollback a choice rather than just trying again until something random sticks?
+description: |-
+  LLM-generated quizdom question.
+
+  answer: free-text
+  origin: Q-61
+
+  Generated from origin question: You point past reason to aesthetic 'fit' — a note can be right without being either calculated or random. But when your soul senses that fit, is it *recognizing* a rightness that was already there to be found (which would anchor the choice in something prior), or *conferring* rightness in the act of choosing? If it recognizes, what makes the standard yours rather than a prior cause; if it confers, what makes one conferral less arbitrary than the chance you rejected?
+status: Approved
+priority: Medium
+owner: ''
+feature: Uncategorized
+created_at: 2026-05-31T21:00:30.027556832Z
+modified_at: 2026-05-31T21:00:30.027556832Z
+req_type: Functional
+tags:
+- answer:free-text
+- seed
+- topic:free-will
+- weight:50
