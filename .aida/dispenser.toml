@@ -1,0 +1,5 @@
+[mode.Distributed]
+node_id = "JM"
+
+[sequences]
+GLOBAL = 2
