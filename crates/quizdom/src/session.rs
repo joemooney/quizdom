@@ -22,6 +22,7 @@ use crate::persist::{
 use crate::strategy::{AnsweredQuestion, StrategyContext};
 use crate::strategy::{
     DeterministicNextQuestionStrategy, LlmNextQuestionStrategy, NextQuestionStrategy,
+    WeightedNextQuestionStrategy,
 };
 use chrono::Utc;
 use llm::{AnthropicClient, ClaudeCliClient};
@@ -54,6 +55,8 @@ pub(crate) struct CliConfig {
 #[derive(Debug, Clone, Copy, Eq, PartialEq)]
 pub(crate) enum StrategyKind {
     Deterministic,
+    // trace:STORY-67 | ai:claude
+    Weighted,
     Llm,
 }
 
@@ -185,9 +188,11 @@ fn env_strategy() -> StrategyKind {
 pub(crate) fn parse_strategy(value: &str) -> Result<StrategyKind> {
     match value {
         "deterministic" => Ok(StrategyKind::Deterministic),
+        // trace:STORY-67 | ai:claude
+        "weighted" => Ok(StrategyKind::Weighted),
         "llm" => Ok(StrategyKind::Llm),
         other => Err(QuizdomError::Usage(format!(
-            "unknown strategy: {other}; expected deterministic or llm"
+            "unknown strategy: {other}; expected deterministic, weighted, or llm"
         ))),
     }
 }
@@ -228,7 +233,7 @@ fn usage() -> String {
         "Options:",
         "  --seed Q-23                         Seed question for start",
         "  --branch main                       Session branch to read/write",
-        "  --strategy deterministic|llm        Follow-up selection strategy",
+        "  --strategy deterministic|weighted|llm  Follow-up selection strategy",
         "  --user local-user                   User id for session logs",
         "  --session sess-id                   Session id alias for resume",
         "  --log path                          Session log path",
@@ -354,6 +359,11 @@ pub(crate) fn list_sessions(config: &CliConfig, output: &mut impl Write) -> Resu
 fn build_strategy(config: &CliConfig) -> Option<Box<dyn NextQuestionStrategy>> {
     match config.strategy {
         StrategyKind::Deterministic => None,
+        // trace:STORY-67 | ai:claude
+        StrategyKind::Weighted => {
+            Some(Box::new(WeightedNextQuestionStrategy::from_entropy())
+                as Box<dyn NextQuestionStrategy>)
+        }
         StrategyKind::Llm => match env_llm_backend() {
             LlmBackendKind::ClaudeCli => {
                 let client = ClaudeCliClient::from_env();

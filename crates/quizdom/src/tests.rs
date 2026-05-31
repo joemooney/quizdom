@@ -220,6 +220,157 @@ fn deterministic_strategy_excludes_mismatched_answer_successors() {
     assert!(next.is_none());
 }
 
+/// A deterministic `WeightSampler` for tests: returns a fixed roll (reduced
+/// into range) so weighted selection becomes a pure function of the seed.
+struct FixedSampler(u64);
+
+impl WeightSampler for FixedSampler {
+    fn roll(&self, total: u64) -> u64 {
+        self.0 % total
+    }
+}
+
+// trace:STORY-67 | ai:claude
+#[test]
+fn weighted_strategy_samples_in_proportion_to_weight() {
+    let bank = FakeBank::new([
+        question("Q-1", 0, AnswerKind::YesNo),
+        question("Q-a", 3, AnswerKind::YesNo),
+        question("Q-b", 1, AnswerKind::YesNo),
+    ])
+    .with_edges("Q-1", ["Q-a", "Q-b"]);
+    let current = bank.load_question("Q-1").unwrap();
+
+    // Sweeping every roll across the full weight line yields one selection per
+    // unit of weight: Q-a (weight 3) is chosen three times, Q-b (weight 1) once.
+    let mut counts = HashMap::new();
+    for roll in 0..4 {
+        let strategy = WeightedNextQuestionStrategy::with_sampler(FixedSampler(roll));
+        let next = strategy
+            .next_question(&current, &strategy_context("yes"), &bank)
+            .unwrap()
+            .unwrap();
+        *counts.entry(next.id).or_insert(0u32) += 1;
+    }
+    assert_eq!(counts.get("Q-a"), Some(&3));
+    assert_eq!(counts.get("Q-b"), Some(&1));
+}
+
+// trace:STORY-67 | ai:claude
+#[test]
+fn weighted_strategy_never_selects_zero_weight_successors() {
+    let bank = FakeBank::new([
+        question("Q-1", 0, AnswerKind::YesNo),
+        question("Q-zero", 0, AnswerKind::YesNo),
+        question("Q-live", 5, AnswerKind::YesNo),
+    ])
+    .with_edges("Q-1", ["Q-zero", "Q-live"]);
+    let current = bank.load_question("Q-1").unwrap();
+
+    // No roll can land on the excluded zero-weight successor.
+    for roll in 0..5 {
+        let strategy = WeightedNextQuestionStrategy::with_sampler(FixedSampler(roll));
+        let next = strategy
+            .next_question(&current, &strategy_context("yes"), &bank)
+            .unwrap()
+            .unwrap();
+        assert_eq!(next.id, "Q-live");
+    }
+}
+
+// trace:STORY-67 | ai:claude
+#[test]
+fn weighted_strategy_returns_none_when_all_successors_are_zero_weight() {
+    let bank = FakeBank::new([
+        question("Q-1", 0, AnswerKind::YesNo),
+        question("Q-z1", 0, AnswerKind::YesNo),
+        question("Q-z2", 0, AnswerKind::YesNo),
+    ])
+    .with_edges("Q-1", ["Q-z1", "Q-z2"]);
+    let current = bank.load_question("Q-1").unwrap();
+
+    let strategy = WeightedNextQuestionStrategy::with_sampler(FixedSampler(0));
+    let next = strategy
+        .next_question(&current, &strategy_context("yes"), &bank)
+        .unwrap();
+    assert!(next.is_none());
+}
+
+// trace:STORY-67 | ai:claude
+#[test]
+fn weighted_strategy_honors_from_answer_filter() {
+    let bank = FakeBank::new([
+        question("Q-1", 0, AnswerKind::YesNo),
+        question_with_tags(
+            "Q-yes",
+            5,
+            AnswerKind::YesNo,
+            ["weight:5", "from-answer:yes"],
+        ),
+        question_with_tags(
+            "Q-no",
+            90,
+            AnswerKind::YesNo,
+            ["weight:90", "from-answer:no"],
+        ),
+    ])
+    .with_edges("Q-1", ["Q-yes", "Q-no"]);
+    let current = bank.load_question("Q-1").unwrap();
+
+    // "yes" must never branch into the heavier "no"-conditioned successor,
+    // whatever the roll — STORY-48 filtering runs before sampling.
+    for roll in 0..5 {
+        let strategy = WeightedNextQuestionStrategy::with_sampler(FixedSampler(roll));
+        let next = strategy
+            .next_question(&current, &strategy_context("yes"), &bank)
+            .unwrap()
+            .unwrap();
+        assert_eq!(next.id, "Q-yes");
+    }
+}
+
+// trace:STORY-67 | ai:claude
+#[test]
+fn weighted_strategy_samples_only_within_the_top_relevance_tier() {
+    let bank = FakeBank::new([
+        question("Q-1", 0, AnswerKind::YesNo),
+        question_with_tags("Q-any", 90, AnswerKind::YesNo, ["weight:90"]),
+        question_with_tags(
+            "Q-yes",
+            5,
+            AnswerKind::YesNo,
+            ["weight:5", "from-answer:yes"],
+        ),
+    ])
+    .with_edges("Q-1", ["Q-any", "Q-yes"]);
+    let current = bank.load_question("Q-1").unwrap();
+
+    // An answer-conditioned match outranks the heavier unconditional follow-on:
+    // only the top relevance tier is sampled, so Q-yes always wins for "yes".
+    for roll in 0..5 {
+        let strategy = WeightedNextQuestionStrategy::with_sampler(FixedSampler(roll));
+        let next = strategy
+            .next_question(&current, &strategy_context("yes"), &bank)
+            .unwrap()
+            .unwrap();
+        assert_eq!(next.id, "Q-yes");
+    }
+
+    // With no matching successor, the unconditional follow-on is sampled.
+    let strategy = WeightedNextQuestionStrategy::with_sampler(FixedSampler(0));
+    let on_no = strategy
+        .next_question(&current, &strategy_context("no"), &bank)
+        .unwrap()
+        .unwrap();
+    assert_eq!(on_no.id, "Q-any");
+}
+
+// trace:STORY-67 | ai:claude
+#[test]
+fn parse_strategy_accepts_weighted() {
+    assert_eq!(parse_strategy("weighted").unwrap(), StrategyKind::Weighted);
+}
+
 #[test]
 fn parses_llm_backend_selection() {
     assert_eq!(

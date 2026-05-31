@@ -32,6 +32,7 @@ pub use session::run_cli;
 pub use strategy::{reweight, AnsweredQuestion, QualitySignal, StrategyContext};
 pub use strategy::{
     DeterministicNextQuestionStrategy, LlmNextQuestionStrategy, NextQuestionStrategy,
+    WeightSampler, WeightedNextQuestionStrategy, XorShiftWeightSampler,
 };
 
 #[cfg(test)]
