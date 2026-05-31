@@ -1230,6 +1230,99 @@ fn live_session_surfaces_graph_contradiction_as_follow_up_question() {
     let _ = fs::remove_file(path);
 }
 
+// trace:STORY-59 | ai:codex
+#[test]
+fn contradiction_follow_up_persists_resolution_to_graph_and_log() {
+    let path = std::env::temp_dir().join(format!(
+        "quizdom-story-59-test-{}.jsonl",
+        std::process::id()
+    ));
+    let _ = fs::remove_file(&path);
+    let bank = FakeBank::new([
+        question("Q-1", 10, AnswerKind::YesNo),
+        question("Q-2", 5, AnswerKind::YesNo),
+    ])
+    .with_edges("Q-1", ["Q-2"]);
+    let edges = FakeEdges::new().with("Q-1", ["Q-2"]);
+    let runner = RecordingCommandRunner::new([
+        command_output(true, "", ""),
+        command_output(true, "Added: DECISION-9\n", ""),
+        command_output(true, "", ""),
+        command_output(true, "", ""),
+    ]);
+    let persister = AidaCliContradictionResolutionPersister::new("aida", runner.clone());
+    let strategy = DeterministicNextQuestionStrategy;
+    let config = test_config(&path, "Q-1");
+    let mut output = Vec::new();
+
+    run_session_with_contradiction_edges_and_resolution_persister(
+        &config,
+        &bank,
+        &strategy,
+        &edges,
+        &persister,
+        "yes\nyes\nleft\n".as_bytes(),
+        &mut output,
+    )
+    .unwrap();
+
+    let calls = runner.calls();
+    assert_eq!(
+        calls[0],
+        strings([
+            "aida",
+            "rel",
+            "add",
+            "--from",
+            "Q-1",
+            "--to",
+            "Q-2",
+            "--type",
+            "contradicts"
+        ])
+    );
+    assert_eq!(&calls[1][0..3], ["aida", "add", "--type"]);
+    assert!(calls[1].contains(&"decision".to_string()));
+    assert!(calls[1].contains(&"contradiction-resolution,kept:left,left:Q-1,right:Q-2".to_string()));
+    assert_eq!(
+        calls[2],
+        strings([
+            "aida",
+            "rel",
+            "add",
+            "--from",
+            "DECISION-9",
+            "--to",
+            "Q-1",
+            "--type",
+            "references"
+        ])
+    );
+    assert_eq!(
+        calls[3],
+        strings([
+            "aida",
+            "rel",
+            "add",
+            "--from",
+            "DECISION-9",
+            "--to",
+            "Q-2",
+            "--type",
+            "references"
+        ])
+    );
+
+    let log = fs::read_to_string(&path).unwrap();
+    assert!(log.contains(r#""event_type":"contradiction_resolved""#));
+    assert!(log.contains(r#""left_belief_ref":"Q-1""#));
+    assert!(log.contains(r#""right_belief_ref":"Q-2""#));
+    assert!(log.contains(r#""kept_side":"left""#));
+    assert!(log.contains(r#""graph_ref":"DECISION-9""#));
+
+    let _ = fs::remove_file(path);
+}
+
 // trace:STORY-69 | ai:codex
 #[test]
 fn back_and_forward_browse_answered_path_without_truncating() {
@@ -1555,6 +1648,18 @@ impl CommandRunner for RecordingCommandRunner {
     }
 }
 
+impl ResolutionCommandRunner for RecordingCommandRunner {
+    fn run(&self, program: &str, args: &[String]) -> Result<Output> {
+        let mut call = vec![program.to_string()];
+        call.extend(args.iter().cloned());
+        self.calls.borrow_mut().push(call);
+        if self.outputs.borrow().is_empty() {
+            return Err(QuizdomError::Aida("unexpected command".to_string()));
+        }
+        Ok(self.outputs.borrow_mut().remove(0))
+    }
+}
+
 fn command_output(success: bool, stdout: &str, stderr: &str) -> Output {
     Output {
         status: if success {
@@ -1800,20 +1905,26 @@ fn semantic_prompt_lists_beliefs_with_indices() {
 fn merge_prefers_graph_over_semantic_for_same_pair() {
     let graph = vec![Contradiction {
         kind: ContradictionKind::Graph,
+        left_id: Some("BELIEF-X".to_string()),
         left: "X".to_string(),
+        right_id: Some("BELIEF-Y".to_string()),
         right: "Y".to_string(),
         explanation: "edge".to_string(),
     }];
     let semantic = vec![
         Contradiction {
             kind: ContradictionKind::Semantic,
+            left_id: None,
             left: "Y".to_string(),
+            right_id: None,
             right: "X".to_string(),
             explanation: "semantic".to_string(),
         },
         Contradiction {
             kind: ContradictionKind::Semantic,
+            left_id: None,
             left: "P".to_string(),
+            right_id: None,
             right: "Q".to_string(),
             explanation: "other".to_string(),
         },

@@ -16,7 +16,9 @@ pub use bank::{
 pub use contradiction::{
     beliefs_from_session_log, detect_graph_contradictions, detect_semantic_contradictions,
     merge_contradictions, parse_contradicts_rel_list, run_contradictions, AdoptedBelief,
-    AidaCliContradictsEdges, Contradiction, ContradictionKind, ContradictsEdges,
+    AidaCliContradictionResolutionPersister, AidaCliContradictsEdges, Contradiction,
+    ContradictionKind, ContradictionResolution, ContradictionResolutionPersister, ContradictsEdges,
+    NoopContradictionResolutionPersister, ResolutionCommandRunner,
 };
 pub use error::{QuizdomError, Result};
 pub use model::{

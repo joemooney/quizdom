@@ -21,7 +21,7 @@ use serde_json::Value;
 use std::collections::{BTreeMap, BTreeSet};
 use std::io::{BufRead, BufReader, Read, Write};
 use std::path::PathBuf;
-use std::process::Command;
+use std::process::{Command, Output};
 
 const DEFAULT_USER: &str = "local-user";
 
@@ -72,7 +72,9 @@ impl ContradictionKind {
 #[derive(Debug, Clone, Eq, PartialEq)]
 pub struct Contradiction {
     pub kind: ContradictionKind,
+    pub left_id: Option<String>,
     pub left: String,
+    pub right_id: Option<String>,
     pub right: String,
     pub explanation: String,
 }
@@ -178,7 +180,9 @@ pub fn detect_graph_contradictions(
             }
             contradictions.push(Contradiction {
                 kind: ContradictionKind::Graph,
+                left_id: Some(id.clone()),
                 left: label.clone(),
+                right_id: Some(neighbour.clone()),
                 right: neighbour_label.clone(),
                 explanation: format!(
                     "Adopted beliefs {id} and {neighbour} are joined by a `contradicts` edge in the bank."
@@ -259,12 +263,252 @@ pub(crate) fn parse_semantic_contradictions(
             .to_string();
         contradictions.push(Contradiction {
             kind: ContradictionKind::Semantic,
+            left_id: beliefs[a].id.clone(),
             left,
+            right_id: beliefs[b].id.clone(),
             right,
             explanation,
         });
     }
     Ok(contradictions)
+}
+
+#[derive(Debug, Clone, Eq, PartialEq)]
+pub struct ContradictionResolution {
+    pub graph_ref: Option<String>,
+    pub kept_side: String,
+}
+
+pub trait ContradictionResolutionPersister {
+    fn persist_resolution(
+        &self,
+        contradiction: &Contradiction,
+        raw_answer: &str,
+    ) -> Result<Option<ContradictionResolution>>;
+}
+
+pub struct NoopContradictionResolutionPersister;
+
+impl ContradictionResolutionPersister for NoopContradictionResolutionPersister {
+    fn persist_resolution(
+        &self,
+        _contradiction: &Contradiction,
+        _raw_answer: &str,
+    ) -> Result<Option<ContradictionResolution>> {
+        Ok(None)
+    }
+}
+
+pub trait ResolutionCommandRunner {
+    fn run(&self, program: &str, args: &[String]) -> Result<Output>;
+}
+
+pub struct SystemResolutionCommandRunner;
+
+impl ResolutionCommandRunner for SystemResolutionCommandRunner {
+    fn run(&self, program: &str, args: &[String]) -> Result<Output> {
+        Command::new(program)
+            .args(args)
+            .output()
+            .map_err(Into::into)
+    }
+}
+
+pub struct AidaCliContradictionResolutionPersister<R = SystemResolutionCommandRunner> {
+    command: String,
+    runner: R,
+}
+
+impl Default for AidaCliContradictionResolutionPersister<SystemResolutionCommandRunner> {
+    fn default() -> Self {
+        Self {
+            command: "aida".to_string(),
+            runner: SystemResolutionCommandRunner,
+        }
+    }
+}
+
+impl<R> AidaCliContradictionResolutionPersister<R>
+where
+    R: ResolutionCommandRunner,
+{
+    #[cfg(test)]
+    pub fn new(command: impl Into<String>, runner: R) -> Self {
+        Self {
+            command: command.into(),
+            runner,
+        }
+    }
+}
+
+impl<R> ContradictionResolutionPersister for AidaCliContradictionResolutionPersister<R>
+where
+    R: ResolutionCommandRunner,
+{
+    fn persist_resolution(
+        &self,
+        contradiction: &Contradiction,
+        raw_answer: &str,
+    ) -> Result<Option<ContradictionResolution>> {
+        // trace:STORY-59 | ai:codex
+        let (Some(left_id), Some(right_id)) = (&contradiction.left_id, &contradiction.right_id)
+        else {
+            return Ok(None);
+        };
+        self.confirm_contradicts_edge(left_id, right_id)?;
+        let kept_side = classify_kept_side(contradiction, raw_answer);
+        let graph_ref = self.record_resolution_decision(
+            left_id,
+            right_id,
+            &contradiction.left,
+            &contradiction.right,
+            raw_answer,
+            &kept_side,
+        )?;
+        Ok(Some(ContradictionResolution {
+            graph_ref: Some(graph_ref),
+            kept_side,
+        }))
+    }
+}
+
+impl<R> AidaCliContradictionResolutionPersister<R>
+where
+    R: ResolutionCommandRunner,
+{
+    fn confirm_contradicts_edge(&self, left_id: &str, right_id: &str) -> Result<()> {
+        let args = vec![
+            "rel".to_string(),
+            "add".to_string(),
+            "--from".to_string(),
+            left_id.to_string(),
+            "--to".to_string(),
+            right_id.to_string(),
+            "--type".to_string(),
+            "contradicts".to_string(),
+        ];
+        let output = self.runner.run(&self.command, &args)?;
+        if output.status.success() || relationship_already_exists(&output) {
+            return Ok(());
+        }
+        Err(QuizdomError::Aida(
+            String::from_utf8_lossy(&output.stderr).to_string(),
+        ))
+    }
+
+    fn record_resolution_decision(
+        &self,
+        left_id: &str,
+        right_id: &str,
+        left: &str,
+        right: &str,
+        raw_answer: &str,
+        kept_side: &str,
+    ) -> Result<String> {
+        let title = format!("Contradiction resolution: {left_id} vs {right_id}");
+        let description = format!(
+            "source: quizdom contradiction follow-up.\n\nleft: {left_id} -- {left}\n\nright: {right_id} -- {right}\n\nuser resolution: {raw_answer}\n\nkept side: {kept_side}"
+        );
+        let tags =
+            format!("contradiction-resolution,kept:{kept_side},left:{left_id},right:{right_id}");
+        let add_args = vec![
+            "add".to_string(),
+            "--type".to_string(),
+            "decision".to_string(),
+            "--status".to_string(),
+            "approved".to_string(),
+            "--priority".to_string(),
+            "medium".to_string(),
+            "--title".to_string(),
+            title,
+            "--description".to_string(),
+            description,
+            "--tags".to_string(),
+            tags,
+        ];
+        let output = self.runner.run(&self.command, &add_args)?;
+        if !output.status.success() {
+            return Err(QuizdomError::Aida(
+                String::from_utf8_lossy(&output.stderr).to_string(),
+            ));
+        }
+        let resolution_id = parse_added_resolution_id(&String::from_utf8_lossy(&output.stdout))?;
+        self.reference_resolution(&resolution_id, left_id)?;
+        self.reference_resolution(&resolution_id, right_id)?;
+        Ok(resolution_id)
+    }
+
+    fn reference_resolution(&self, resolution_id: &str, target_id: &str) -> Result<()> {
+        let args = vec![
+            "rel".to_string(),
+            "add".to_string(),
+            "--from".to_string(),
+            resolution_id.to_string(),
+            "--to".to_string(),
+            target_id.to_string(),
+            "--type".to_string(),
+            "references".to_string(),
+        ];
+        let output = self.runner.run(&self.command, &args)?;
+        if output.status.success() || relationship_already_exists(&output) {
+            return Ok(());
+        }
+        Err(QuizdomError::Aida(
+            String::from_utf8_lossy(&output.stderr).to_string(),
+        ))
+    }
+}
+
+fn relationship_already_exists(output: &Output) -> bool {
+    let stderr = String::from_utf8_lossy(&output.stderr).to_ascii_lowercase();
+    stderr.contains("already") || stderr.contains("duplicate") || stderr.contains("exists")
+}
+
+fn classify_kept_side(contradiction: &Contradiction, raw_answer: &str) -> String {
+    let answer = raw_answer.trim().to_ascii_lowercase();
+    let left_id = contradiction
+        .left_id
+        .as_deref()
+        .unwrap_or("left")
+        .to_ascii_lowercase();
+    let right_id = contradiction
+        .right_id
+        .as_deref()
+        .unwrap_or("right")
+        .to_ascii_lowercase();
+    if answer.contains("left")
+        || answer.contains("first")
+        || answer.contains(&left_id)
+        || answer.contains(&contradiction.left.to_ascii_lowercase())
+    {
+        return "left".to_string();
+    }
+    if answer.contains("right")
+        || answer.contains("second")
+        || answer.contains(&right_id)
+        || answer.contains(&contradiction.right.to_ascii_lowercase())
+    {
+        return "right".to_string();
+    }
+    "refinement".to_string()
+}
+
+fn parse_added_resolution_id(output: &str) -> Result<String> {
+    output
+        .split_whitespace()
+        .find_map(|word| {
+            let candidate = word.trim_matches(|character: char| {
+                !character.is_ascii_alphanumeric() && character != '-'
+            });
+            (candidate.contains('-')
+                && candidate
+                    .chars()
+                    .any(|character| character.is_ascii_digit()))
+            .then(|| candidate.to_string())
+        })
+        .ok_or_else(|| {
+            QuizdomError::Parse("aida add output did not include a resolution id".to_string())
+        })
 }
 
 fn belief_index(item: &Value, key: &str, len: usize) -> Option<usize> {
