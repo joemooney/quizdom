@@ -1,0 +1,17 @@
+id: 019e7f8b-3901-7ef0-9816-adfd3ea9fba6
+spec_id: STORY-42
+agreed_id: STORY-42
+title: Capture user's meaning (free-text) + LLM-map to closest formal definition
+description: 'Ask the user what THEY mean by the term (free-text), then use the LLM (LLMClient) to map their understanding to the closest formal/academic bank definition and propose it back (''sounds compatibilist — yes?''). ## Acceptance: free-text meaning maps to the nearest TERM definition via the LLM; proposal returned for confirmation; mocked-LLM test covers the mapping. Depends on STORY (term detection) + EPIC-7.'
+status: Approved
+priority: High
+owner: ''
+feature: Uncategorized
+created_at: 2026-05-31T19:38:11.073740368Z
+modified_at: 2026-05-31T19:38:11.073740368Z
+req_type: Story
+tags:
+- llm
+- mapping
+- semantics
+- story
