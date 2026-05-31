@@ -3,12 +3,12 @@ spec_id: STORY-51
 agreed_id: STORY-51
 title: Single-key Y/N/X/P input scheme (crossterm, no ENTER)
 description: 'Add crossterm; read single keypresses (no ENTER) for belief questions and render a [Y/N/X/P] prompt. Map y->Yes, n->No, x->eXplore, p->Punt. Digit keys for multiple-choice (+x/p); free-text still types+ENTER with x/p as leading escape commands. Degrade to line input where raw mode is unavailable. Foundational for EPIC-50. ## Acceptance: belief questions respond to single y/n/x/p keys with no ENTER; choice uses digits; free-text unaffected; graceful fallback. Depends on EPIC-6 loop.'
-status: InProgress
+status: Completed
 priority: High
 owner: ''
 feature: Uncategorized
 created_at: 2026-05-31T20:01:17.344680316Z
-modified_at: 2026-05-31T20:46:09.785786062Z
+modified_at: 2026-05-31T20:46:11.488299726Z
 req_type: Story
 tags:
 - crossterm
