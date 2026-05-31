@@ -11,7 +11,7 @@ priority: High
 owner: ''
 feature: Uncategorized
 created_at: 2026-05-31T19:50:15.143944670Z
-modified_at: 2026-05-31T21:30:58.919244622Z
+modified_at: 2026-05-31T21:31:07.484145013Z
 req_type: Story
 tags:
 - answer-conditioning
@@ -35,3 +35,8 @@ comments:
   content: Commit b07ec2b references this requirement
   created_at: 2026-05-31T21:18:16.209544693Z
   modified_at: 2026-05-31T21:18:16.209544693Z
+- id: 019e7ff2-9f5c-7e01-a4a5-e25f222efb0e
+  author: joe
+  content: 'Merged via PR #20 (commit 8b384b9). from-answer:<value> tag on generated questions (persist.rs/model.rs); strategy.rs prefers answer-matching begets successors (matched > unconditional > excluded-on-mismatch); VIS-2 edge-tag-gap noted in graph-schema.md. 49 tests.'
+  created_at: 2026-05-31T21:31:07.484145013Z
+  modified_at: 2026-05-31T21:31:07.484145013Z
