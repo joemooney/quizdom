@@ -8,7 +8,7 @@ priority: High
 owner: ''
 feature: Uncategorized
 created_at: 2026-05-31T14:18:17.787088554Z
-modified_at: 2026-05-31T14:29:04.190323447Z
+modified_at: 2026-05-31T14:35:14.197259602Z
 req_type: Story
 tags:
 - docs
@@ -25,3 +25,8 @@ comments:
   content: Implementation complete via Codex. Added docs/architecture/graph-schema.md with canonical v1 node types (Q, TERM, BELIEF), custom edge vocabulary, tag conventions including weight:N encoding, and a worked free-will example subgraph.
   created_at: 2026-05-31T14:29:04.190307248Z
   modified_at: 2026-05-31T14:29:04.190307248Z
+- id: 019e7e75-dd95-7383-8e1b-17e5335168b5
+  author: joe
+  content: Commit c6d825f references this requirement
+  created_at: 2026-05-31T14:35:14.197259602Z
+  modified_at: 2026-05-31T14:35:14.197259602Z
