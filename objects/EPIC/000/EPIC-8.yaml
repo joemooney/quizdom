@@ -1,0 +1,16 @@
+id: 019e7e5e-c7e6-7681-b5a9-b6be6ada3033
+spec_id: EPIC-8
+agreed_id: EPIC-8
+title: Semantic honing & definition steering
+description: 'When a loaded term appears (e.g. ''free will''), drill into the user''s meaning via free-text input and steer toward a formal/academic/public definition before falling back to a bespoke user-specific one. Dual Socratic purpose: elicit self-understanding AND teach semantic nuance.'
+status: Draft
+priority: Medium
+owner: ''
+feature: Uncategorized
+created_at: 2026-05-31T14:10:01.318758757Z
+modified_at: 2026-05-31T14:10:01.318758757Z
+req_type: Epic
+tags:
+- epic
+- semantics
+- socratic
