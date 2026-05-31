@@ -1,0 +1,23 @@
+id: 019e7fb0-54e6-7c82-8784-cea175bebf41
+spec_id: TASK-56
+agreed_id: TASK-56
+title: Modularize crates/quizdom/src/lib.rs (3126 lines) into modules — enables parallel implementers
+description: |-
+  lib.rs is a 3126-line monolith holding the session loop, strategies (deterministic + LLM), bank access (aida CLI), semantic honing (EPIC-8), the generated-question persister, input handling, and the Question/Answer model. ALL remaining stories edit it, so 2+ implementers collide there (the aida advisor's #1 parallelism caveat; cf BUG-416 scope-bleed).
+
+  Split into cohesive modules — e.g. model.rs (Question/Answer/types), bank.rs (aida CLI reads + parsing), strategy.rs (NextQuestionStrategy + deterministic + LLM), honing.rs (EPIC-8), persist.rs (generated-question persister), input.rs (rendering + reading), session.rs (the loop + start/resume/fork). Pure refactor: NO behavior change, all 25+ tests pass.
+
+  Constraint: run with EXCLUSIVE lib.rs access (no other agent editing lib.rs concurrently) — best timed right after STORY-55 merges. This is the enabling step that makes file-disjoint parallel work possible for a 2nd implementer.
+status: Approved
+priority: High
+owner: ''
+feature: Uncategorized
+created_at: 2026-05-31T20:18:43.046713381Z
+modified_at: 2026-05-31T20:18:43.046713381Z
+req_type: Task
+tags:
+- enabling
+- modularize
+- parallelism
+- refactor
+- techdebt
