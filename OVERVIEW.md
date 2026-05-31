@@ -83,10 +83,16 @@ decision`); progress in the EPIC tree (`aida list --type epic`).
 - **EPIC-6 (session engine) — complete.** `crates/quizdom`: branching Q&A loop,
   pluggable `NextQuestionStrategy` (deterministic), both-sides agree/disagree
   forking, and start/resume/end persistence over a JSONL log. 9 tests green.
-- **EPIC-7 (LLM integration) — in progress.** Building a provider-agnostic
-  `llm` crate (ADR-34) first, then an LLM-backed strategy.
+- **EPIC-7 (LLM integration) — complete.** Provider-agnostic `llm` crate with
+  two backends: `ClaudeCliClient` (default — runs on the Max plan via `claude
+  -p`, no API charges, ADR-39) and `AnthropicClient` (opt-in, API key). The
+  `LlmNextQuestionStrategy` selects bank questions or mints new ones that
+  persist back to the bank. Live `claude -p` smoke verified.
 - EPIC-8 (semantic honing), EPIC-9 (contradiction detection), EPIC-10 (bank
-  evolution), EPIC-11 (CLI polish) — draft, awaiting their turn.
+  evolution), EPIC-11 (CLI/TUI polish) — draft, awaiting their turn.
+
+The core vision (graph model + session engine + LLM) is functional; EPICs 8–11
+are enhancements.
 
 Substrate gaps surfaced by dogfooding (VIS-2) are filed as findings or upstream
 `~/ai/aida` issues (FR-282 custom-edge traversal, BUG-415/417).
