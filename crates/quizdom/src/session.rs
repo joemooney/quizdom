@@ -2,10 +2,10 @@ use crate::bank::{AidaCliQuestionBank, QuestionBank};
 use crate::error::{QuizdomError, Result};
 use crate::honing::{
     definitions_for_loaded_terms, load_probed_terms, prompt_for_term_meaning,
-    render_term_definitions,
+    render_settled_term_definition, render_term_definitions, term_label, SettledTermDefinition,
 };
 use crate::input::{read_answer_or_end, render_question, AnswerInput, FreeTextInput};
-use crate::model::{Answer, AnswerKind, Question};
+use crate::model::{Answer, AnswerKind, Question, TermDefinition};
 #[cfg(test)]
 use crate::persist::NoopUserSpecificTermPersister;
 use crate::persist::{
@@ -303,6 +303,7 @@ fn run_session_from_current(
     let mut free_text_input = FreeTextInput::from_stdin()?;
     let mut logger = SessionLogger::open(&config.log_path)?;
     let mut current = bank.load_question(&config.seed)?;
+    let mut settled_terms = Vec::new();
 
     if write_start_event {
         logger.session_started(
@@ -322,15 +323,29 @@ fn run_session_from_current(
             &current,
         )?;
         let probed_terms = load_probed_terms(bank, &current);
-        render_term_definitions(&probed_terms, output)?;
-        prompt_for_term_meaning(
-            &probed_terms,
-            strategy,
-            term_persister,
-            &mut input,
-            &mut free_text_input,
-            output,
-        )?;
+        if let Some(settled) = settled_definition_for(&probed_terms, &settled_terms) {
+            render_settled_term_definition(settled, output)?;
+        } else {
+            render_term_definitions(&probed_terms, output)?;
+            if let Some(settled) = prompt_for_term_meaning(
+                &probed_terms,
+                strategy,
+                term_persister,
+                &mut input,
+                &mut free_text_input,
+                output,
+            )? {
+                logger.term_interpreted(
+                    &config.session_id,
+                    &config.user_id,
+                    &config.branch_id,
+                    turn,
+                    &settled,
+                    &probed_terms,
+                )?;
+                settled_terms.push(settled);
+            }
+        }
         render_question(&current, output)?;
         let answer = match read_answer_or_end(
             &current.answer_kind,
@@ -362,7 +377,11 @@ fn run_session_from_current(
         if matches!(current.answer_kind, AnswerKind::FreeText) {
             let flagged_terms = strategy.loaded_terms(&current, &answer).unwrap_or_default();
             let definitions = definitions_for_loaded_terms(&probed_terms, &flagged_terms);
-            render_term_definitions(&definitions, output)?;
+            if let Some(settled) = settled_definition_for(&definitions, &settled_terms) {
+                render_settled_term_definition(settled, output)?;
+            } else {
+                render_term_definitions(&definitions, output)?;
+            }
         }
         let context = StrategyContext {
             answer: answer.clone(),
@@ -404,6 +423,20 @@ fn run_session_from_current(
     }
 
     Ok(())
+}
+
+fn settled_definition_for<'a>(
+    definitions: &[TermDefinition],
+    settled_terms: &'a [SettledTermDefinition],
+) -> Option<&'a SettledTermDefinition> {
+    if definitions.is_empty() {
+        return None;
+    }
+    let label = term_label(definitions);
+    settled_terms
+        .iter()
+        .rev()
+        .find(|settled| settled.term_label == label)
 }
 
 #[cfg(test)]
@@ -722,6 +755,33 @@ impl SessionLogger {
             "answer_mode": question.answer_kind.mode(),
             "raw_answer": answer.raw,
             "normalized_answer": answer.normalized,
+        }))
+    }
+
+    fn term_interpreted(
+        &mut self,
+        session_id: &str,
+        user_id: &str,
+        branch_id: &str,
+        turn: u64,
+        settled: &SettledTermDefinition,
+        definitions: &[TermDefinition],
+    ) -> Result<()> {
+        let event_id = self.event_id();
+        self.write(json!({
+            "event_id": event_id,
+            "event_type": "term_interpreted",
+            "occurred_at": Utc::now().to_rfc3339(),
+            "session_id": session_id,
+            "user_id": user_id,
+            "branch_id": branch_id,
+            "turn": turn,
+            "term": settled.term_label,
+            "term_ref": settled.term.id,
+            "term_refs": definitions.iter().map(|definition| definition.id.as_str()).collect::<Vec<_>>(),
+            "raw_definition": settled.raw_meaning,
+            "adopted_title": settled.term.title,
+            "adopted_definition": settled.term.definition,
         }))
     }
 
