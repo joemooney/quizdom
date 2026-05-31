@@ -505,5 +505,13 @@ operations:
         detected contradictions without touching the live loop.
       - (Later stories) contradictions surface as in-session questions and resolutions
         persist to the graph.
-clock: 36
+- id: 019e7fc7-b68d-7812-af3e-484232cc946e
+  target_id: 019e7fc0-0f2b-7210-8e31-4c2acee2c12e
+  author: aida
+  node_id: ''
+  lamport: 37
+  timestamp: 2026-05-31T20:44:15.373242395Z
+  kind: !SetStatus
+    status: In Progress
+clock: 37
 node_id: ''

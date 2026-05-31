@@ -3,12 +3,12 @@ spec_id: STORY-57
 agreed_id: STORY-57
 title: Contradiction-detection module (contradiction.rs) + standalone CLI command
 description: 'SELF-CONTAINED new module crates/quizdom/src/contradiction.rs — NO session-loop edits (parallel-safe vs EPIC-50 input work). Given a user''s adopted beliefs (from the session log / bank), detect contradictions two ways: (a) graph-based (two adopted beliefs joined by a contradicts edge: aida rel list), (b) LLM-based (semantic inconsistencies via LLMClient, default claude-cli). Expose a standalone ''quizdom contradictions --user <id>'' (or --session) CLI command that lists detected contradictions. ## Acceptance: detection finds graph-contradicts pairs and LLM semantic ones (mocked-LLM + graph tests); the CLI command lists them; NO change to session.rs. Depends on the model/bank modules + EPIC-7 LLMClient.'
-status: Approved
+status: InProgress
 priority: High
 owner: ''
 feature: Uncategorized
 created_at: 2026-05-31T20:35:53.771171332Z
-modified_at: 2026-05-31T20:35:53.771171332Z
+modified_at: 2026-05-31T20:44:15.368394992Z
 req_type: Story
 tags:
 - contradiction
