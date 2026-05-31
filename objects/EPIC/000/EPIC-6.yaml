@@ -2,13 +2,78 @@ id: 019e7e5e-b073-7671-b834-ce12b2104736
 spec_id: EPIC-6
 agreed_id: EPIC-6
 title: Session engine (branching Q&A loop)
-description: 'The core loop: pose a seed question, accept yes/no or multiple-choice answers, branch to follow-up questions, persist the path as a graph of understanding. Supports exploring both sides (agree AND disagree) of a proposition.'
-status: Draft
+description: |-
+  The core interactive loop: pose a question, capture the answer, branch to a
+  follow-up, and persist the traversal as the user's graph of understanding.
+  Consumes the EPIC-5 schema (questions/definitions/edges) and the per-user log
+  format (STORY-15). Interface is CLI/TUI (ADR-4). There are no correct answers —
+  the engine never scores correctness.
+
+  ## Loop
+
+  1. Load a seed Question (Q-object) from the AIDA bank.
+  2. Render it per its kind: yes-no | multiple-choice | free-text-disambiguation.
+  3. Read a valid answer; append it to the per-user session log (ADR-12 / STORY-15).
+  4. Select the next question via a pluggable NextQuestionStrategy (see below).
+  5. Repeat until the user stops or a natural stopping point is reached.
+
+  ## NextQuestionStrategy (key design decision)
+
+  The engine selects the next question through a pluggable strategy interface so
+  the loop is testable without an LLM:
+  - v1 default — deterministic bank traversal: follow a `begets` edge from the
+    current question; tie-break by `weight:N` tag (highest first), then id.
+  - EPIC-7 later supplies an LLM strategy implementing the same interface
+    (analyze the answer, generate a new question or pick one from the bank).
+
+  This decouples EPIC-6 from EPIC-7: the session loop ships and is exercised with
+  the deterministic strategy before any LLM is wired in.
+
+  ## Both-sides exploration
+
+  From a proposition the user can choose to explore agree AND disagree branches.
+  The engine forks the traversal and tracks both paths in the log, so the user can
+  walk down either side and compare what questions each surfaces.
+
+  ## Session lifecycle
+
+  Start / resume / end. The traversal persists in the per-user log; a session can
+  be left and resumed without losing the path. Ending is user-driven; the engine
+  may flag a natural stopping point (e.g. a detected contradiction handed off to
+  EPIC-9) but does not force termination.
+
+  ## Acceptance
+
+  - Given a seed Q-id, the engine renders it with options and reads a valid
+    answer for each of the three kinds.
+  - Each answer is appended to the per-user session log in the STORY-15 format.
+  - The deterministic strategy selects the next question by following `begets`
+    edges, tie-broken by weight then id; with no outgoing `begets` the session
+    reaches a clean end state.
+  - The strategy is pluggable behind an interface an LLM strategy can later
+    implement without touching the loop.
+  - A session forks into agree/disagree branches from a proposition and both
+    branches are recoverable from the log.
+  - A session can be ended and resumed; the persisted traversal matches what was
+    answered.
+
+  ## Verify
+
+  Run a CLI session against the EPIC-5 'free will' seed cluster: answer the seed,
+  get a begets follow-up, fork both sides, quit, resume — and the log replays the
+  exact path.
+
+  ## Open question (for advisor/PO)
+
+  Session length / termination UX — purely user-driven (quit anytime) vs an
+  optional max-depth or "until contradiction" auto-stop. Defaulting to user-driven
+  with a flagged stopping point; revisit once we feel the loop.
+status: Approved
 priority: High
 owner: ''
 feature: Uncategorized
 created_at: 2026-05-31T14:09:55.315076807Z
-modified_at: 2026-05-31T14:09:55.315076807Z
+modified_at: 2026-05-31T14:31:29.673614082Z
 req_type: Epic
 tags:
 - core
