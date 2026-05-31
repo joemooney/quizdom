@@ -7,18 +7,33 @@ use std::env;
 use std::io::{self, BufRead, IsTerminal, Write};
 use std::path::Path;
 
+// trace:STORY-69 | ai:codex
+#[derive(Debug, Clone, Copy, Eq, PartialEq)]
+pub(crate) enum InputContext {
+    Frontier,
+    Review,
+}
+
 pub(crate) fn render_question(question: &Question, output: &mut impl Write) -> Result<()> {
+    render_question_for(question, InputContext::Frontier, output)
+}
+
+pub(crate) fn render_question_for(
+    question: &Question,
+    context: InputContext,
+    output: &mut impl Write,
+) -> Result<()> {
     writeln!(output, "\n{}", question.title)?;
     match &question.answer_kind {
-        AnswerKind::YesNo => writeln!(output, "[Y] Yes  [N] No  [X] eXplore  [P] Punt  [Q] Quit")?,
+        AnswerKind::YesNo => writeln!(output, "{}", control_prompt("[Y] Yes  [N] No", context))?,
         AnswerKind::Choice(options) => {
             for (index, option) in options.iter().enumerate() {
                 writeln!(output, "{}. {}", index + 1, option)?;
             }
             writeln!(
                 output,
-                "[1-{}] Choose  [X] eXplore  [P] Punt  [Q] Quit",
-                options.len()
+                "{}",
+                control_prompt(&format!("[1-{}] Choose", options.len()), context)
             )?;
         }
         AnswerKind::FreeText => writeln!(
@@ -31,8 +46,19 @@ pub(crate) fn render_question(question: &Question, output: &mut impl Write) -> R
     Ok(())
 }
 
+fn control_prompt(prefix: &str, context: InputContext) -> String {
+    match context {
+        InputContext::Frontier => format!("{prefix}  [X] eXplore  [P] Punt  [B] Back  [Q] Quit"),
+        InputContext::Review => {
+            format!("{prefix}  [X] eXplore  [P] Punt  [B] Back  [F] Forward  [Q] Quit")
+        }
+    }
+}
+
 pub(crate) enum AnswerInput {
     Answer(Answer),
+    Back,
+    Forward,
     End,
 }
 
@@ -132,6 +158,7 @@ pub(crate) fn edit_mode_from_editor(editor: &str) -> EditMode {
 
 pub(crate) fn read_answer_or_end(
     kind: &AnswerKind,
+    context: InputContext,
     input: &mut impl BufRead,
     free_text_input: &mut FreeTextInput,
     output: &mut impl Write,
@@ -141,10 +168,16 @@ pub(crate) fn read_answer_or_end(
             AnswerKind::FreeText => free_text_input
                 .read_line(input, output, "")?
                 .ok_or_else(|| QuizdomError::Parse("no answer provided".to_string()))?,
-            _ => read_control_answer_or_line(input, output, kind)?,
+            _ => read_control_answer_or_line(input, output, kind, context)?,
         };
         if is_end_command(&raw) {
             return Ok(AnswerInput::End);
+        }
+        if is_back_command(&raw) {
+            return Ok(AnswerInput::Back);
+        }
+        if context == InputContext::Review && is_forward_command(&raw) {
+            return Ok(AnswerInput::Forward);
         }
         if let Some(normalized) = normalize_answer(kind, &raw) {
             return Ok(AnswerInput::Answer(Answer { raw, normalized }));
@@ -158,10 +191,11 @@ fn read_control_answer_or_line(
     input: &mut impl BufRead,
     output: &mut impl Write,
     kind: &AnswerKind,
+    context: InputContext,
 ) -> Result<String> {
     // trace:STORY-51 | ai:codex
     if io::stdin().is_terminal() {
-        if let Some(raw) = read_single_key_answer(output, kind)? {
+        if let Some(raw) = read_single_key_answer(output, kind, context)? {
             return Ok(raw);
         }
     }
@@ -172,7 +206,11 @@ fn read_control_answer_or_line(
     Ok(raw.trim().to_string())
 }
 
-fn read_single_key_answer(output: &mut impl Write, kind: &AnswerKind) -> Result<Option<String>> {
+fn read_single_key_answer(
+    output: &mut impl Write,
+    kind: &AnswerKind,
+    context: InputContext,
+) -> Result<Option<String>> {
     let Ok(_raw_mode) = RawModeGuard::enter() else {
         return Ok(None);
     };
@@ -190,6 +228,8 @@ fn read_single_key_answer(output: &mut impl Write, kind: &AnswerKind) -> Result<
             KeyCode::Char('n') | KeyCode::Char('N') if matches!(kind, AnswerKind::YesNo) => "n",
             KeyCode::Char('x') | KeyCode::Char('X') => "x",
             KeyCode::Char('p') | KeyCode::Char('P') => "p",
+            KeyCode::Char('b') | KeyCode::Char('B') => "b",
+            KeyCode::Char('f') | KeyCode::Char('F') if context == InputContext::Review => "f",
             KeyCode::Char('q') | KeyCode::Char('Q') => "/end",
             KeyCode::Char(character) if matches!(kind, AnswerKind::Choice(_)) => {
                 if character.is_ascii_digit() {
@@ -212,6 +252,20 @@ pub(crate) fn is_end_command(raw: &str) -> bool {
     matches!(
         raw.trim().to_ascii_lowercase().as_str(),
         "/end" | "q" | "quit"
+    )
+}
+
+pub(crate) fn is_back_command(raw: &str) -> bool {
+    matches!(
+        raw.trim().to_ascii_lowercase().as_str(),
+        "b" | "/b" | "back"
+    )
+}
+
+pub(crate) fn is_forward_command(raw: &str) -> bool {
+    matches!(
+        raw.trim().to_ascii_lowercase().as_str(),
+        "f" | "/f" | "forward"
     )
 }
 
