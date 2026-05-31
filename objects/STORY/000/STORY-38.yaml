@@ -8,7 +8,7 @@ priority: Medium
 owner: ''
 feature: Uncategorized
 created_at: 2026-05-31T17:46:13.267343079Z
-modified_at: 2026-05-31T19:13:11.342257568Z
+modified_at: 2026-05-31T19:17:45.818267758Z
 req_type: Story
 tags:
 - bank
@@ -24,3 +24,9 @@ relationships:
   target_id: 019e7f24-9b8d-7d12-9cc8-ac6af983454a
   created_at: 2026-05-31T17:46:45.784704581Z
   created_by: joe
+comments:
+- id: 019e7f78-86da-7402-8244-7cd04d87d385
+  author: joe
+  content: 'Implemented persistence for LLM-generated questions: generated Q prompts are persisted through aida add --prefix Q with topic, answer, weight:50, and seed tags, then linked from the originating question with a begets edge. Added best-effort duplicate avoidance against near-identical successor questions and unit tests for command construction and duplicate selection. Shipped in PR #9.'
+  created_at: 2026-05-31T19:17:45.818267758Z
+  modified_at: 2026-05-31T19:17:45.818267758Z
