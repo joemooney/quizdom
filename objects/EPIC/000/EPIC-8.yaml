@@ -45,12 +45,12 @@ description: |-
   Run a session on Q-23, answer "yes", get drawn into "what do you mean by free
   will?", see libertarian vs compatibilist surfaced, type a free-text meaning, and
   get steered to the matching formal definition (or a tagged bespoke one).
-status: Approved
+status: Completed
 priority: Medium
 owner: ''
 feature: Uncategorized
 created_at: 2026-05-31T14:10:01.318758757Z
-modified_at: 2026-05-31T19:38:04.728954997Z
+modified_at: 2026-05-31T21:01:27.859997134Z
 req_type: Epic
 tags:
 - epic
