@@ -3,12 +3,12 @@ spec_id: STORY-37
 agreed_id: STORY-37
 title: 'LlmNextQuestionStrategy: analyze answer -> generate or select next question'
 description: 'Implement EPIC-6''s NextQuestionStrategy trait (STORY-18) using the llm crate: analyze the user''s answer and either generate a new question or select a fitting one from the bank. Loop stays unchanged; deterministic strategy remains fallback. ## Acceptance: implements NextQuestionStrategy; given an answer returns a sensible next question. Depends on AnthropicClient + STORY-18.'
-status: Approved
+status: InProgress
 priority: High
 owner: ''
 feature: Uncategorized
 created_at: 2026-05-31T17:46:06.093034347Z
-modified_at: 2026-05-31T17:46:44.706319491Z
+modified_at: 2026-05-31T19:01:58.709759924Z
 req_type: Story
 tags:
 - llm
