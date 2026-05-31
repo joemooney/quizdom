@@ -327,24 +327,6 @@ fn run_session_from_current(
             render_settled_term_definition(settled, output)?;
         } else {
             render_term_definitions(&probed_terms, output)?;
-            if let Some(settled) = prompt_for_term_meaning(
-                &probed_terms,
-                strategy,
-                term_persister,
-                &mut input,
-                &mut free_text_input,
-                output,
-            )? {
-                logger.term_interpreted(
-                    &config.session_id,
-                    &config.user_id,
-                    &config.branch_id,
-                    turn,
-                    &settled,
-                    &probed_terms,
-                )?;
-                settled_terms.push(settled);
-            }
         }
         render_question(&current, output)?;
         let answer = match read_answer_or_end(
@@ -366,6 +348,30 @@ fn run_session_from_current(
                 break;
             }
         };
+        if answer.normalized == "explore" {
+            // trace:STORY-52 | ai:codex
+            if let Some(settled) = settled_definition_for(&probed_terms, &settled_terms) {
+                render_settled_term_definition(settled, output)?;
+            } else if let Some(settled) = prompt_for_term_meaning(
+                &probed_terms,
+                strategy,
+                term_persister,
+                &mut input,
+                &mut free_text_input,
+                output,
+            )? {
+                logger.term_interpreted(
+                    &config.session_id,
+                    &config.user_id,
+                    &config.branch_id,
+                    turn,
+                    &settled,
+                    &probed_terms,
+                )?;
+                settled_terms.push(settled);
+            }
+            continue;
+        }
         logger.answer_recorded(
             &config.session_id,
             &config.user_id,
