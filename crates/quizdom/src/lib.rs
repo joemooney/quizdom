@@ -162,12 +162,17 @@ struct CliConfig {
     user_id: String,
     session_id: String,
     log_path: PathBuf,
+    branch_id: String,
+    proposition: Option<String>,
+    agree_seed: Option<String>,
+    disagree_seed: Option<String>,
 }
 
 #[derive(Debug, Clone, Copy, Eq, PartialEq)]
 enum SessionCommand {
     Start,
     Resume,
+    Fork,
 }
 
 impl CliConfig {
@@ -177,6 +182,10 @@ impl CliConfig {
         let mut user_id = DEFAULT_USER.to_string();
         let mut session_id = format!("sess-{}", Utc::now().timestamp());
         let mut log_path = None;
+        let mut branch_id = "main".to_string();
+        let mut proposition = None;
+        let mut agree_seed = None;
+        let mut disagree_seed = None;
         let mut args = args.into_iter().peekable();
 
         if matches!(args.peek().map(String::as_str), Some("session")) {
@@ -187,6 +196,9 @@ impl CliConfig {
         } else if matches!(args.peek().map(String::as_str), Some("resume")) {
             command = SessionCommand::Resume;
             args.next();
+        } else if matches!(args.peek().map(String::as_str), Some("fork")) {
+            command = SessionCommand::Fork;
+            args.next();
         }
 
         while let Some(arg) = args.next() {
@@ -195,6 +207,10 @@ impl CliConfig {
                 "--user" => user_id = next_arg(&mut args, "--user")?,
                 "--session" => session_id = next_arg(&mut args, "--session")?,
                 "--log" => log_path = Some(PathBuf::from(next_arg(&mut args, "--log")?)),
+                "--branch" => branch_id = next_arg(&mut args, "--branch")?,
+                "--proposition" => proposition = Some(next_arg(&mut args, "--proposition")?),
+                "--agree-seed" => agree_seed = Some(next_arg(&mut args, "--agree-seed")?),
+                "--disagree-seed" => disagree_seed = Some(next_arg(&mut args, "--disagree-seed")?),
                 "--help" | "-h" => return Err(QuizdomError::Usage(usage())),
                 other => {
                     return Err(QuizdomError::Usage(format!(
@@ -219,6 +235,10 @@ impl CliConfig {
             user_id,
             session_id,
             log_path,
+            branch_id,
+            proposition,
+            agree_seed,
+            disagree_seed,
         })
     }
 }
@@ -230,7 +250,7 @@ fn next_arg(args: &mut impl Iterator<Item = String>, name: &str) -> Result<Strin
 }
 
 fn usage() -> String {
-    "usage: quizdom [session] [start|resume] [--seed Q-23] [--user local-user] [--session sess-id] [--log path]"
+    "usage: quizdom [session] [start|resume|fork] [--seed Q-23] [--branch main] [--user local-user] [--session sess-id] [--log path] [--proposition text --agree-seed Q --disagree-seed Q]"
         .to_string()
 }
 
@@ -245,6 +265,7 @@ pub fn run_cli(
     match config.command {
         SessionCommand::Start => run_session(&config, &bank, &strategy, input, &mut output),
         SessionCommand::Resume => resume_session(&config, &bank, &strategy, input, &mut output),
+        SessionCommand::Fork => fork_session(&config, &mut output),
     }
 }
 
@@ -273,11 +294,22 @@ fn run_session_from_current(
     let mut current = bank.load_question(&config.seed)?;
 
     if write_start_event {
-        logger.session_started(&config.session_id, &config.user_id, &current.id)?;
+        logger.session_started(
+            &config.session_id,
+            &config.user_id,
+            &config.branch_id,
+            &current.id,
+        )?;
     }
 
     loop {
-        logger.question_presented(&config.session_id, &config.user_id, turn, &current)?;
+        logger.question_presented(
+            &config.session_id,
+            &config.user_id,
+            &config.branch_id,
+            turn,
+            &current,
+        )?;
         render_question(&current, output)?;
         let answer = match read_answer_or_end(&current.answer_kind, &mut input, output)? {
             AnswerInput::Answer(answer) => answer,
@@ -286,19 +318,28 @@ fn run_session_from_current(
                 logger.session_ended(
                     &config.session_id,
                     &config.user_id,
+                    &config.branch_id,
                     turn,
                     "User ended session.",
                 )?;
                 break;
             }
         };
-        logger.answer_recorded(&config.session_id, &config.user_id, turn, &current, &answer)?;
+        logger.answer_recorded(
+            &config.session_id,
+            &config.user_id,
+            &config.branch_id,
+            turn,
+            &current,
+            &answer,
+        )?;
 
         match strategy.next_question(&current, bank)? {
             Some(next) => {
                 logger.next_question_selected(
                     &config.session_id,
                     &config.user_id,
+                    &config.branch_id,
                     turn,
                     &current.id,
                     &next.id,
@@ -312,6 +353,7 @@ fn run_session_from_current(
                 logger.session_ended(
                     &config.session_id,
                     &config.user_id,
+                    &config.branch_id,
                     turn,
                     "No outgoing begets successor.",
                 )?;
@@ -331,7 +373,7 @@ fn resume_session(
     output: &mut impl Write,
 ) -> Result<()> {
     // trace:STORY-20 | ai:codex
-    let replay = SessionReplay::load(&config.log_path)?;
+    let replay = SessionReplay::load(&config.log_path, &config.branch_id)?;
     replay.render(output)?;
 
     let Some(next_question_ref) = replay.next_question_ref else {
@@ -350,6 +392,36 @@ fn resume_session(
         replay.next_turn,
         false,
     )
+}
+
+fn fork_session(config: &CliConfig, output: &mut impl Write) -> Result<()> {
+    // trace:STORY-19 | ai:codex
+    let proposition = config
+        .proposition
+        .as_deref()
+        .ok_or_else(|| QuizdomError::Usage("session fork requires --proposition".to_string()))?;
+    let agree_seed = config
+        .agree_seed
+        .as_deref()
+        .ok_or_else(|| QuizdomError::Usage("session fork requires --agree-seed".to_string()))?;
+    let disagree_seed = config
+        .disagree_seed
+        .as_deref()
+        .ok_or_else(|| QuizdomError::Usage("session fork requires --disagree-seed".to_string()))?;
+
+    let mut logger = SessionLogger::open(&config.log_path)?;
+    logger.branch_forked(
+        &config.session_id,
+        &config.user_id,
+        proposition,
+        agree_seed,
+        disagree_seed,
+    )?;
+    writeln!(
+        output,
+        "Forked proposition into agree -> {agree_seed} and disagree -> {disagree_seed}."
+    )?;
+    Ok(())
 }
 
 fn render_question(question: &Question, output: &mut impl Write) -> Result<()> {
@@ -436,18 +508,19 @@ struct ReplayedAnswer {
 
 #[derive(Debug, Clone, Eq, PartialEq)]
 struct SessionReplay {
+    branch_id: String,
     answers: Vec<ReplayedAnswer>,
     next_question_ref: Option<String>,
     next_turn: u64,
 }
 
 impl SessionReplay {
-    fn load(path: &Path) -> Result<Self> {
+    fn load(path: &Path, branch_id: &str) -> Result<Self> {
         let file = File::open(path)?;
-        Self::from_reader(file)
+        Self::from_reader(file, branch_id)
     }
 
-    fn from_reader(reader: impl Read) -> Result<Self> {
+    fn from_reader(reader: impl Read, branch_id: &str) -> Result<Self> {
         let reader = BufReader::new(reader);
         let mut questions = BTreeMap::new();
         let mut answers = Vec::new();
@@ -461,7 +534,15 @@ impl SessionReplay {
             let value: Value = serde_json::from_str(&line)
                 .map_err(|error| QuizdomError::Parse(error.to_string()))?;
             match value.get("event_type").and_then(Value::as_str) {
+                Some("branch_forked") => {
+                    if let Some(seed) = fork_seed_for_branch(&value, branch_id)? {
+                        next_question_ref = Some(seed);
+                    }
+                }
                 Some("question_presented") => {
+                    if event_branch(&value) != branch_id {
+                        continue;
+                    }
                     if let (Some(turn), Some(question_text)) = (
                         value.get("turn").and_then(Value::as_u64),
                         value.get("question_text").and_then(Value::as_str),
@@ -470,6 +551,9 @@ impl SessionReplay {
                     }
                 }
                 Some("answer_recorded") => {
+                    if event_branch(&value) != branch_id {
+                        continue;
+                    }
                     let turn = json_u64(&value, "turn")?;
                     let question_ref = json_string(&value, "question_ref")?;
                     if next_question_ref.as_deref() == Some(question_ref.as_str()) {
@@ -485,6 +569,9 @@ impl SessionReplay {
                     });
                 }
                 Some("next_question_selected") => {
+                    if event_branch(&value) != branch_id {
+                        continue;
+                    }
                     next_question_ref = Some(json_string(&value, "selected_next_question_ref")?);
                 }
                 Some("session_ended") => {}
@@ -495,6 +582,7 @@ impl SessionReplay {
         let next_turn = answers.last().map(|answer| answer.turn + 1).unwrap_or(0);
 
         Ok(Self {
+            branch_id: branch_id.to_string(),
             answers,
             next_question_ref,
             next_turn,
@@ -502,7 +590,11 @@ impl SessionReplay {
     }
 
     fn render(&self, output: &mut impl Write) -> Result<()> {
-        writeln!(output, "Replaying previous session path:")?;
+        writeln!(
+            output,
+            "Replaying previous session path for branch '{}':",
+            self.branch_id
+        )?;
         if self.answers.is_empty() {
             writeln!(output, "(no answered questions yet)")?;
         }
@@ -513,6 +605,25 @@ impl SessionReplay {
         }
         Ok(())
     }
+}
+
+fn fork_seed_for_branch(value: &Value, branch_id: &str) -> Result<Option<String>> {
+    let Some(branches) = value.get("branches").and_then(Value::as_array) else {
+        return Ok(None);
+    };
+    for branch in branches {
+        if branch.get("branch_id").and_then(Value::as_str) == Some(branch_id) {
+            return Ok(Some(json_string(branch, "seed_question_ref")?));
+        }
+    }
+    Ok(None)
+}
+
+fn event_branch(value: &Value) -> &str {
+    value
+        .get("branch_id")
+        .and_then(Value::as_str)
+        .unwrap_or("main")
 }
 
 fn json_string(value: &Value, key: &str) -> Result<String> {
@@ -544,6 +655,7 @@ impl SessionLogger {
         &mut self,
         session_id: &str,
         user_id: &str,
+        branch_id: &str,
         seed_question_ref: &str,
     ) -> Result<()> {
         let event_id = self.event_id();
@@ -553,6 +665,7 @@ impl SessionLogger {
             "occurred_at": Utc::now().to_rfc3339(),
             "session_id": session_id,
             "user_id": user_id,
+            "branch_id": branch_id,
             "seed_question_ref": seed_question_ref,
         }))
     }
@@ -561,6 +674,7 @@ impl SessionLogger {
         &mut self,
         session_id: &str,
         user_id: &str,
+        branch_id: &str,
         turn: u64,
         question: &Question,
     ) -> Result<()> {
@@ -571,6 +685,7 @@ impl SessionLogger {
             "occurred_at": Utc::now().to_rfc3339(),
             "session_id": session_id,
             "user_id": user_id,
+            "branch_id": branch_id,
             "turn": turn,
             "question_ref": question.id,
             "question_text": question.title,
@@ -582,6 +697,7 @@ impl SessionLogger {
         &mut self,
         session_id: &str,
         user_id: &str,
+        branch_id: &str,
         turn: u64,
         question: &Question,
         answer: &Answer,
@@ -593,6 +709,7 @@ impl SessionLogger {
             "occurred_at": Utc::now().to_rfc3339(),
             "session_id": session_id,
             "user_id": user_id,
+            "branch_id": branch_id,
             "turn": turn,
             "question_ref": question.id,
             "answer_mode": question.answer_kind.mode(),
@@ -605,6 +722,7 @@ impl SessionLogger {
         &mut self,
         session_id: &str,
         user_id: &str,
+        branch_id: &str,
         turn: u64,
         question_ref: &str,
         selected_next_question_ref: &str,
@@ -617,6 +735,7 @@ impl SessionLogger {
             "occurred_at": Utc::now().to_rfc3339(),
             "session_id": session_id,
             "user_id": user_id,
+            "branch_id": branch_id,
             "turn": turn,
             "question_ref": question_ref,
             "selected_next_question_ref": selected_next_question_ref,
@@ -628,6 +747,7 @@ impl SessionLogger {
         &mut self,
         session_id: &str,
         user_id: &str,
+        branch_id: &str,
         turn: u64,
         summary: &str,
     ) -> Result<()> {
@@ -638,8 +758,40 @@ impl SessionLogger {
             "occurred_at": Utc::now().to_rfc3339(),
             "session_id": session_id,
             "user_id": user_id,
+            "branch_id": branch_id,
             "turn": turn,
             "summary": summary,
+        }))
+    }
+
+    fn branch_forked(
+        &mut self,
+        session_id: &str,
+        user_id: &str,
+        proposition: &str,
+        agree_seed: &str,
+        disagree_seed: &str,
+    ) -> Result<()> {
+        let event_id = self.event_id();
+        self.write(json!({
+            "event_id": event_id,
+            "event_type": "branch_forked",
+            "occurred_at": Utc::now().to_rfc3339(),
+            "session_id": session_id,
+            "user_id": user_id,
+            "proposition": proposition,
+            "branches": [
+                {
+                    "branch_id": "agree",
+                    "stance": "agree",
+                    "seed_question_ref": agree_seed,
+                },
+                {
+                    "branch_id": "disagree",
+                    "stance": "disagree",
+                    "seed_question_ref": disagree_seed,
+                }
+            ],
         }))
     }
 
@@ -892,7 +1044,7 @@ Tags: topic:free-will, answer:choice[libertarian, compatibilist], weight:42
             r#"{"event_id":"evt-000005","event_type":"session_ended","occurred_at":"2026-05-31T17:00:04Z","session_id":"sess-test","user_id":"user","turn":0,"summary":"User ended session."}"#,
         ]
         .join("\n");
-        let replay = SessionReplay::from_reader(log.as_bytes()).unwrap();
+        let replay = SessionReplay::from_reader(log.as_bytes(), "main").unwrap();
         let mut output = Vec::new();
 
         replay.render(&mut output).unwrap();
@@ -915,7 +1067,7 @@ Tags: topic:free-will, answer:choice[libertarian, compatibilist], weight:42
         ]
         .join("\n");
 
-        let replay = SessionReplay::from_reader(log.as_bytes()).unwrap();
+        let replay = SessionReplay::from_reader(log.as_bytes(), "main").unwrap();
 
         assert_eq!(replay.next_question_ref, None);
         assert_eq!(replay.next_turn, 2);
@@ -940,6 +1092,10 @@ Tags: topic:free-will, answer:choice[libertarian, compatibilist], weight:42
             user_id: "test-user".to_string(),
             session_id: "sess-test".to_string(),
             log_path: path.clone(),
+            branch_id: "main".to_string(),
+            proposition: None,
+            agree_seed: None,
+            disagree_seed: None,
         };
         let mut start_output = Vec::new();
 
@@ -965,7 +1121,7 @@ Tags: topic:free-will, answer:choice[libertarian, compatibilist], weight:42
         .unwrap();
 
         let resume_output = String::from_utf8(resume_output).unwrap();
-        assert!(resume_output.contains("Replaying previous session path:"));
+        assert!(resume_output.contains("Replaying previous session path for branch 'main':"));
         assert!(resume_output.contains("[turn 0] Q-1"));
         assert!(resume_output.contains("answer: yes"));
         assert!(resume_output.contains("Q-2"));
@@ -974,6 +1130,75 @@ Tags: topic:free-will, answer:choice[libertarian, compatibilist], weight:42
         assert!(log.contains(r#""question_ref":"Q-1""#));
         assert!(log.contains(r#""question_ref":"Q-2""#));
         assert!(log.contains(r#""normalized_answer":"no""#));
+
+        let _ = fs::remove_file(path);
+    }
+
+    #[test]
+    fn forked_agree_and_disagree_branches_are_recoverable_independently() {
+        let path = std::env::temp_dir().join(format!(
+            "quizdom-story-19-test-{}.jsonl",
+            std::process::id()
+        ));
+        let _ = fs::remove_file(&path);
+        let bank = FakeBank::new([
+            question("Q-agree", 10, AnswerKind::YesNo),
+            question("Q-disagree", 10, AnswerKind::YesNo),
+        ]);
+        let strategy = DeterministicNextQuestionStrategy;
+        let fork_config = CliConfig {
+            command: SessionCommand::Fork,
+            seed: "Q-1".to_string(),
+            user_id: "test-user".to_string(),
+            session_id: "sess-test".to_string(),
+            log_path: path.clone(),
+            branch_id: "main".to_string(),
+            proposition: Some("Free will requires alternatives".to_string()),
+            agree_seed: Some("Q-agree".to_string()),
+            disagree_seed: Some("Q-disagree".to_string()),
+        };
+        let mut fork_output = Vec::new();
+        fork_session(&fork_config, &mut fork_output).unwrap();
+
+        let mut agree_config = fork_config.clone();
+        agree_config.command = SessionCommand::Resume;
+        agree_config.branch_id = "agree".to_string();
+        let mut agree_output = Vec::new();
+        resume_session(
+            &agree_config,
+            &bank,
+            &strategy,
+            "yes\n".as_bytes(),
+            &mut agree_output,
+        )
+        .unwrap();
+
+        let mut disagree_config = fork_config.clone();
+        disagree_config.command = SessionCommand::Resume;
+        disagree_config.branch_id = "disagree".to_string();
+        let mut disagree_output = Vec::new();
+        resume_session(
+            &disagree_config,
+            &bank,
+            &strategy,
+            "no\n".as_bytes(),
+            &mut disagree_output,
+        )
+        .unwrap();
+
+        let agree_output = String::from_utf8(agree_output).unwrap();
+        let disagree_output = String::from_utf8(disagree_output).unwrap();
+        assert!(agree_output.contains("branch 'agree'"));
+        assert!(agree_output.contains("Q-agree"));
+        assert!(disagree_output.contains("branch 'disagree'"));
+        assert!(disagree_output.contains("Q-disagree"));
+
+        let agree_replay = SessionReplay::load(&path, "agree").unwrap();
+        let disagree_replay = SessionReplay::load(&path, "disagree").unwrap();
+        assert_eq!(agree_replay.answers[0].question_ref, "Q-agree");
+        assert_eq!(agree_replay.answers[0].normalized_answer, "yes");
+        assert_eq!(disagree_replay.answers[0].question_ref, "Q-disagree");
+        assert_eq!(disagree_replay.answers[0].normalized_answer, "no");
 
         let _ = fs::remove_file(path);
     }
