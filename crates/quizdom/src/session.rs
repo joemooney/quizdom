@@ -50,6 +50,8 @@ pub(crate) struct CliConfig {
     pub(crate) agree_seed: Option<String>,
     pub(crate) disagree_seed: Option<String>,
     pub(crate) strategy: StrategyKind,
+    pub(crate) strategy_provided: bool,
+    pub(crate) llm_backend: LlmBackendKind,
 }
 
 #[derive(Debug, Clone, Copy, Eq, PartialEq)]
@@ -88,6 +90,8 @@ impl CliConfig {
         let mut agree_seed = None;
         let mut disagree_seed = None;
         let mut strategy = env_strategy();
+        let mut strategy_provided = false;
+        let mut llm_backend = env_llm_backend();
         let mut args = args.into_iter().peekable();
 
         if matches!(args.peek().map(String::as_str), Some("session")) {
@@ -135,7 +139,11 @@ impl CliConfig {
                 "--proposition" => proposition = Some(next_arg(&mut args, "--proposition")?),
                 "--agree-seed" => agree_seed = Some(next_arg(&mut args, "--agree-seed")?),
                 "--disagree-seed" => disagree_seed = Some(next_arg(&mut args, "--disagree-seed")?),
-                "--strategy" => strategy = parse_strategy(&next_arg(&mut args, "--strategy")?)?,
+                "--strategy" => {
+                    strategy = parse_strategy(&next_arg(&mut args, "--strategy")?)?;
+                    strategy_provided = true;
+                    llm_backend = env_llm_backend();
+                }
                 "--help" | "-h" => return Err(QuizdomError::Usage(usage())),
                 other if command == SessionCommand::Resume && !other.starts_with('-') => {
                     session_id = normalize_session_id(other);
@@ -165,6 +173,8 @@ impl CliConfig {
             agree_seed,
             disagree_seed,
             strategy,
+            strategy_provided,
+            llm_backend,
         })
     }
 }
@@ -197,6 +207,16 @@ pub(crate) fn parse_strategy(value: &str) -> Result<StrategyKind> {
     }
 }
 
+impl StrategyKind {
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::Deterministic => "deterministic",
+            Self::Weighted => "weighted",
+            Self::Llm => "llm",
+        }
+    }
+}
+
 fn env_llm_backend() -> LlmBackendKind {
     std::env::var("QUIZDOM_BACKEND")
         .ok()
@@ -211,6 +231,15 @@ pub(crate) fn parse_llm_backend(value: &str) -> Result<LlmBackendKind> {
         other => Err(QuizdomError::Usage(format!(
             "unknown LLM backend: {other}; expected claude-cli or anthropic"
         ))),
+    }
+}
+
+impl LlmBackendKind {
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::ClaudeCli => "claude-cli",
+            Self::Anthropic => "anthropic",
+        }
     }
 }
 
@@ -276,30 +305,27 @@ pub fn run_cli(
                 &mut output,
             ),
         },
-        SessionCommand::Resume => match build_strategy(&config) {
-            Some(strategy) => {
-                let config = resolve_resume_config(config)?;
-                resume_session_with_term_persister(
+        SessionCommand::Resume => {
+            let config = resolve_resume_config(config)?;
+            match build_strategy(&config) {
+                Some(strategy) => resume_session_with_term_persister(
                     &config,
                     &bank,
                     strategy.as_ref(),
                     &AidaCliUserSpecificTermPersister::default(),
                     input,
                     &mut output,
-                )
-            }
-            None => {
-                let config = resolve_resume_config(config)?;
-                resume_session_with_term_persister(
+                ),
+                None => resume_session_with_term_persister(
                     &config,
                     &bank,
                     &deterministic,
                     &AidaCliUserSpecificTermPersister::default(),
                     input,
                     &mut output,
-                )
+                ),
             }
-        },
+        }
         SessionCommand::List => list_sessions(&config, &mut output),
         SessionCommand::Fork => fork_session(&config, &mut output),
     }
@@ -315,7 +341,74 @@ pub(crate) fn resolve_resume_config(mut config: CliConfig) -> Result<CliConfig> 
         config.session_id = summary.session_id;
         config.log_path = summary.path;
     }
+    // trace:BUG-71 | ai:codex
+    if !config.strategy_provided {
+        if let Some(metadata) = SessionStrategyMetadata::load(&config.log_path, &config.branch_id)?
+        {
+            config.strategy = metadata.strategy;
+            if let Some(llm_backend) = metadata.llm_backend {
+                config.llm_backend = llm_backend;
+            }
+        }
+    }
     Ok(config)
+}
+
+#[derive(Debug, Clone, Copy, Eq, PartialEq)]
+struct SessionStrategyMetadata {
+    strategy: StrategyKind,
+    llm_backend: Option<LlmBackendKind>,
+}
+
+impl SessionStrategyMetadata {
+    fn load(path: &Path, branch_id: &str) -> Result<Option<Self>> {
+        if !path.exists() {
+            return Ok(None);
+        }
+        let file = File::open(path)?;
+        Self::from_reader(file, branch_id)
+    }
+
+    fn from_reader(reader: impl Read, branch_id: &str) -> Result<Option<Self>> {
+        let reader = BufReader::new(reader);
+        for line in reader.lines() {
+            let line = line?;
+            if line.trim().is_empty() {
+                continue;
+            }
+            let value: Value = serde_json::from_str(&line)
+                .map_err(|error| QuizdomError::Parse(error.to_string()))?;
+            if event_branch(&value) != branch_id {
+                continue;
+            }
+            if value.get("event_type").and_then(Value::as_str) != Some("session_started") {
+                continue;
+            }
+            let Some(strategy_value) = value.get("strategy").and_then(Value::as_str) else {
+                return Ok(None);
+            };
+            let strategy = parse_strategy(strategy_value)?;
+            let llm_backend = value
+                .get("llm_backend")
+                .and_then(Value::as_str)
+                .map(parse_llm_backend)
+                .transpose()?;
+            return Ok(Some(Self {
+                strategy,
+                llm_backend,
+            }));
+        }
+        Ok(None)
+    }
+}
+
+fn llm_model_for_log(backend: LlmBackendKind) -> Option<String> {
+    match backend {
+        LlmBackendKind::ClaudeCli => std::env::var("QUIZDOM_MODEL").ok(),
+        LlmBackendKind::Anthropic => {
+            Some(std::env::var("QUIZDOM_MODEL").unwrap_or_else(|_| "claude-sonnet-4-6".to_string()))
+        }
+    }
 }
 
 fn session_log_dir(user_id: &str) -> PathBuf {
@@ -364,7 +457,7 @@ fn build_strategy(config: &CliConfig) -> Option<Box<dyn NextQuestionStrategy>> {
             Some(Box::new(WeightedNextQuestionStrategy::from_entropy())
                 as Box<dyn NextQuestionStrategy>)
         }
-        StrategyKind::Llm => match env_llm_backend() {
+        StrategyKind::Llm => match config.llm_backend {
             LlmBackendKind::ClaudeCli => {
                 let client = ClaudeCliClient::from_env();
                 Some(
@@ -500,6 +593,8 @@ fn run_session_from_current(
             &config.user_id,
             &config.branch_id,
             &current.id,
+            config.strategy,
+            config.llm_backend,
         )?;
     }
 
@@ -1297,8 +1392,14 @@ impl SessionLogger {
         user_id: &str,
         branch_id: &str,
         seed_question_ref: &str,
+        strategy: StrategyKind,
+        llm_backend: LlmBackendKind,
     ) -> Result<()> {
         let event_id = self.event_id();
+        let llm_backend_value = (strategy == StrategyKind::Llm).then(|| llm_backend.as_str());
+        let llm_model = (strategy == StrategyKind::Llm)
+            .then(|| llm_model_for_log(llm_backend))
+            .flatten();
         self.write(json!({
             "event_id": event_id,
             "event_type": "session_started",
@@ -1307,6 +1408,9 @@ impl SessionLogger {
             "user_id": user_id,
             "branch_id": branch_id,
             "seed_question_ref": seed_question_ref,
+            "strategy": strategy.as_str(),
+            "llm_backend": llm_backend_value,
+            "llm_model": llm_model,
         }))
     }
 

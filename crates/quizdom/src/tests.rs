@@ -1275,6 +1275,93 @@ fn session_help_lists_commands_flags_and_resume_examples() {
     assert_eq!(resume_help, help);
 }
 
+// trace:BUG-71 | ai:codex
+#[test]
+fn session_start_records_strategy_and_llm_backend() {
+    let path = std::env::temp_dir().join(format!(
+        "quizdom-bug-71-log-test-{}.jsonl",
+        std::process::id()
+    ));
+    let _ = fs::remove_file(&path);
+    let bank = FakeBank::new([question("Q-1", 10, AnswerKind::YesNo)]);
+    let strategy = DeterministicNextQuestionStrategy;
+    let mut config = test_config(&path, "Q-1");
+    config.strategy = StrategyKind::Llm;
+    config.llm_backend = LlmBackendKind::ClaudeCli;
+    let mut output = Vec::new();
+
+    run_session(&config, &bank, &strategy, "/end\n".as_bytes(), &mut output).unwrap();
+
+    let log = fs::read_to_string(&path).unwrap();
+    assert!(log.contains(r#""event_type":"session_started""#));
+    assert!(log.contains(r#""strategy":"llm""#));
+    assert!(log.contains(r#""llm_backend":"claude-cli""#));
+    assert!(log.contains(r#""llm_model":"#));
+
+    let _ = fs::remove_file(path);
+}
+
+// trace:BUG-71 | ai:codex
+#[test]
+fn resume_restores_logged_strategy_and_backend_when_not_overridden() {
+    let path = std::env::temp_dir().join(format!(
+        "quizdom-bug-71-restore-test-{}.jsonl",
+        std::process::id()
+    ));
+    let _ = fs::remove_file(&path);
+    fs::write(
+        &path,
+        r#"{"event_type":"session_started","branch_id":"main","strategy":"llm","llm_backend":"anthropic","llm_model":"claude-test","session_id":"sess-test","user_id":"test-user","seed_question_ref":"Q-1"}"#,
+    )
+    .unwrap();
+    let config = CliConfig::parse([
+        "session".to_string(),
+        "resume".to_string(),
+        "--log".to_string(),
+        path.to_string_lossy().to_string(),
+    ])
+    .unwrap();
+
+    let resolved = resolve_resume_config(config).unwrap();
+
+    assert_eq!(resolved.strategy, StrategyKind::Llm);
+    assert_eq!(resolved.llm_backend, LlmBackendKind::Anthropic);
+    assert!(!resolved.strategy_provided);
+
+    let _ = fs::remove_file(path);
+}
+
+// trace:BUG-71 | ai:codex
+#[test]
+fn explicit_resume_strategy_overrides_logged_strategy() {
+    let path = std::env::temp_dir().join(format!(
+        "quizdom-bug-71-override-test-{}.jsonl",
+        std::process::id()
+    ));
+    let _ = fs::remove_file(&path);
+    fs::write(
+        &path,
+        r#"{"event_type":"session_started","branch_id":"main","strategy":"llm","llm_backend":"anthropic","session_id":"sess-test","user_id":"test-user","seed_question_ref":"Q-1"}"#,
+    )
+    .unwrap();
+    let config = CliConfig::parse([
+        "session".to_string(),
+        "resume".to_string(),
+        "--log".to_string(),
+        path.to_string_lossy().to_string(),
+        "--strategy".to_string(),
+        "deterministic".to_string(),
+    ])
+    .unwrap();
+
+    let resolved = resolve_resume_config(config).unwrap();
+
+    assert_eq!(resolved.strategy, StrategyKind::Deterministic);
+    assert!(resolved.strategy_provided);
+
+    let _ = fs::remove_file(path);
+}
+
 #[test]
 fn start_end_resume_round_trip_replays_path_and_finishes() {
     let path = std::env::temp_dir().join(format!(
@@ -1301,6 +1388,8 @@ fn start_end_resume_round_trip_replays_path_and_finishes() {
         agree_seed: None,
         disagree_seed: None,
         strategy: StrategyKind::Deterministic,
+        strategy_provided: false,
+        llm_backend: LlmBackendKind::ClaudeCli,
     };
     let mut start_output = Vec::new();
 
@@ -1599,6 +1688,8 @@ fn forked_agree_and_disagree_branches_are_recoverable_independently() {
         agree_seed: Some("Q-agree".to_string()),
         disagree_seed: Some("Q-disagree".to_string()),
         strategy: StrategyKind::Deterministic,
+        strategy_provided: false,
+        llm_backend: LlmBackendKind::ClaudeCli,
     };
     let mut fork_output = Vec::new();
     fork_session(&fork_config, &mut fork_output).unwrap();
@@ -1727,6 +1818,8 @@ fn test_config(path: &Path, seed: &str) -> CliConfig {
         agree_seed: None,
         disagree_seed: None,
         strategy: StrategyKind::Deterministic,
+        strategy_provided: false,
+        llm_backend: LlmBackendKind::ClaudeCli,
     }
 }
 
