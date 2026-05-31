@@ -3,12 +3,12 @@ spec_id: STORY-20
 agreed_id: STORY-20
 title: 'Session lifecycle: start / resume / end on the per-user log'
 description: 'Persist the traversal so a session can be left and resumed without losing the path; user-driven end with an optional flagged stopping point. ## Acceptance: start a session, answer, end, resume -> log replays the exact path; ending is user-driven. Depends on STORY-15 (log format).'
-status: Approved
+status: InProgress
 priority: Medium
 owner: ''
 feature: Uncategorized
 created_at: 2026-05-31T14:31:55.790792961Z
-modified_at: 2026-05-31T14:32:16.696153007Z
+modified_at: 2026-05-31T17:39:15.964157630Z
 req_type: Story
 tags:
 - lifecycle
