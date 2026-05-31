@@ -594,6 +594,29 @@ fn accepts_all_answer_kinds() {
 }
 
 #[test]
+fn accepts_explore_and_punt_controls() {
+    assert_eq!(
+        normalize_answer(&AnswerKind::YesNo, "x"),
+        Some("explore".to_string())
+    );
+    assert_eq!(
+        normalize_answer(&AnswerKind::YesNo, "P"),
+        Some("punt".to_string())
+    );
+    assert_eq!(
+        normalize_answer(
+            &AnswerKind::Choice(vec!["one".to_string(), "two".to_string()]),
+            "/x"
+        ),
+        Some("explore".to_string())
+    );
+    assert_eq!(
+        normalize_answer(&AnswerKind::FreeText, "/p"),
+        Some("punt".to_string())
+    );
+}
+
+#[test]
 fn editor_mode_uses_vi_for_vi_family_editors() {
     assert_eq!(edit_mode_from_editor("nvim"), EditMode::Vi);
     assert_eq!(edit_mode_from_editor("/usr/bin/vim"), EditMode::Vi);
@@ -608,10 +631,10 @@ fn editor_mode_defaults_to_emacs_for_other_editors() {
 #[test]
 fn renders_all_question_kinds() {
     let cases = [
-        (AnswerKind::YesNo, "Answer yes or no, or /end"),
+        (AnswerKind::YesNo, "[Y] Yes  [N] No  [X] eXplore  [P] Punt"),
         (
             AnswerKind::Choice(vec!["libertarian".to_string(), "compatibilist".to_string()]),
-            "2. compatibilist",
+            "[1-2] Choose  [X] eXplore  [P] Punt",
         ),
         (AnswerKind::FreeText, "Answer in your own words, or /end"),
     ];
