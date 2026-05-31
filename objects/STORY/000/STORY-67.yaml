@@ -16,3 +16,7 @@ tags:
 - story
 - strategy
 - weighting
+relationships:
+- rel_type: Child
+  target_id: 019e7e5e-e038-77b0-a462-602c6b7db9df
+  created_at: 2026-05-31T21:33:36.983324984Z
