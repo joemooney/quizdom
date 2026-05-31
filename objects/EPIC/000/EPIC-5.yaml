@@ -51,7 +51,7 @@ priority: High
 owner: ''
 feature: Uncategorized
 created_at: 2026-05-31T14:09:52.609763049Z
-modified_at: 2026-05-31T14:38:00.851334691Z
+modified_at: 2026-05-31T15:25:32.034760701Z
 req_type: Epic
 tags:
 - aida
@@ -77,3 +77,8 @@ comments:
   content: 'Schema finalized in docs/architecture/graph-schema.md (PR #1). NOTE: definitions use a TERM title/tag prefix (not AIDA''s native --type term as this EPIC body originally suggested). The merged doc is canonical for node/edge/tag conventions; follow it over any earlier wording here.'
   created_at: 2026-05-31T14:38:00.851334691Z
   modified_at: 2026-05-31T14:38:00.851334691Z
+- id: 019e7ea3-ea02-7070-92f4-308c88c48dde
+  author: joe
+  content: 'ACCEPTANCE AMENDED (ADR-31): the ''query_graph traverses Q->definitions->follow-ups'' clause is superseded — current AIDA can''t traverse custom edges (FR-282). Verify the graph via ''aida rel list'' (edges exist + correct). STORY-16 meets acceptance on that basis.'
+  created_at: 2026-05-31T15:25:32.034760701Z
+  modified_at: 2026-05-31T15:25:32.034760701Z
