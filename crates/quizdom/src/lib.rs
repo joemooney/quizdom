@@ -79,9 +79,28 @@ pub struct QuestionRef {
     pub id: String,
 }
 
+#[derive(Debug, Clone, Eq, PartialEq)]
+pub struct TermRef {
+    pub id: String,
+}
+
+#[derive(Debug, Clone, Eq, PartialEq)]
+pub struct TermDefinition {
+    pub id: String,
+    pub title: String,
+    pub tags: Vec<String>,
+    pub definition: String,
+}
+
 pub trait QuestionBank {
     fn load_question(&self, id: &str) -> Result<Question>;
     fn begets(&self, id: &str) -> Result<Vec<QuestionRef>>;
+    fn probes(&self, _id: &str) -> Result<Vec<TermRef>> {
+        Ok(Vec::new())
+    }
+    fn load_term(&self, id: &str) -> Result<TermDefinition> {
+        Err(QuizdomError::Parse(format!("missing term {id}")))
+    }
 }
 
 pub trait GeneratedQuestionPersister {
@@ -99,6 +118,10 @@ pub trait NextQuestionStrategy {
         context: &StrategyContext,
         bank: &dyn QuestionBank,
     ) -> Result<Option<Question>>;
+
+    fn loaded_terms(&self, _current: &Question, _answer: &Answer) -> Result<Vec<String>> {
+        Ok(Vec::new())
+    }
 }
 
 #[derive(Debug, Clone, Eq, PartialEq)]
@@ -315,6 +338,10 @@ where
             Err(_) => self.deterministic.next_question(current, context, bank),
         }
     }
+
+    fn loaded_terms(&self, current: &Question, answer: &Answer) -> Result<Vec<String>> {
+        self.llm_loaded_terms(current, answer).or(Ok(Vec::new()))
+    }
 }
 
 impl<C, P> LlmNextQuestionStrategy<C, P>
@@ -348,6 +375,26 @@ where
                 .map(Some),
             other => Ok(other),
         }
+    }
+
+    fn llm_loaded_terms(&self, current: &Question, answer: &Answer) -> Result<Vec<String>> {
+        let prompt = format!(
+            "Question: {question}\nAnswer: {answer}\n\nReturn only JSON: {{\"loaded_terms\":[\"term\"]}}. Include loaded philosophical or semantic terms whose competing definitions would help interpret the answer. Use an empty list if none.",
+            question = current.title,
+            answer = answer.raw,
+        );
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_time()
+            .build()
+            .map_err(QuizdomError::Io)?;
+        let (text, _tool_calls) = runtime
+            .block_on(self.client.call(
+                "Detect loaded terms in the user's answer.",
+                &[Message::user(prompt)],
+                &[],
+            ))
+            .map_err(|error| QuizdomError::Aida(error.to_string()))?;
+        parse_loaded_terms(&text)
     }
 }
 
@@ -388,6 +435,32 @@ impl QuestionBank for AidaCliQuestionBank {
         Ok(parse_begets_rel_list(&String::from_utf8_lossy(
             &output.stdout,
         )))
+    }
+
+    fn probes(&self, id: &str) -> Result<Vec<TermRef>> {
+        let output = Command::new(&self.command)
+            .args(["rel", "list", id, "--type", "probes"])
+            .output()?;
+        if !output.status.success() {
+            return Err(QuizdomError::Aida(
+                String::from_utf8_lossy(&output.stderr).to_string(),
+            ));
+        }
+
+        Ok(parse_probes_rel_list(&String::from_utf8_lossy(
+            &output.stdout,
+        )))
+    }
+
+    fn load_term(&self, id: &str) -> Result<TermDefinition> {
+        let output = Command::new(&self.command).args(["show", id]).output()?;
+        if !output.status.success() {
+            return Err(QuizdomError::Aida(
+                String::from_utf8_lossy(&output.stderr).to_string(),
+            ));
+        }
+
+        parse_term_show(&String::from_utf8_lossy(&output.stdout))
     }
 }
 
@@ -766,6 +839,8 @@ fn run_session_from_current(
             turn,
             &current,
         )?;
+        let probed_terms = load_probed_terms(bank, &current);
+        render_term_definitions(&probed_terms, output)?;
         render_question(&current, output)?;
         let answer = match read_answer_or_end(&current.answer_kind, &mut input, output)? {
             AnswerInput::Answer(answer) => answer,
@@ -789,6 +864,11 @@ fn run_session_from_current(
             &current,
             &answer,
         )?;
+        if matches!(current.answer_kind, AnswerKind::FreeText) {
+            let flagged_terms = strategy.loaded_terms(&current, &answer).unwrap_or_default();
+            let definitions = definitions_for_loaded_terms(&probed_terms, &flagged_terms);
+            render_term_definitions(&definitions, output)?;
+        }
         let context = StrategyContext {
             answer: answer.clone(),
             recent_path: recent_path.clone(),
@@ -828,6 +908,66 @@ fn run_session_from_current(
         }
     }
 
+    Ok(())
+}
+
+fn load_probed_terms(bank: &dyn QuestionBank, current: &Question) -> Vec<TermDefinition> {
+    // trace:STORY-41 | ai:codex
+    bank.probes(&current.id)
+        .unwrap_or_default()
+        .into_iter()
+        .filter_map(|term_ref| bank.load_term(&term_ref.id).ok())
+        .collect()
+}
+
+fn definitions_for_loaded_terms(
+    definitions: &[TermDefinition],
+    loaded_terms: &[String],
+) -> Vec<TermDefinition> {
+    if loaded_terms.is_empty() {
+        return Vec::new();
+    }
+    definitions
+        .iter()
+        .filter(|definition| {
+            let title = normalize_loaded_term(&definition.title);
+            loaded_terms.iter().any(|term| {
+                let term = normalize_loaded_term(term);
+                !term.is_empty() && (title.contains(&term) || term.contains(&title))
+            })
+        })
+        .cloned()
+        .collect()
+}
+
+fn normalize_loaded_term(term: &str) -> String {
+    term.trim()
+        .to_ascii_lowercase()
+        .split(['/', ':', '('])
+        .next()
+        .unwrap_or("")
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
+fn render_term_definitions(definitions: &[TermDefinition], output: &mut impl Write) -> Result<()> {
+    if definitions.is_empty() {
+        return Ok(());
+    }
+    writeln!(output, "\nTerms to distinguish:")?;
+    for definition in definitions {
+        let definition_kind = definition
+            .tags
+            .iter()
+            .find_map(|tag| tag.strip_prefix("definition:"))
+            .unwrap_or("definition");
+        writeln!(
+            output,
+            "- {} ({definition_kind}): {}",
+            definition.title, definition.definition
+        )?;
+    }
     Ok(())
 }
 
@@ -1329,6 +1469,46 @@ pub fn parse_question_show(output: &str) -> Result<Question> {
     })
 }
 
+pub fn parse_term_show(output: &str) -> Result<TermDefinition> {
+    let id = prefixed_line(output, "ID:")
+        .ok_or_else(|| QuizdomError::Parse("aida show output missing ID".to_string()))?;
+    let title = prefixed_line(output, "Title:")
+        .ok_or_else(|| QuizdomError::Parse("aida show output missing Title".to_string()))?;
+    let tags = split_tags(&prefixed_line(output, "Tags:").unwrap_or_default());
+    let definition = parse_definition_text(output)
+        .ok_or_else(|| QuizdomError::Parse(format!("{id} missing definition: line")))?;
+
+    Ok(TermDefinition {
+        id,
+        title,
+        tags,
+        definition,
+    })
+}
+
+fn parse_definition_text(output: &str) -> Option<String> {
+    let mut definition = Vec::new();
+    let mut in_definition = false;
+    for line in output.lines() {
+        if let Some(rest) = line.strip_prefix("definition:") {
+            in_definition = true;
+            let rest = rest.trim();
+            if !rest.is_empty() {
+                definition.push(rest.to_string());
+            }
+            continue;
+        }
+        if in_definition {
+            let trimmed = line.trim();
+            if trimmed.is_empty() || trimmed.starts_with("scope:") {
+                break;
+            }
+            definition.push(trimmed.to_string());
+        }
+    }
+    (!definition.is_empty()).then(|| definition.join(" "))
+}
+
 fn answer_kind_from_tags(tags: &[String]) -> Option<AnswerKind> {
     tags.iter().find_map(|tag| {
         if tag == "answer:yes-no" {
@@ -1392,6 +1572,20 @@ fn prefixed_line(output: &str, prefix: &str) -> Option<String> {
 }
 
 pub fn parse_begets_rel_list(output: &str) -> Vec<QuestionRef> {
+    parse_rel_list(output, "begets")
+        .into_iter()
+        .map(|id| QuestionRef { id })
+        .collect()
+}
+
+pub fn parse_probes_rel_list(output: &str) -> Vec<TermRef> {
+    parse_rel_list(output, "probes")
+        .into_iter()
+        .map(|id| TermRef { id })
+        .collect()
+}
+
+fn parse_rel_list(output: &str, expected_type: &str) -> Vec<String> {
     output
         .lines()
         .filter_map(|line| {
@@ -1407,9 +1601,24 @@ pub fn parse_begets_rel_list(output: &str) -> Vec<QuestionRef> {
             let _from = columns.next()?;
             let relationship_type = columns.next()?;
             let to = columns.next()?;
-            (relationship_type == "begets").then(|| QuestionRef { id: to.to_string() })
+            (relationship_type == expected_type).then(|| to.to_string())
         })
         .collect()
+}
+
+fn parse_loaded_terms(text: &str) -> Result<Vec<String>> {
+    let value: Value = serde_json::from_str(text.trim())
+        .map_err(|error| QuizdomError::Parse(format!("invalid loaded-term JSON: {error}")))?;
+    let Some(items) = value.get("loaded_terms").and_then(Value::as_array) else {
+        return Ok(Vec::new());
+    };
+    Ok(items
+        .iter()
+        .filter_map(Value::as_str)
+        .map(str::trim)
+        .filter(|term| !term.is_empty())
+        .map(str::to_string)
+        .collect())
 }
 
 #[cfg(test)]
@@ -1461,6 +1670,55 @@ Tags: topic:free-will, answer:choice[libertarian, compatibilist], weight:42
                     id: "Q-27".to_string()
                 }
             ]
+        );
+    }
+
+    #[test]
+    fn parses_probes_relationships_from_aida_rel_list() {
+        let output = r#"FROM  TYPE    TO       TITLE
+  Q-23  probes  TERM-24  free will / libertarian
+  Q-23  probes  TERM-25  free will / compatibilist
+
+2 edges
+"#;
+
+        let refs = parse_probes_rel_list(output);
+
+        assert_eq!(
+            refs,
+            vec![
+                TermRef {
+                    id: "TERM-24".to_string()
+                },
+                TermRef {
+                    id: "TERM-25".to_string()
+                }
+            ]
+        );
+    }
+
+    #[test]
+    fn parses_term_definition_from_aida_show() {
+        let output = r#"ID: TERM-24
+Title: free will / libertarian
+Tags: seed, definition:academic, topic:free-will, weight:60
+
+source: libertarian free will.
+
+definition: An agent has free will only if the agent could genuinely have chosen
+otherwise under the same conditions.
+
+scope: formal definition.
+"#;
+
+        let term = parse_term_show(output).unwrap();
+
+        assert_eq!(term.id, "TERM-24");
+        assert_eq!(term.title, "free will / libertarian");
+        assert!(term.tags.contains(&"definition:academic".to_string()));
+        assert_eq!(
+            term.definition,
+            "An agent has free will only if the agent could genuinely have chosen otherwise under the same conditions."
         );
     }
 
@@ -1664,6 +1922,93 @@ Tags: topic:free-will, answer:choice[libertarian, compatibilist], weight:42
             .unwrap();
 
         assert_eq!(next.id, "Q-2");
+    }
+
+    #[test]
+    fn llm_strategy_flags_loaded_terms_from_free_text_answer() {
+        let strategy =
+            LlmNextQuestionStrategy::new(MockLlm::ok(r#"{"loaded_terms":["free will"]}"#));
+        let current = question("Q-1", 0, AnswerKind::FreeText);
+
+        let terms = strategy
+            .loaded_terms(
+                &current,
+                &Answer {
+                    raw: "I mean freedom from coercion".to_string(),
+                    normalized: "I mean freedom from coercion".to_string(),
+                },
+            )
+            .unwrap();
+
+        assert_eq!(terms, vec!["free will".to_string()]);
+    }
+
+    #[test]
+    fn session_surfaces_probed_competing_definitions() {
+        let path = std::env::temp_dir().join(format!(
+            "quizdom-story-41-test-{}.jsonl",
+            std::process::id()
+        ));
+        let _ = fs::remove_file(&path);
+        let bank = FakeBank::new([question_with_tags(
+            "Q-23",
+            70,
+            AnswerKind::YesNo,
+            ["topic:free-will", "answer:yes-no", "weight:70"],
+        )])
+        .with_probes("Q-23", ["TERM-24", "TERM-25"])
+        .with_terms([
+            term(
+                "TERM-24",
+                "free will / libertarian",
+                "An agent could genuinely have chosen otherwise.",
+            ),
+            term(
+                "TERM-25",
+                "free will / compatibilist",
+                "The action flows from the agent's own reasons without coercion.",
+            ),
+        ]);
+        let config = test_config(&path, "Q-23");
+        let mut output = Vec::new();
+
+        run_session(
+            &config,
+            &bank,
+            &DeterministicNextQuestionStrategy,
+            "yes\n".as_bytes(),
+            &mut output,
+        )
+        .unwrap();
+
+        let output = String::from_utf8(output).unwrap();
+        assert!(output.contains("Terms to distinguish:"));
+        assert!(output.contains("free will / libertarian"));
+        assert!(output.contains("free will / compatibilist"));
+        assert!(output.contains("chosen otherwise"));
+        assert!(output.contains("without coercion"));
+
+        let _ = fs::remove_file(path);
+    }
+
+    #[test]
+    fn loaded_term_definitions_filter_by_llm_flag() {
+        let definitions = vec![
+            term(
+                "TERM-24",
+                "free will / libertarian",
+                "could choose otherwise",
+            ),
+            term(
+                "TERM-30",
+                "responsibility / moral",
+                "accountable for an act",
+            ),
+        ];
+
+        let filtered = definitions_for_loaded_terms(&definitions, &["free will".to_string()]);
+
+        assert_eq!(filtered, vec![definitions[0].clone()]);
     }
 
     #[test]
@@ -1918,6 +2263,33 @@ Tags: topic:free-will, answer:choice[libertarian, compatibilist], weight:42
         }
     }
 
+    fn term(id: &str, title: &str, definition: &str) -> TermDefinition {
+        TermDefinition {
+            id: id.to_string(),
+            title: title.to_string(),
+            tags: vec![
+                "topic:free-will".to_string(),
+                "definition:academic".to_string(),
+            ],
+            definition: definition.to_string(),
+        }
+    }
+
+    fn test_config(path: &Path, seed: &str) -> CliConfig {
+        CliConfig {
+            command: SessionCommand::Start,
+            seed: seed.to_string(),
+            user_id: "test-user".to_string(),
+            session_id: "sess-test".to_string(),
+            log_path: path.to_path_buf(),
+            branch_id: "main".to_string(),
+            proposition: None,
+            agree_seed: None,
+            disagree_seed: None,
+            strategy: StrategyKind::Deterministic,
+        }
+    }
+
     fn strategy_context(raw: &str) -> StrategyContext {
         StrategyContext {
             answer: Answer {
@@ -2006,6 +2378,8 @@ Tags: topic:free-will, answer:choice[libertarian, compatibilist], weight:42
     struct FakeBank {
         questions: HashMap<String, Question>,
         edges: HashMap<String, Vec<QuestionRef>>,
+        probes: HashMap<String, Vec<TermRef>>,
+        terms: HashMap<String, TermDefinition>,
     }
 
     impl FakeBank {
@@ -2016,6 +2390,8 @@ Tags: topic:free-will, answer:choice[libertarian, compatibilist], weight:42
                     .map(|question| (question.id.clone(), question))
                     .collect(),
                 edges: HashMap::new(),
+                probes: HashMap::new(),
+                terms: HashMap::new(),
             }
         }
 
@@ -2026,6 +2402,24 @@ Tags: topic:free-will, answer:choice[libertarian, compatibilist], weight:42
                     .map(|id| QuestionRef { id: id.to_string() })
                     .collect(),
             );
+            self
+        }
+
+        fn with_probes(mut self, from: &str, to: impl IntoIterator<Item = &'static str>) -> Self {
+            self.probes.insert(
+                from.to_string(),
+                to.into_iter()
+                    .map(|id| TermRef { id: id.to_string() })
+                    .collect(),
+            );
+            self
+        }
+
+        fn with_terms(mut self, terms: impl IntoIterator<Item = TermDefinition>) -> Self {
+            self.terms = terms
+                .into_iter()
+                .map(|term| (term.id.clone(), term))
+                .collect();
             self
         }
     }
@@ -2040,6 +2434,17 @@ Tags: topic:free-will, answer:choice[libertarian, compatibilist], weight:42
 
         fn begets(&self, id: &str) -> Result<Vec<QuestionRef>> {
             Ok(self.edges.get(id).cloned().unwrap_or_default())
+        }
+
+        fn probes(&self, id: &str) -> Result<Vec<TermRef>> {
+            Ok(self.probes.get(id).cloned().unwrap_or_default())
+        }
+
+        fn load_term(&self, id: &str) -> Result<TermDefinition> {
+            self.terms
+                .get(id)
+                .cloned()
+                .ok_or_else(|| QuizdomError::Parse(format!("missing {id}")))
         }
     }
 }
