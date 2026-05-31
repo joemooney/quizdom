@@ -1,5 +1,7 @@
 use crate::error::{QuizdomError, Result};
 use crate::model::{Answer, AnswerKind, Question};
+use crossterm::event::{self, Event, KeyCode, KeyEventKind};
+use crossterm::terminal::{disable_raw_mode, enable_raw_mode};
 use rustyline::{Config as RustylineConfig, DefaultEditor, EditMode};
 use std::env;
 use std::io::{self, BufRead, IsTerminal, Write};
@@ -8,12 +10,16 @@ use std::path::Path;
 pub(crate) fn render_question(question: &Question, output: &mut impl Write) -> Result<()> {
     writeln!(output, "\n{}", question.title)?;
     match &question.answer_kind {
-        AnswerKind::YesNo => writeln!(output, "Answer yes or no, or /end to end this session.")?,
+        AnswerKind::YesNo => writeln!(output, "[Y] Yes  [N] No  [X] eXplore  [P] Punt")?,
         AnswerKind::Choice(options) => {
             for (index, option) in options.iter().enumerate() {
                 writeln!(output, "{}. {}", index + 1, option)?;
             }
-            writeln!(output, "Enter a choice, or /end to end this session.")?;
+            writeln!(
+                output,
+                "[1-{}] Choose  [X] eXplore  [P] Punt",
+                options.len()
+            )?;
         }
         AnswerKind::FreeText => writeln!(
             output,
@@ -33,6 +39,21 @@ pub(crate) enum AnswerInput {
 pub(crate) enum FreeTextInput {
     Plain,
     Interactive(Box<DefaultEditor>),
+}
+
+struct RawModeGuard;
+
+impl RawModeGuard {
+    fn enter() -> io::Result<Self> {
+        enable_raw_mode()?;
+        Ok(Self)
+    }
+}
+
+impl Drop for RawModeGuard {
+    fn drop(&mut self) {
+        let _ = disable_raw_mode();
+    }
 }
 
 impl FreeTextInput {
@@ -120,13 +141,7 @@ pub(crate) fn read_answer_or_end(
             AnswerKind::FreeText => free_text_input
                 .read_line(input, output, "")?
                 .ok_or_else(|| QuizdomError::Parse("no answer provided".to_string()))?,
-            _ => {
-                let mut raw = String::new();
-                if input.read_line(&mut raw)? == 0 {
-                    return Err(QuizdomError::Parse("no answer provided".to_string()));
-                }
-                raw.trim().to_string()
-            }
+            _ => read_control_answer_or_line(input, output, kind)?,
         };
         if raw == "/end" {
             return Ok(AnswerInput::End);
@@ -139,15 +154,75 @@ pub(crate) fn read_answer_or_end(
     }
 }
 
+fn read_control_answer_or_line(
+    input: &mut impl BufRead,
+    output: &mut impl Write,
+    kind: &AnswerKind,
+) -> Result<String> {
+    // trace:STORY-51 | ai:codex
+    if io::stdin().is_terminal() {
+        if let Some(raw) = read_single_key_answer(output, kind)? {
+            return Ok(raw);
+        }
+    }
+    let mut raw = String::new();
+    if input.read_line(&mut raw)? == 0 {
+        return Err(QuizdomError::Parse("no answer provided".to_string()));
+    }
+    Ok(raw.trim().to_string())
+}
+
+fn read_single_key_answer(output: &mut impl Write, kind: &AnswerKind) -> Result<Option<String>> {
+    let Ok(_raw_mode) = RawModeGuard::enter() else {
+        return Ok(None);
+    };
+    loop {
+        let event = event::read()
+            .map_err(|error| QuizdomError::Io(io::Error::new(io::ErrorKind::Other, error)))?;
+        let Event::Key(key) = event else {
+            continue;
+        };
+        if !matches!(key.kind, KeyEventKind::Press | KeyEventKind::Repeat) {
+            continue;
+        }
+        let raw = match key.code {
+            KeyCode::Char('y') | KeyCode::Char('Y') if matches!(kind, AnswerKind::YesNo) => "y",
+            KeyCode::Char('n') | KeyCode::Char('N') if matches!(kind, AnswerKind::YesNo) => "n",
+            KeyCode::Char('x') | KeyCode::Char('X') => "x",
+            KeyCode::Char('p') | KeyCode::Char('P') => "p",
+            KeyCode::Char(character) if matches!(kind, AnswerKind::Choice(_)) => {
+                if character.is_ascii_digit() {
+                    write!(output, "{character}\n")?;
+                    output.flush()?;
+                    return Ok(Some(character.to_string()));
+                }
+                continue;
+            }
+            KeyCode::Esc => "/end",
+            _ => continue,
+        };
+        writeln!(output, "{raw}")?;
+        output.flush()?;
+        return Ok(Some(raw.to_string()));
+    }
+}
+
 pub(crate) fn normalize_answer(kind: &AnswerKind, raw: &str) -> Option<String> {
     match kind {
         AnswerKind::YesNo => match raw.trim().to_ascii_lowercase().as_str() {
             "yes" | "y" => Some("yes".to_string()),
             "no" | "n" => Some("no".to_string()),
+            "x" | "/x" | "explore" => Some("explore".to_string()),
+            "p" | "/p" | "punt" => Some("punt".to_string()),
             _ => None,
         },
         AnswerKind::Choice(options) => {
             let trimmed = raw.trim();
+            match trimmed.to_ascii_lowercase().as_str() {
+                "x" | "/x" | "explore" => return Some("explore".to_string()),
+                "p" | "/p" | "punt" => return Some("punt".to_string()),
+                _ => {}
+            }
             if let Ok(index) = trimmed.parse::<usize>() {
                 return options.get(index.checked_sub(1)?).cloned();
             }
@@ -156,6 +231,10 @@ pub(crate) fn normalize_answer(kind: &AnswerKind, raw: &str) -> Option<String> {
                 .find(|option| option.eq_ignore_ascii_case(trimmed))
                 .cloned()
         }
-        AnswerKind::FreeText => (!raw.trim().is_empty()).then(|| raw.trim().to_string()),
+        AnswerKind::FreeText => match raw.trim() {
+            "x" | "/x" => Some("explore".to_string()),
+            "p" | "/p" => Some("punt".to_string()),
+            other => (!other.is_empty()).then(|| other.to_string()),
+        },
     }
 }

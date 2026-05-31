@@ -5,6 +5,7 @@ edition = "2021"
 
 [dependencies]
 chrono = { version = "0.4", default-features = false, features = ["clock"] }
+crossterm = "0.29"
 llm = { path = "../llm" }
 rustyline = "15"
 serde_json = "1"
