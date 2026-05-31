@@ -1,0 +1,30 @@
+id: 019e8004-0ee4-7c91-beb7-93b922cb3498
+spec_id: STORY-69
+agreed_id: STORY-69
+title: 'B/F review navigation: browse previous Q&A non-destructively; revising truncates & re-explores'
+description: |-
+  A history cursor over the answered path. Multi-step. In input.rs + session.rs (codex-1's lane; disjoint from claude-2's strategy/bank/persist).
+
+  - At the live frontier question, add B to the controls: [Y/N/X/P/B/Q].
+  - B moves a REVIEW cursor BACK one answered question at a time (multi-step), displaying that question + the answer the user gave. NON-DESTRUCTIVE (just viewing).
+  - While reviewing a past question, F moves the cursor FORWARD toward the frontier; F at the latest reviewed question returns to the live frontier. So the user can browse back/forward freely without changing anything. Prompt while reviewing: [Y/N/X/P/B/F/Q].
+  - REVISE: if the user RE-ANSWERS a reviewed question (gives a different/explicit Y/N/X/P), TRUNCATE the forward path from that question and re-traverse from the new answer (per answer-conditioned follow-ons, STORY-48). Reviewing without re-answering preserves the whole path.
+  - Session log: reflect the truncation on revise so 'session resume' replays the revised path (not the discarded tail).
+
+  ## Acceptance: B walks back through answered Q+answers (multi-step, non-destructive); F walks forward to the frontier; re-answering a reviewed question truncates the tail and re-explores; browsing without revising preserves the path; resume replays the revised path; tests cover browse + revise-truncate + resume.
+status: Approved
+priority: High
+owner: ''
+feature: Uncategorized
+created_at: 2026-05-31T21:50:10.148838351Z
+modified_at: 2026-05-31T21:50:10.148838351Z
+req_type: Story
+tags:
+- back
+- forward
+- input
+- interaction
+- navigation
+- revise
+- session
+- story
