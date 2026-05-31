@@ -1,0 +1,25 @@
+id: 019e7e91-5b90-71c2-b937-5afdb6826c7a
+spec_id: TERM-25
+agreed_id: TERM-25
+title: free will / compatibilist
+description: |
+  source: compatibilist free will, academic philosophy.
+
+  definition: An agent acts of free will when the action flows from the agent's own
+  reasons, desires, and deliberation without external coercion or compulsion — even
+  if those mental states are themselves fully caused by prior events. Free will in
+  this sense is compatible with causal determinism.
+
+  scope: formal/academic definition, not user-specific. trace:STORY-16 | ai:claude
+status: Approved
+priority: High
+owner: ''
+feature: Uncategorized
+created_at: 2026-05-31T15:05:15.920445954Z
+modified_at: 2026-05-31T15:05:15.920445954Z
+req_type: Term
+tags:
+- definition:academic
+- seed
+- topic:free-will
+- weight:60
