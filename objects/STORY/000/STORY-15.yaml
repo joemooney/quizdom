@@ -8,7 +8,7 @@ priority: High
 owner: ''
 feature: Uncategorized
 created_at: 2026-05-31T14:18:20.814586740Z
-modified_at: 2026-05-31T14:19:09.129668424Z
+modified_at: 2026-05-31T15:04:34.030440390Z
 req_type: Story
 tags:
 - graph
@@ -23,3 +23,9 @@ relationships:
   target_id: 019e7e66-5b3b-72a1-a52f-b55a1a8ce5fb
   created_at: 2026-05-31T14:19:09.129662586Z
   created_by: joe
+comments:
+- id: 019e7e90-b7ee-7522-81c5-a1bfe4ef9274
+  author: mcp
+  content: Implementation complete via Codex. Added docs/architecture/session-log-promotion.md documenting the per-user JSONL session log, sample traversal, promotion field mapping to AIDA BELIEF objects/tags/edges, and a round-trip promoted belief example.
+  created_at: 2026-05-31T15:04:34.030432489Z
+  modified_at: 2026-05-31T15:04:34.030432489Z
