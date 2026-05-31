@@ -8,7 +8,7 @@ priority: Medium
 owner: ''
 feature: Uncategorized
 created_at: 2026-05-31T14:31:55.790792961Z
-modified_at: 2026-05-31T17:39:15.964157630Z
+modified_at: 2026-05-31T17:45:03.213862870Z
 req_type: Story
 tags:
 - lifecycle
@@ -23,3 +23,9 @@ relationships:
   target_id: 019e7e66-670e-79a2-960e-a0ff69e2b9bd
   created_at: 2026-05-31T14:32:16.696141623Z
   created_by: joe
+comments:
+- id: 019e7f23-a5ed-7dc2-8e6e-33b1db470899
+  author: mcp
+  content: 'Implementation complete via Codex and merged in PR #4. Added session start/resume command handling, user-driven /end, replay of answered JSONL path, resume from persisted next_question_selected target, monotonic append event ids, and cargo tests for the resume round trip. Verified with cargo test and live start/end/resume smoke against Q-23 -> Q-26.'
+  created_at: 2026-05-31T17:45:03.213830867Z
+  modified_at: 2026-05-31T17:45:03.213830867Z
