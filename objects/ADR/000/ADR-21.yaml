@@ -1,0 +1,18 @@
+id: 019e7e76-d108-74f2-ab14-ad2b964a8a07
+spec_id: ADR-21
+agreed_id: ADR-21
+title: Agent output lands via branch + PR; Completed means merged
+description: 'All implementer/agent code+doc output is committed on a feature branch and landed via PR review — never pushed straight to trunk, never left uncommitted in the shared working tree. Worktree isolation is preferred so parallel agents don''t collide in one checkout. Lifecycle rule (per docs/aida/discipline/lifecycle-vocabulary.md): a spec is marked Completed only when its PR MERGES; while a PR is open the spec is in-progress. Bootstrap/scaffolding commits (e.g. TASK-007) are exempt. Prompted by a codex agent marking STORY-14 Completed while leaving the artifact uncommitted (see finding from-advisor:STORY-14). Implementer/codex skill prompts should enforce commit+PR before status flip.'
+status: Approved
+priority: High
+owner: ''
+feature: Uncategorized
+created_at: 2026-05-31T14:36:16.520018316Z
+modified_at: 2026-05-31T14:36:16.520018316Z
+req_type: Decision
+tags:
+- decision
+- lifecycle
+- process
+- review
+- workflow
