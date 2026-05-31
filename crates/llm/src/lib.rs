@@ -11,6 +11,10 @@ use std::fmt;
 use std::future::Future;
 use std::pin::Pin;
 
+mod anthropic;
+
+pub use anthropic::{AnthropicClient, AnthropicConfig};
+
 /// Text plus tool calls returned by [`LLMClient::call`].
 pub type LLMOutput = (String, Vec<ToolCall>);
 
