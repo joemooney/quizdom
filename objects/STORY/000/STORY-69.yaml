@@ -17,7 +17,7 @@ priority: High
 owner: ''
 feature: Uncategorized
 created_at: 2026-05-31T21:50:10.148838351Z
-modified_at: 2026-05-31T21:58:48.923609830Z
+modified_at: 2026-05-31T22:05:16.660356971Z
 req_type: Story
 tags:
 - back
@@ -32,3 +32,9 @@ relationships:
 - rel_type: Child
   target_id: 019e7f9f-f1bf-7ab2-b508-291f0849be84
   created_at: 2026-05-31T21:50:13.568307251Z
+comments:
+- id: 019e8011-e3f4-7c43-8042-7f6252a5e858
+  author: ai:codex:joe
+  content: 'Implemented B/F review navigation in the live session loop: frontier prompts include Back, review prompts include Back/Forward, browsing is non-destructive, and changed reviewed answers append a path_truncated event before re-exploring from the revised answer. Session replay now honors truncation events so resume follows the revised path. Verification: cargo test -p quizdom; cargo test. Shipped in PR-25 / 4142b26.'
+  created_at: 2026-05-31T22:05:16.660356971Z
+  modified_at: 2026-05-31T22:05:16.660356971Z
