@@ -8,7 +8,7 @@ priority: High
 owner: ''
 feature: Uncategorized
 created_at: 2026-05-31T14:31:30.747397883Z
-modified_at: 2026-05-31T14:32:13.326712603Z
+modified_at: 2026-05-31T17:34:55.200278809Z
 req_type: Story
 tags:
 - core
@@ -27,3 +27,9 @@ relationships:
   target_id: 019e7e66-670e-79a2-960e-a0ff69e2b9bd
   created_at: 2026-05-31T14:32:13.326704690Z
   created_by: joe
+comments:
+- id: 019e7f1a-5ee0-7072-addd-adbf80dd219e
+  author: mcp
+  content: 'Implementation complete via Codex and merged in PR #3. Added Rust Cargo workspace with quizdom binary crate, AIDA CLI-backed question loading, app-side begets traversal, deterministic NextQuestionStrategy trait/implementation, yes-no/choice/free-text rendering and validation, and STORY-15 JSONL session logging. Verified with cargo test and live smoke run against Q-23 -> Q-26 ending on no outgoing begets.'
+  created_at: 2026-05-31T17:34:55.200270918Z
+  modified_at: 2026-05-31T17:34:55.200270918Z
