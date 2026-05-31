@@ -1,0 +1,16 @@
+id: 019e7e5e-e038-77b0-a462-602c6b7db9df
+spec_id: EPIC-10
+agreed_id: EPIC-10
+title: Question bank evolution (tagging, weighting, curation)
+description: Tag questions insightful vs unhelpful; let tags govern whether a question is asked again and how heavily it's weighted when chosen. Good questions surface, weak ones fade. Anticipate cross-user weighting later.
+status: Draft
+priority: Medium
+owner: ''
+feature: Uncategorized
+created_at: 2026-05-31T14:10:07.544177402Z
+modified_at: 2026-05-31T14:10:07.544177402Z
+req_type: Epic
+tags:
+- curation
+- epic
+- weighting
