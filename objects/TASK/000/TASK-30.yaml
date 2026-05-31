@@ -1,0 +1,53 @@
+id: 019e7e93-a783-7933-bc21-57dd7a9c4186
+spec_id: TASK-30
+agreed_id: TASK-30
+title: query_graph / aida graph cannot traverse custom edge types — domain graph untraversable
+description: |
+  **What:** `aida graph` and its MCP mirror `query_graph` only follow AIDA's
+  built-in Parent/Child, BlockedBy, and Blocks edges (the four modes tree /
+  blocked-by / blocks / impact). They ignore `Custom("...")` relationship types
+  entirely. There is no mode and no `--type` / `--follow` flag to traverse a
+  custom edge.
+
+  **Where (evidence, STORY-16 seed cluster):** `query_graph(spec_id=Q-23,
+  mode=tree)` returns `count: 0, nodes: []` even though Q-23 has four outgoing
+  custom edges — `probes -> TERM-24`, `probes -> TERM-25`, `begets -> Q-26`,
+  `begets -> Q-27`. `aida graph Q-23 --tree` is likewise empty. `aida rel list
+  Q-23` *does* show all of them, but only one hop at a time.
+
+  **Why it matters:** quizdom's entire domain graph (EPIC-5 / graph-schema.md)
+  is built on custom edges — `probes / begets / refines / contradicts / agrees /
+  disagrees`. The product's core value (walking Q -> definitions -> follow-ups
+  for the session engine, and contradiction detection over beliefs) is exactly
+  the transitive traversal `query_graph` cannot perform. STORY-16's acceptance
+  clause "aida query_graph traverses Q -> definitions -> follow-ups" is therefore
+  not satisfiable on current AIDA.
+
+  **Workaround (NOT applied silently):** the cluster is fully traversable via
+  per-node `aida rel list <id>` (1 hop) and `aida rel list --type <edge>` (flat,
+  by type); an app-side BFS can compose these into a traversal. We deliberately
+  did **not** remodel the domain edges as parent/child to make `query_graph`
+  happy — graph-schema.md reserves parent/child for ownership/dependency, so that
+  would be a silent schema violation, precisely the anti-pattern EPIC-5
+  acceptance #4 forbids.
+
+  **Candidate AIDA improvement:** a traversal mode that follows arbitrary
+  relationship types — e.g. `aida graph <id> --follow probes,begets` /
+  `query_graph(mode="follow", edge_types=[...])` — doing transitive closure over
+  custom edges with depth limiting, mirroring the existing tree/blocks engines.
+
+  Surfaced by STORY-16 (first real domain data). Linked to VIS-2 (AIDA-as-
+  substrate proving ground) and EPIC-5.
+status: Draft
+priority: Medium
+owner: joe
+feature: Uncategorized
+created_at: 2026-05-31T15:07:46.435019935Z
+modified_at: 2026-05-31T15:07:46.435019935Z
+req_type: Task
+tags:
+- from-implementer:STORY-16
+- kind:observation
+- linked:EPIC-5
+- linked:VIS-2
+- severity:major
