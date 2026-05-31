@@ -51,7 +51,7 @@ priority: High
 owner: ''
 feature: Uncategorized
 created_at: 2026-05-31T14:09:52.609763049Z
-modified_at: 2026-05-31T15:36:18.220902720Z
+modified_at: 2026-05-31T15:36:19.774177642Z
 req_type: Epic
 tags:
 - aida
@@ -82,3 +82,8 @@ comments:
   content: 'ACCEPTANCE AMENDED (ADR-31): the ''query_graph traverses Q->definitions->follow-ups'' clause is superseded — current AIDA can''t traverse custom edges (FR-282). Verify the graph via ''aida rel list'' (edges exist + correct). STORY-16 meets acceptance on that basis.'
   created_at: 2026-05-31T15:25:32.034760701Z
   modified_at: 2026-05-31T15:25:32.034760701Z
+- id: 019e7ead-cc3e-7e32-8d38-7d8e41aac388
+  author: joe
+  content: 'All children landed: STORY-14 (PR #1), STORY-15 (PR #2), STORY-16 (seed data). Acceptance met per ADR-31 (rel-list traversal; query_graph clause superseded, tracked upstream as FR-282). EPIC-5 complete.'
+  created_at: 2026-05-31T15:36:19.774177642Z
+  modified_at: 2026-05-31T15:36:19.774177642Z
