@@ -1,0 +1,17 @@
+id: 019e7e72-74bb-7c52-aa82-9f4b5c79e45b
+spec_id: STORY-17
+agreed_id: STORY-17
+title: Session loop skeleton with deterministic next-question strategy
+description: 'Implement the core loop: load seed Q -> render by kind -> read valid answer -> append to per-user log -> select next via deterministic bank traversal (follow begets, tie-break weight then id) -> repeat to a clean end. ## Acceptance: renders all three Q kinds; appends answers in STORY-15 format; follows begets edges; reaches end state with no outgoing begets. Depends on STORY-14 (schema) + STORY-15 (log format).'
+status: Approved
+priority: High
+owner: ''
+feature: Uncategorized
+created_at: 2026-05-31T14:31:30.747397883Z
+modified_at: 2026-05-31T14:31:30.747397883Z
+req_type: Story
+tags:
+- core
+- loop
+- session
+- story
