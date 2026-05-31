@@ -1,5 +1,6 @@
 id: 019e7f18-ed99-7e31-b572-aeccbd48a66d
 spec_id: TASK-JM-005
+agreed_id: TASK-5
 title: Agents run sessions in the SHARED main worktree (no isolation) — lease/role bleed + stale branch on rename
 description: 'codex''s STORY-17 implementer session (lease 019e7f14) runs in the MAIN worktree (/home/joe/ai/quizdom), not an isolated sibling worktree. Symptoms: (1) the advisor shell''s statusline warns ''role:advisor WARN session:implementer ... wt:quizdom'' — advisor and implementer share one checkout; (2) the lease records branch=master, which became stale when master was renamed to main (the lease did not follow the rename); (3) earlier: scope-bleed (STORY-16 objects auto-hinted to STORY-15''s session). Root cause: agents create leases/branches in-place (git checkout -b in the shared tree) instead of ''aida session start --owns <SPEC>'' which makes a sibling worktree on a fresh branch. Remediation: standardize on isolated worktrees per implementer session; and leases should track a branch rename (or at least not silently reference a deleted branch). Generalizes to any multi-agent AIDA fleet.'
 status: Rejected

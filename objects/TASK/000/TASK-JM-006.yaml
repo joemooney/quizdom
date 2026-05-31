@@ -1,5 +1,6 @@
 id: 019e7fe5-68b6-7521-84b2-d81cd1c427dc
 spec_id: TASK-JM-006
+agreed_id: TASK-3
 title: 'Spec-boundary handoff is manual: a scoped session can''t self-reap its worktree or chain to the next spec'
 description: |-
   Observed at the EPIC-9 -> STORY-48 handoff (2026-05-31). A scoped implementer session, when done with its spec, CANNOT: (1) tear down its own worktree (it's the live cwd — 'aida session end' correctly refuses to avoid a (deleted)-cwd leak), nor (2) cleanly pick up the next spec from within (scope binding forbids it — doing so is the scope-bleed VIS-2 failure mode). So EVERY spec boundary needs a human: exit the agent -> external 'aida session end <id>' -> 'aida agent new --spec <next>'. The agent (codex-2) behaved EXEMPLARILY (refused to bleed scope, hand-wrote precise steps) — this is a substrate ERGONOMICS gap, not an agent bug.

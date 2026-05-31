@@ -1,5 +1,6 @@
 id: 019e7e74-9556-7701-b5f9-74d962ee61c4
 spec_id: TASK-JM-003
+agreed_id: TASK-4
 title: codex marked STORY-14 Completed but left the artifact uncommitted (no commit/PR/worktree)
 description: 'codex-unknown-1 wrote docs/architecture/graph-schema.md (good, 147 lines, correct trace:STORY-14 comment) and set STORY-14 -> Completed, then went idle. But: file is untracked in the SHARED main working tree (no worktree isolation), no commit or trace linkage in git, no PR. Lifecycle gap: Completed != committed != pushed != merged. Risk: another agent''s ''git add -A'' sweeps it into an unrelated commit, or it''s lost. Process fix candidate: codex implementer flow should commit + open PR (or at least commit) BEFORE flipping status to Completed. Recurs => promote into a codex-skill guardrail.'
 status: Rejected
