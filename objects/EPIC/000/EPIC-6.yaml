@@ -73,7 +73,7 @@ priority: High
 owner: ''
 feature: Uncategorized
 created_at: 2026-05-31T14:09:55.315076807Z
-modified_at: 2026-05-31T14:31:29.673614082Z
+modified_at: 2026-05-31T17:38:10.369467386Z
 req_type: Epic
 tags:
 - core
@@ -95,3 +95,9 @@ relationships:
 - rel_type: Parent
   target_id: 019e7e72-d68e-7a32-a0ab-b54ea1a00c00
   created_at: 2026-05-31T14:31:57.101191305Z
+comments:
+- id: 019e7f1d-5941-7080-9663-a5b77b5e5cdd
+  author: joe
+  content: 'Progress: STORY-17 (loop) + STORY-18 (strategy trait) Completed via PR #3 (5 tests green, app-side begets traversal per ADR-31, JSONL log per STORY-15). Remaining: STORY-19 (both-sides branching), STORY-20 (session lifecycle).'
+  created_at: 2026-05-31T17:38:10.369467386Z
+  modified_at: 2026-05-31T17:38:10.369467386Z
