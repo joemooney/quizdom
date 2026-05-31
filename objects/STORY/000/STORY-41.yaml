@@ -8,7 +8,7 @@ priority: High
 owner: ''
 feature: Uncategorized
 created_at: 2026-05-31T19:38:05.710404372Z
-modified_at: 2026-05-31T19:40:01.251068866Z
+modified_at: 2026-05-31T19:45:04.811581396Z
 req_type: Story
 tags:
 - graph
@@ -19,3 +19,9 @@ relationships:
 - rel_type: Child
   target_id: 019e7e5e-c7e6-7681-b5a9-b6be6ada3033
   created_at: 2026-05-31T19:38:07.196682211Z
+comments:
+- id: 019e7f91-892b-7712-b014-7d8a23e57a1a
+  author: joe
+  content: 'Implemented loaded-term surfacing: quizdom now reads probes edges for the current question, loads TERM definitions from AIDA, renders competing definitions in session output, and adds an LLM loaded-term detection hook for free-text answers that degrades to no terms on backend failure. Added parser, graph, mocked LLM, and session-output tests; verified Q-23 surfaces libertarian and compatibilist definitions in a local CLI smoke. Shipped in PR #11.'
+  created_at: 2026-05-31T19:45:04.811581396Z
+  modified_at: 2026-05-31T19:45:04.811581396Z
