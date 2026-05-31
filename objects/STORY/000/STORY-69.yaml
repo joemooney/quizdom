@@ -12,12 +12,12 @@ description: |-
   - Session log: reflect the truncation on revise so 'session resume' replays the revised path (not the discarded tail).
 
   ## Acceptance: B walks back through answered Q+answers (multi-step, non-destructive); F walks forward to the frontier; re-answering a reviewed question truncates the tail and re-explores; browsing without revising preserves the path; resume replays the revised path; tests cover browse + revise-truncate + resume.
-status: InProgress
+status: Completed
 priority: High
 owner: ''
 feature: Uncategorized
 created_at: 2026-05-31T21:50:10.148838351Z
-modified_at: 2026-05-31T22:05:16.660356971Z
+modified_at: 2026-05-31T22:05:17.752192638Z
 req_type: Story
 tags:
 - back
