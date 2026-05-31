@@ -8,7 +8,7 @@ priority: High
 owner: ''
 feature: Uncategorized
 created_at: 2026-05-31T19:38:15.527141355Z
-modified_at: 2026-05-31T20:02:46.934571269Z
+modified_at: 2026-05-31T20:07:43.587235667Z
 req_type: Story
 tags:
 - definitions
@@ -23,3 +23,9 @@ relationships:
   target_id: 019e7f8b-3901-7ef0-9816-adfd3ea9fba6
   created_at: 2026-05-31T19:38:43.692300138Z
   created_by: joe
+comments:
+- id: 019e7fa6-44e3-7b52-9bdf-089a088b260b
+  author: joe
+  content: 'Implemented definition steering after TERM mapping: users can confirm and adopt the matched shared definition, or reject it and provide a refinement. Only after that steering rejection does quizdom mint a definition:user-specific TERM through aida add --type term with topic and definition:user-specific tags. Added mocked tests for adoption, no-match minting, and command construction; verified offline deterministic Q-23 behavior. Shipped in PR #13.'
+  created_at: 2026-05-31T20:07:43.587235667Z
+  modified_at: 2026-05-31T20:07:43.587235667Z
