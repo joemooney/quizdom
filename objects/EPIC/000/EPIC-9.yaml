@@ -43,7 +43,7 @@ priority: Medium
 owner: ''
 feature: Uncategorized
 created_at: 2026-05-31T14:10:04.806294266Z
-modified_at: 2026-05-31T20:41:33.955768606Z
+modified_at: 2026-05-31T20:57:45.896753586Z
 req_type: Epic
 tags:
 - contradiction
@@ -62,3 +62,9 @@ relationships:
 - rel_type: Parent
   target_id: 019e7fc0-32ff-7232-bafd-84a22498dbbf
   created_at: 2026-05-31T20:36:04.058964900Z
+comments:
+- id: 019e7fd4-14a8-7ca1-ae61-32fadb7c3551
+  author: joe
+  content: 'STORY-57 (contradiction.rs detection module + standalone ''quizdom contradictions'' command) merged via PR #17 — self-contained, no session.rs edits, 12 new tests. STORY-58 (surface in-session) + STORY-59 (persist resolutions) remain Approved; both touch session.rs so they''re SEQUENCED after the input-cluster session.rs work to avoid collisions.'
+  created_at: 2026-05-31T20:57:45.896753586Z
+  modified_at: 2026-05-31T20:57:45.896753586Z
