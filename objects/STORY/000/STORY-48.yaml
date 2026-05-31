@@ -6,12 +6,12 @@ description: |-
   Today a follow-on question links to the previous QUESTION via a begets edge, but the edge doesn't record WHICH answer triggered it (verified: no from-answer/on-answer tagging in lib.rs). So different answers to the same question can't branch to different follow-ups — the strategy picks among ALL begets successors regardless of the answer given.
 
   Enhancement: when a follow-on is created/selected, record the triggering answer and have the NextQuestionStrategy (STORY-18/37) prefer successors matching the current answer. Options (decide in design): (a) a from-answer:<value> tag on the generated Q-object, or (b) answer-specific custom edge types (begets edges are question->question today; AIDA rel add has no edge-tag support — likely a VIS-2 substrate note). Touches graph-schema.md, the persister (STORY-38), and the strategies. Makes the hybrid bank answer-aware (free will?->yes begets different questions than ->no) and complements both-sides exploration.
-status: Approved
+status: InProgress
 priority: High
 owner: ''
 feature: Uncategorized
 created_at: 2026-05-31T19:50:15.143944670Z
-modified_at: 2026-05-31T19:50:15.143944670Z
+modified_at: 2026-05-31T21:13:01.279558194Z
 req_type: Story
 tags:
 - answer-conditioning
