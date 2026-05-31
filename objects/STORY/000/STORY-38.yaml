@@ -8,7 +8,7 @@ priority: Medium
 owner: ''
 feature: Uncategorized
 created_at: 2026-05-31T17:46:13.267343079Z
-modified_at: 2026-05-31T17:46:13.267343079Z
+modified_at: 2026-05-31T17:46:45.784711955Z
 req_type: Story
 tags:
 - bank
@@ -20,3 +20,7 @@ relationships:
 - rel_type: Child
   target_id: 019e7e5e-bb29-71d3-be50-f14d76486472
   created_at: 2026-05-31T17:46:15.287372876Z
+- rel_type: References
+  target_id: 019e7f24-9b8d-7d12-9cc8-ac6af983454a
+  created_at: 2026-05-31T17:46:45.784704581Z
+  created_by: joe
