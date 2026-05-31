@@ -8,7 +8,7 @@ priority: High
 owner: ''
 feature: Uncategorized
 created_at: 2026-05-31T17:45:58.755373637Z
-modified_at: 2026-05-31T18:51:02.038401290Z
+modified_at: 2026-05-31T18:56:36.015001337Z
 req_type: Story
 tags:
 - anthropic
@@ -23,3 +23,9 @@ relationships:
   target_id: 019e7f24-6538-7612-bf0f-13341e58d0b8
   created_at: 2026-05-31T17:46:40.234722374Z
   created_by: joe
+comments:
+- id: 019e7f65-26af-7fe2-afe9-26af19ff3fbc
+  author: joe
+  content: 'Implementation complete via Codex and merged in PR #7. Added reqwest-backed AnthropicClient implementing LLMClient over /v1/messages with env/.env config, anthropic-version and x-api-key headers, system/tool prompt-cache markers, Message/ToolDef/ToolCall wire mapping, transient retries, offline mock-transport tests, and an ignored live smoke test gated by ANTHROPIC_API_KEY. Verified with cargo fmt --all --check and cargo test --workspace.'
+  created_at: 2026-05-31T18:56:36.015001337Z
+  modified_at: 2026-05-31T18:56:36.015001337Z
