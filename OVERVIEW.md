@@ -74,8 +74,19 @@ Still open:
 
 ## Status
 
-Brand new. AIDA scaffolding is in place (still uncommitted — TASK-007). Captured
-and approved: product vision (VIS-1), AIDA-substrate meta-goal (VIS-2), and two
-architecture decisions (ADR-3 substrate, ADR-4 interface). VIS-1 is decomposed
-into seven draft EPICs (EPIC-5 … EPIC-11). Next: flesh out EPIC-5 (graph model)
-with acceptance criteria, then route to a doer.
+A working Rust session engine. Decisions live in ADRs (`aida list --type
+decision`); progress in the EPIC tree (`aida list --type epic`).
+
+- **EPIC-5 (domain graph model) — complete.** Schema (`docs/architecture/
+  graph-schema.md`) + the "free will" seed cluster (`Q-23`, `TERM-24/25`,
+  `BELIEF-28/29`) live as AIDA objects with custom edges.
+- **EPIC-6 (session engine) — complete.** `crates/quizdom`: branching Q&A loop,
+  pluggable `NextQuestionStrategy` (deterministic), both-sides agree/disagree
+  forking, and start/resume/end persistence over a JSONL log. 9 tests green.
+- **EPIC-7 (LLM integration) — in progress.** Building a provider-agnostic
+  `llm` crate (ADR-34) first, then an LLM-backed strategy.
+- EPIC-8 (semantic honing), EPIC-9 (contradiction detection), EPIC-10 (bank
+  evolution), EPIC-11 (CLI polish) — draft, awaiting their turn.
+
+Substrate gaps surfaced by dogfooding (VIS-2) are filed as findings or upstream
+`~/ai/aida` issues (FR-282 custom-edge traversal, BUG-415/417).
