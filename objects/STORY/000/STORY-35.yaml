@@ -3,12 +3,12 @@ spec_id: STORY-35
 agreed_id: STORY-35
 title: 'llm crate: provider-agnostic surface (LLMClient trait + message types)'
 description: 'Create crates/llm (ADR-34): LLMClient::call(system, &[Message], &[ToolDef]) -> (text, Vec<ToolCall>); Message/ToolDef/ToolCall/LLMError types. NO AIDA tools/sessions/SSE. Foundational for the rest of EPIC-7. ## Acceptance: crate compiles in the workspace; trait + types defined; designed for extraction.'
-status: Approved
+status: InProgress
 priority: High
 owner: ''
 feature: Uncategorized
 created_at: 2026-05-31T17:45:52.184583399Z
-modified_at: 2026-05-31T17:46:47.307796803Z
+modified_at: 2026-05-31T18:10:04.482050475Z
 req_type: Story
 tags:
 - ai-abstraction
