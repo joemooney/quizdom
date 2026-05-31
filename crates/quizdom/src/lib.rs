@@ -119,6 +119,32 @@ pub trait GeneratedQuestionPersister {
     ) -> Result<Question>;
 }
 
+trait UserSpecificTermPersister {
+    fn persist_user_specific_term(
+        &self,
+        term_label: &str,
+        meaning: &str,
+        definitions: &[TermDefinition],
+    ) -> Result<TermDefinition>;
+}
+
+#[cfg(test)]
+struct NoopUserSpecificTermPersister;
+
+#[cfg(test)]
+impl UserSpecificTermPersister for NoopUserSpecificTermPersister {
+    fn persist_user_specific_term(
+        &self,
+        _term_label: &str,
+        _meaning: &str,
+        _definitions: &[TermDefinition],
+    ) -> Result<TermDefinition> {
+        Err(QuizdomError::Aida(
+            "user-specific term persistence is unavailable".to_string(),
+        ))
+    }
+}
+
 pub trait NextQuestionStrategy {
     fn next_question(
         &self,
@@ -544,6 +570,93 @@ impl Default for AidaCliGeneratedQuestionPersister<SystemCommandRunner> {
     }
 }
 
+struct AidaCliUserSpecificTermPersister<R = SystemCommandRunner> {
+    command: String,
+    runner: R,
+}
+
+impl Default for AidaCliUserSpecificTermPersister<SystemCommandRunner> {
+    fn default() -> Self {
+        Self {
+            command: "aida".to_string(),
+            runner: SystemCommandRunner,
+        }
+    }
+}
+
+impl<R> AidaCliUserSpecificTermPersister<R>
+where
+    R: CommandRunner,
+{
+    #[cfg(test)]
+    fn new(command: impl Into<String>, runner: R) -> Self {
+        Self {
+            command: command.into(),
+            runner,
+        }
+    }
+}
+
+impl<R> UserSpecificTermPersister for AidaCliUserSpecificTermPersister<R>
+where
+    R: CommandRunner,
+{
+    fn persist_user_specific_term(
+        &self,
+        term_label: &str,
+        meaning: &str,
+        definitions: &[TermDefinition],
+    ) -> Result<TermDefinition> {
+        // trace:STORY-43 | ai:codex
+        let topic = definitions
+            .iter()
+            .find_map(|definition| {
+                definition
+                    .tags
+                    .iter()
+                    .find_map(|tag| tag.strip_prefix("topic:"))
+            })
+            .unwrap_or("user-specific");
+        let title = format!("{term_label} / user-specific");
+        let tags = vec![
+            format!("topic:{topic}"),
+            "definition:user-specific".to_string(),
+            "weight:40".to_string(),
+        ];
+        let description = format!(
+            "source: user-specific quizdom steering fallback.\n\ndefinition: {meaning}\n\nscope: user-specific definition captured only after shared bank definitions did not fit."
+        );
+        let args = vec![
+            "add".to_string(),
+            "--type".to_string(),
+            "term".to_string(),
+            "--status".to_string(),
+            "approved".to_string(),
+            "--priority".to_string(),
+            "medium".to_string(),
+            "--title".to_string(),
+            title.clone(),
+            "--description".to_string(),
+            description.clone(),
+            "--tags".to_string(),
+            tags.join(","),
+        ];
+        let output = self.runner.run(&self.command, &args)?;
+        if !output.status.success() {
+            return Err(QuizdomError::Aida(
+                String::from_utf8_lossy(&output.stderr).to_string(),
+            ));
+        }
+        let id = parse_added_term_id(&String::from_utf8_lossy(&output.stdout))?;
+        Ok(TermDefinition {
+            id,
+            title,
+            tags,
+            definition: meaning.to_string(),
+        })
+    }
+}
+
 impl<R> AidaCliGeneratedQuestionPersister<R>
 where
     R: CommandRunner,
@@ -653,6 +766,14 @@ fn parse_added_question_id(output: &str) -> Result<String> {
         .find(|token| token.starts_with("Q-"))
         .map(str::to_string)
         .ok_or_else(|| QuizdomError::Parse("aida add output did not include Q id".to_string()))
+}
+
+fn parse_added_term_id(output: &str) -> Result<String> {
+    output
+        .split(|character: char| character.is_whitespace() || character == ':')
+        .find(|token| token.starts_with("TERM-"))
+        .map(str::to_string)
+        .ok_or_else(|| QuizdomError::Parse("aida add output did not include TERM id".to_string()))
 }
 
 #[derive(Debug, Clone)]
@@ -814,12 +935,40 @@ pub fn run_cli(
     let deterministic = DeterministicNextQuestionStrategy;
     match config.command {
         SessionCommand::Start => match build_strategy(&config) {
-            Some(strategy) => run_session(&config, &bank, strategy.as_ref(), input, &mut output),
-            None => run_session(&config, &bank, &deterministic, input, &mut output),
+            Some(strategy) => run_session_with_term_persister(
+                &config,
+                &bank,
+                strategy.as_ref(),
+                &AidaCliUserSpecificTermPersister::default(),
+                input,
+                &mut output,
+            ),
+            None => run_session_with_term_persister(
+                &config,
+                &bank,
+                &deterministic,
+                &AidaCliUserSpecificTermPersister::default(),
+                input,
+                &mut output,
+            ),
         },
         SessionCommand::Resume => match build_strategy(&config) {
-            Some(strategy) => resume_session(&config, &bank, strategy.as_ref(), input, &mut output),
-            None => resume_session(&config, &bank, &deterministic, input, &mut output),
+            Some(strategy) => resume_session_with_term_persister(
+                &config,
+                &bank,
+                strategy.as_ref(),
+                &AidaCliUserSpecificTermPersister::default(),
+                input,
+                &mut output,
+            ),
+            None => resume_session_with_term_persister(
+                &config,
+                &bank,
+                &deterministic,
+                &AidaCliUserSpecificTermPersister::default(),
+                input,
+                &mut output,
+            ),
         },
         SessionCommand::Fork => fork_session(&config, &mut output),
     }
@@ -848,6 +997,7 @@ fn build_strategy(config: &CliConfig) -> Option<Box<dyn NextQuestionStrategy>> {
     }
 }
 
+#[cfg(test)]
 fn run_session(
     config: &CliConfig,
     bank: &dyn QuestionBank,
@@ -856,13 +1006,42 @@ fn run_session(
     output: &mut impl Write,
 ) -> Result<()> {
     // trace:STORY-17 | ai:codex
-    run_session_from_current(config, bank, strategy, input, output, 0, true, Vec::new())
+    run_session_with_term_persister(
+        config,
+        bank,
+        strategy,
+        &NoopUserSpecificTermPersister,
+        input,
+        output,
+    )
+}
+
+fn run_session_with_term_persister(
+    config: &CliConfig,
+    bank: &dyn QuestionBank,
+    strategy: &dyn NextQuestionStrategy,
+    term_persister: &dyn UserSpecificTermPersister,
+    input: impl Read,
+    output: &mut impl Write,
+) -> Result<()> {
+    run_session_from_current(
+        config,
+        bank,
+        strategy,
+        term_persister,
+        input,
+        output,
+        0,
+        true,
+        Vec::new(),
+    )
 }
 
 fn run_session_from_current(
     config: &CliConfig,
     bank: &dyn QuestionBank,
     strategy: &dyn NextQuestionStrategy,
+    term_persister: &dyn UserSpecificTermPersister,
     input: impl Read,
     output: &mut impl Write,
     mut turn: u64,
@@ -892,7 +1071,7 @@ fn run_session_from_current(
         )?;
         let probed_terms = load_probed_terms(bank, &current);
         render_term_definitions(&probed_terms, output)?;
-        prompt_for_term_meaning(&probed_terms, strategy, &mut input, output)?;
+        prompt_for_term_meaning(&probed_terms, strategy, term_persister, &mut input, output)?;
         render_question(&current, output)?;
         let answer = match read_answer_or_end(&current.answer_kind, &mut input, output)? {
             AnswerInput::Answer(answer) => answer,
@@ -966,6 +1145,7 @@ fn run_session_from_current(
 fn prompt_for_term_meaning(
     definitions: &[TermDefinition],
     strategy: &dyn NextQuestionStrategy,
+    term_persister: &dyn UserSpecificTermPersister,
     input: &mut impl BufRead,
     output: &mut impl Write,
 ) -> Result<()> {
@@ -990,8 +1170,47 @@ fn prompt_for_term_meaning(
         .unwrap_or(None)
     {
         render_term_mapping_proposal(&proposal, output)?;
+        write!(output, "> ")?;
+        output.flush()?;
+        let mut confirmation = String::new();
+        if input.read_line(&mut confirmation)? == 0 {
+            return Ok(());
+        }
+        if is_confirmation_yes(&confirmation) {
+            writeln!(output, "Adopted {}.", proposal.term_title)?;
+            return Ok(());
+        }
+        writeln!(output, "What would make the shared definition fit better?")?;
+        write!(output, "> ")?;
+        output.flush()?;
+        let mut refinement = String::new();
+        if input.read_line(&mut refinement)? == 0 {
+            return Ok(());
+        }
+        let refinement = refinement.trim();
+        if refinement.is_empty() || refinement == "/end" {
+            return Ok(());
+        }
+        match term_persister.persist_user_specific_term(&term_label, refinement, definitions) {
+            Ok(term) => writeln!(
+                output,
+                "Recorded a user-specific definition: {} ({})",
+                term.title, term.id
+            )?,
+            Err(_) => writeln!(
+                output,
+                "No shared definition was adopted; user-specific persistence is unavailable."
+            )?,
+        }
     }
     Ok(())
+}
+
+fn is_confirmation_yes(input: &str) -> bool {
+    matches!(
+        input.trim().to_ascii_lowercase().as_str(),
+        "yes" | "y" | "yeah" | "yep"
+    )
 }
 
 fn term_label(definitions: &[TermDefinition]) -> String {
@@ -1088,10 +1307,29 @@ fn render_term_definitions(definitions: &[TermDefinition], output: &mut impl Wri
     Ok(())
 }
 
+#[cfg(test)]
 fn resume_session(
     config: &CliConfig,
     bank: &dyn QuestionBank,
     strategy: &dyn NextQuestionStrategy,
+    input: impl Read,
+    output: &mut impl Write,
+) -> Result<()> {
+    resume_session_with_term_persister(
+        config,
+        bank,
+        strategy,
+        &NoopUserSpecificTermPersister,
+        input,
+        output,
+    )
+}
+
+fn resume_session_with_term_persister(
+    config: &CliConfig,
+    bank: &dyn QuestionBank,
+    strategy: &dyn NextQuestionStrategy,
+    term_persister: &dyn UserSpecificTermPersister,
     input: impl Read,
     output: &mut impl Write,
 ) -> Result<()> {
@@ -1111,6 +1349,7 @@ fn resume_session(
         &resumed_config,
         bank,
         strategy,
+        term_persister,
         input,
         output,
         replay.next_turn,
@@ -2230,7 +2469,7 @@ scope: formal definition.
             &config,
             &bank,
             &strategy,
-            "Acting from my own reasons without coercion.\nyes\n".as_bytes(),
+            "Acting from my own reasons without coercion.\nyes\nyes\n".as_bytes(),
             &mut output,
         )
         .unwrap();
@@ -2239,9 +2478,89 @@ scope: formal definition.
         assert!(output.contains("What do you mean by free will?"));
         assert!(output.contains("That sounds closest to free will / compatibilist"));
         assert!(output.contains("Does this capture it?"));
+        assert!(output.contains("Adopted free will / compatibilist."));
         assert!(output.contains("without coercion"));
 
         let _ = fs::remove_file(path);
+    }
+
+    #[test]
+    fn rejected_mapping_mints_user_specific_term_after_steering() {
+        let path = std::env::temp_dir().join(format!(
+            "quizdom-story-43-test-{}.jsonl",
+            std::process::id()
+        ));
+        let _ = fs::remove_file(&path);
+        let bank = FakeBank::new([question_with_tags(
+            "Q-23",
+            70,
+            AnswerKind::YesNo,
+            ["topic:free-will", "answer:yes-no", "weight:70"],
+        )])
+        .with_probes("Q-23", ["TERM-24", "TERM-25"])
+        .with_terms(free_will_terms());
+        let strategy = LlmNextQuestionStrategy::new(MockLlm::ok(
+            r#"{"term_id":"TERM-25","rationale":"The user emphasized reasons without coercion."}"#,
+        ));
+        let runner = RecordingCommandRunner::new([command_output(true, "Added: TERM-99\n", "")]);
+        let persister = AidaCliUserSpecificTermPersister::new("aida", runner.clone());
+        let config = test_config(&path, "Q-23");
+        let mut output = Vec::new();
+
+        run_session_with_term_persister(
+            &config,
+            &bank,
+            &strategy,
+            &persister,
+            "A self-authored cause.\nno\nIt must originate outside the causal chain.\nyes\n"
+                .as_bytes(),
+            &mut output,
+        )
+        .unwrap();
+
+        let output = String::from_utf8(output).unwrap();
+        assert!(output.contains("What would make the shared definition fit better?"));
+        assert!(output.contains("Recorded a user-specific definition"));
+        assert_eq!(
+            runner.calls(),
+            vec![strings([
+                "aida",
+                "add",
+                "--type",
+                "term",
+                "--status",
+                "approved",
+                "--priority",
+                "medium",
+                "--title",
+                "free will / user-specific",
+                "--description",
+                "source: user-specific quizdom steering fallback.\n\ndefinition: It must originate outside the causal chain.\n\nscope: user-specific definition captured only after shared bank definitions did not fit.",
+                "--tags",
+                "topic:free-will,definition:user-specific,weight:40",
+            ])]
+        );
+
+        let _ = fs::remove_file(path);
+    }
+
+    #[test]
+    fn user_specific_term_persister_maps_aida_add_output() {
+        let runner = RecordingCommandRunner::new([command_output(true, "Added: TERM-88\n", "")]);
+        let persister = AidaCliUserSpecificTermPersister::new("aida", runner);
+
+        let term = persister
+            .persist_user_specific_term(
+                "free will",
+                "Free will means being an uncaused source.",
+                &free_will_terms(),
+            )
+            .unwrap();
+
+        assert_eq!(term.id, "TERM-88");
+        assert_eq!(term.title, "free will / user-specific");
+        assert!(term.tags.contains(&"definition:user-specific".to_string()));
+        assert_eq!(term.definition, "Free will means being an uncaused source.");
     }
 
     #[test]
