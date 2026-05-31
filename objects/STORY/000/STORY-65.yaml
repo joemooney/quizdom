@@ -16,3 +16,7 @@ tags:
 - session
 - story
 - ux
+relationships:
+- rel_type: Child
+  target_id: 019e7f9f-f1bf-7ab2-b508-291f0849be84
+  created_at: 2026-05-31T21:10:19.686394059Z
