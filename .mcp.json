@@ -1,0 +1,9 @@
+{
+  "mcpServers": {
+    "aida": {
+      "type": "stdio",
+      "command": "aida",
+      "args": ["mcp-serve"]
+    }
+  }
+}
