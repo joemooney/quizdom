@@ -1,0 +1,26 @@
+id: 019e8025-2879-78d2-bbb8-b14445c2204d
+spec_id: BUG-71
+agreed_id: BUG-71
+title: Resume doesn't restore the original session's strategy (defaults to deterministic) -> LLM sessions dead-end on resume
+description: |-
+  DEFECT (hit while resuming an --strategy llm session). The session log does NOT persist the strategy/backend, and 'session resume' builds the strategy from the CURRENT command's args (default deterministic via env_strategy; session.rs:273 build_strategy). So resuming an LLM session WITHOUT re-passing --strategy llm silently falls back to deterministic; the resumed frontier is an LLM-generated question with no begets successors in the bank, so it immediately prints 'No follow-up questions. Session complete.' -> looks like resume is broken.
+
+  Fix (session.rs resume config + logger -- codex-1's lane): (1) record the strategy (and the LLM backend/model) in the session log at start; (2) on resume, RESTORE the original strategy/backend unless explicitly overridden by --strategy on the resume command. Then resume continues the LLM exploration seamlessly.
+
+  Workaround: pass --strategy llm on resume.
+
+  ## Acceptance: a session started with --strategy llm resumes WITH llm by default (no need to re-pass); an explicit --strategy on resume overrides; the strategy/backend is recorded in the session log; tests cover restore + explicit-override.
+status: Approved
+priority: High
+owner: ''
+feature: Uncategorized
+created_at: 2026-05-31T22:26:19.385687365Z
+modified_at: 2026-05-31T22:26:19.385687365Z
+req_type: Bug
+tags:
+- bug
+- llm
+- resume
+- session
+- strategy
+- ux
