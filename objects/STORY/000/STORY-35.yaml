@@ -8,7 +8,7 @@ priority: High
 owner: ''
 feature: Uncategorized
 created_at: 2026-05-31T17:45:52.184583399Z
-modified_at: 2026-05-31T18:10:04.482050475Z
+modified_at: 2026-05-31T18:13:50.785496915Z
 req_type: Story
 tags:
 - ai-abstraction
@@ -23,3 +23,9 @@ relationships:
   target_id: 019e7eb3-e4c5-7a70-9838-a370d6ced409
   created_at: 2026-05-31T17:46:47.307788989Z
   created_by: joe
+comments:
+- id: 019e7f3e-0241-7e41-86b8-6d4038ddad50
+  author: joe
+  content: 'Implementation complete via Codex and merged in PR #6. Added crates/llm to the workspace with provider-agnostic LLMClient trait returning async (String, Vec<ToolCall>) output, Message/MessageRole, ToolDef, ToolCall, and LLMError types. No provider implementation, AIDA tools, sessions, or SSE were added. Verified with cargo fmt --all --check and cargo test --workspace.'
+  created_at: 2026-05-31T18:13:50.785496915Z
+  modified_at: 2026-05-31T18:13:50.785496915Z
