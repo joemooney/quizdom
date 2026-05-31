@@ -1,0 +1,17 @@
+id: 019e7e72-88d8-7c03-b53a-47023aca06d3
+spec_id: STORY-18
+agreed_id: STORY-18
+title: NextQuestionStrategy interface (pluggable; deterministic + LLM-ready)
+description: 'Define the strategy interface the loop calls to pick the next question, so the deterministic bank-traversal strategy and a future EPIC-7 LLM strategy both implement it without changing the loop. ## Acceptance: interface defined; deterministic strategy implements it; loop depends only on the interface; an LLM strategy can slot in later. Depends on STORY-14.'
+status: Approved
+priority: High
+owner: ''
+feature: Uncategorized
+created_at: 2026-05-31T14:31:35.896222731Z
+modified_at: 2026-05-31T14:31:35.896222731Z
+req_type: Story
+tags:
+- architecture
+- session
+- story
+- strategy
