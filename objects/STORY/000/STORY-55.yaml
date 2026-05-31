@@ -12,12 +12,12 @@ description: |-
   Applies to ALL free-text prompts (answers, the eXplore/STORY-42 'what do you mean by the term' capture, etc.). Complements STORY-51 (crossterm single-key Y/N/X/P): crossterm for single-key control prompts, rustyline for free-text lines.
 
   ## Acceptance: interactive free-text supports backspace/arrows/line editing with no escape-sequence leakage; Vi vs Emacs follows $EDITOR; piped/non-TTY input still works via read_line (all existing tests pass unchanged).
-status: InProgress
+status: Completed
 priority: High
 owner: ''
 feature: Uncategorized
 created_at: 2026-05-31T20:08:38.433839675Z
-modified_at: 2026-05-31T20:16:10.414911905Z
+modified_at: 2026-05-31T20:16:13.250705454Z
 req_type: Story
 tags:
 - bug
