@@ -46,3 +46,10 @@
   note: 'Lane B (claude-2) next — EPIC-10 STORY-67: weighted-probabilistic successor selection. DISJOINT from codex-1 (on session.rs for BUG-70): touch strategy.rs ONLY (+ its tests). End your STORY-66 session, then ''aida session start --owns STORY-67 --base main'' for a fresh worktree. Build on the STORY-66 re-weighting engine: sample successors proportional to weight (not strict max), exclude weight:0, keep STORY-48 from-answer filtering. Ship branch+PR base main; Completed on merge.'
   added_at: 2026-05-31T22:08:41.136216062Z
   for_role: implementer
+- user_id: joe
+  requirement_id: 019e7ff4-f34e-7a82-8e83-4d9bad68596b
+  position: 6000
+  added_by: joe
+  note: 'Lane B (claude-2) next — EPIC-10 STORY-68: derive quality signals from session logs. DISJOINT from codex-1 (session.rs for BUG-71): read the JSONL logs in a NEW analysis fn / bank.rs ONLY — do NOT touch session.rs. End your STORY-67 session, then ''aida session start --owns STORY-68 --base main''. Derive per-question signals from EXISTING log events (branch productivity, revise frequency, contradiction involvement) and feed the STORY-66 re-weighting engine. NOTE: punt-rate signal depends on STORY-53 (Punt) which isn''t built yet — scope to available signals now; add punt-rate later. Ship branch+PR base main; Completed on merge.'
+  added_at: 2026-05-31T22:30:34.111623585Z
+  for_role: implementer
