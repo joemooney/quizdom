@@ -1,0 +1,18 @@
+id: 019e7eb1-4fac-74a2-a6d1-3c17feea5bc1
+spec_id: SPIKE-33
+agreed_id: SPIKE-33
+title: Evaluate ~/ai/aida-chat for a shared, factorable AI-interface abstraction
+description: 'Investigate ~/ai/aida-chat: what it does, how it interfaces with AI/LLMs (which crate/SDK, streaming, tool-use, prompt/model config, the trait/struct shape of its abstraction), and what could be factored out as a project-agnostic AI-interface crate that quizdom (EPIC-7) and aida-chat both consume. Output: commonality assessment + a concrete recommendation (reuse as-is / extract a shared crate / coordinate boundaries). Feeds the Rust stack decision and EPIC-7.'
+status: Approved
+priority: High
+owner: ''
+feature: Uncategorized
+created_at: 2026-05-31T15:40:10.028939190Z
+modified_at: 2026-05-31T15:40:10.028939190Z
+req_type: Spike
+tags:
+- ai-abstraction
+- aida-chat
+- reuse
+- rust
+- spike
