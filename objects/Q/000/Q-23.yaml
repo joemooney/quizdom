@@ -1,0 +1,28 @@
+id: 019e7e90-d9f7-77e0-b7ca-f4e6f13b81e4
+spec_id: Q-23
+agreed_id: Q-23
+prefix_override: Q
+title: Do you believe in free will?
+description: |
+  Seed question for the free-will cluster (STORY-16, instantiates docs/architecture/graph-schema.md).
+
+  answer: yes-no
+
+  Use: the entry prompt for the free-will session cluster. It branches into competing
+  term definitions (probes) and follow-up questions (begets). It encodes no correct
+  answer — it exists to surface which sense of "free will" the respondent holds.
+
+  trace:STORY-16 | ai:claude
+status: Approved
+priority: High
+owner: ''
+feature: Uncategorized
+created_at: 2026-05-31T15:04:42.743310760Z
+modified_at: 2026-05-31T15:04:42.743310760Z
+req_type: Functional
+tags:
+- answer:yes-no
+- quality:neutral
+- seed
+- topic:free-will
+- weight:70
