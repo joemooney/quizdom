@@ -1,0 +1,24 @@
+id: 019e7f8f-001b-7692-bae2-4cde6125ca2f
+spec_id: Q-47
+agreed_id: Q-47
+prefix_override: Q
+title: If your soul makes the choice, does it choose for reasons — and if so, what makes those reasons land one way rather than the other without that being either prior cause or chance?
+description: |-
+  LLM-generated quizdom question.
+
+  answer: free-text
+  origin: Q-46
+
+  Generated from origin question: If the different choice isn't random and isn't fixed by anything that differed beforehand, what is it that makes it yours rather than just uncaused?
+status: Approved
+priority: Medium
+owner: ''
+feature: Uncategorized
+created_at: 2026-05-31T19:42:18.651611374Z
+modified_at: 2026-05-31T19:42:18.651611374Z
+req_type: Functional
+tags:
+- answer:free-text
+- seed
+- topic:free-will
+- weight:50
