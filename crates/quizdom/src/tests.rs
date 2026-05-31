@@ -1099,6 +1099,45 @@ fn start_end_resume_round_trip_replays_path_and_finishes() {
 }
 
 #[test]
+fn live_session_surfaces_graph_contradiction_as_follow_up_question() {
+    let path = std::env::temp_dir().join(format!(
+        "quizdom-story-58-test-{}.jsonl",
+        std::process::id()
+    ));
+    let _ = fs::remove_file(&path);
+    let bank = FakeBank::new([
+        question("Q-1", 10, AnswerKind::YesNo),
+        question("Q-2", 5, AnswerKind::YesNo),
+    ])
+    .with_edges("Q-1", ["Q-2"]);
+    let edges = FakeEdges::new().with("Q-1", ["Q-2"]);
+    let strategy = DeterministicNextQuestionStrategy;
+    let config = test_config(&path, "Q-1");
+    let mut output = Vec::new();
+
+    run_session_with_contradiction_edges(
+        &config,
+        &bank,
+        &strategy,
+        &edges,
+        "yes\nyes\nI would refine one of them.\n".as_bytes(),
+        &mut output,
+    )
+    .unwrap();
+
+    let output = String::from_utf8(output).unwrap();
+    assert!(output.contains("You leaned Q-1"));
+    assert!(output.contains("and also Q-2"));
+    assert!(output.contains("which holds, or how do you reconcile them?"));
+
+    let log = fs::read_to_string(&path).unwrap();
+    assert!(log.contains(r#""question_ref":"contradiction-2""#));
+    assert!(log.contains(r#""raw_answer":"I would refine one of them.""#));
+
+    let _ = fs::remove_file(path);
+}
+
+#[test]
 fn forked_agree_and_disagree_branches_are_recoverable_independently() {
     let path = std::env::temp_dir().join(format!(
         "quizdom-story-19-test-{}.jsonl",

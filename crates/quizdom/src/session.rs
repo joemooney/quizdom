@@ -1,4 +1,8 @@
 use crate::bank::{AidaCliQuestionBank, QuestionBank};
+use crate::contradiction::{
+    beliefs_from_session_log, detect_graph_contradictions, AidaCliContradictsEdges, Contradiction,
+    ContradictsEdges,
+};
 use crate::error::{QuizdomError, Result};
 use crate::honing::{
     definitions_for_loaded_terms, load_probed_terms, prompt_for_term_meaning,
@@ -19,7 +23,7 @@ use chrono::Utc;
 use llm::{AnthropicClient, ClaudeCliClient};
 use serde_json::json;
 use serde_json::Value;
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::fs::{self, File, OpenOptions};
 use std::io::{BufRead, BufReader, Read, Write};
 use std::path::{Path, PathBuf};
@@ -343,11 +347,36 @@ pub(crate) fn run_session_with_term_persister(
     input: impl Read,
     output: &mut impl Write,
 ) -> Result<()> {
+    let contradiction_edges = AidaCliContradictsEdges::default();
     run_session_from_current(
         config,
         bank,
         strategy,
         term_persister,
+        &contradiction_edges,
+        input,
+        output,
+        0,
+        true,
+        Vec::new(),
+    )
+}
+
+#[cfg(test)]
+pub(crate) fn run_session_with_contradiction_edges(
+    config: &CliConfig,
+    bank: &dyn QuestionBank,
+    strategy: &dyn NextQuestionStrategy,
+    edges: &dyn ContradictsEdges,
+    input: impl Read,
+    output: &mut impl Write,
+) -> Result<()> {
+    run_session_from_current(
+        config,
+        bank,
+        strategy,
+        &NoopUserSpecificTermPersister,
+        edges,
         input,
         output,
         0,
@@ -361,6 +390,7 @@ fn run_session_from_current(
     bank: &dyn QuestionBank,
     strategy: &dyn NextQuestionStrategy,
     term_persister: &dyn UserSpecificTermPersister,
+    contradiction_edges: &dyn ContradictsEdges,
     input: impl Read,
     output: &mut impl Write,
     mut turn: u64,
@@ -372,6 +402,7 @@ fn run_session_from_current(
     let mut logger = SessionLogger::open(&config.log_path)?;
     let mut current = bank.load_question(&config.seed)?;
     let mut settled_terms = Vec::new();
+    let mut surfaced_contradictions = BTreeSet::new();
 
     if write_start_event {
         logger.session_started(
@@ -383,11 +414,12 @@ fn run_session_from_current(
     }
 
     loop {
+        let answered_turn = turn;
         logger.question_presented(
             &config.session_id,
             &config.user_id,
             &config.branch_id,
-            turn,
+            answered_turn,
             &current,
         )?;
         let probed_terms = load_probed_terms(bank, &current);
@@ -410,7 +442,7 @@ fn run_session_from_current(
                     &config.session_id,
                     &config.user_id,
                     &config.branch_id,
-                    turn,
+                    answered_turn,
                     "User ended session.",
                 )?;
                 break;
@@ -432,7 +464,7 @@ fn run_session_from_current(
                     &config.session_id,
                     &config.user_id,
                     &config.branch_id,
-                    turn,
+                    answered_turn,
                     &settled,
                     &probed_terms,
                 )?;
@@ -444,10 +476,30 @@ fn run_session_from_current(
             &config.session_id,
             &config.user_id,
             &config.branch_id,
-            turn,
+            answered_turn,
             &current,
             &answer,
         )?;
+        if let Some(contradiction) = next_live_contradiction(
+            &config.log_path,
+            &config.branch_id,
+            contradiction_edges,
+            &mut surfaced_contradictions,
+        )? {
+            // trace:STORY-58 | ai:codex
+            turn += 1;
+            if ask_contradiction_follow_up(
+                config,
+                &mut logger,
+                turn,
+                &contradiction,
+                &mut input,
+                &mut free_text_input,
+                output,
+            )? {
+                break;
+            }
+        }
         if matches!(current.answer_kind, AnswerKind::FreeText) {
             let flagged_terms = strategy.loaded_terms(&current, &answer).unwrap_or_default();
             let definitions = definitions_for_loaded_terms(&probed_terms, &flagged_terms);
@@ -468,7 +520,7 @@ fn run_session_from_current(
                     &config.session_id,
                     &config.user_id,
                     &config.branch_id,
-                    turn,
+                    answered_turn,
                     &current.id,
                     &next.id,
                     "Configured next-question strategy selected the follow-up.",
@@ -488,7 +540,7 @@ fn run_session_from_current(
                     &config.session_id,
                     &config.user_id,
                     &config.branch_id,
-                    turn,
+                    answered_turn,
                     "No outgoing begets successor.",
                 )?;
                 break;
@@ -497,6 +549,85 @@ fn run_session_from_current(
     }
 
     Ok(())
+}
+
+fn next_live_contradiction(
+    log_path: &Path,
+    branch_id: &str,
+    edges: &dyn ContradictsEdges,
+    surfaced: &mut BTreeSet<(String, String)>,
+) -> Result<Option<Contradiction>> {
+    let file = File::open(log_path)?;
+    let beliefs = beliefs_from_session_log(file, Some(branch_id))?;
+    let contradictions = detect_graph_contradictions(&beliefs, edges).unwrap_or_default();
+    for contradiction in contradictions {
+        let pair = contradiction_pair_key(&contradiction);
+        if surfaced.insert(pair) {
+            return Ok(Some(contradiction));
+        }
+    }
+    Ok(None)
+}
+
+fn contradiction_pair_key(contradiction: &Contradiction) -> (String, String) {
+    if contradiction.left <= contradiction.right {
+        (contradiction.left.clone(), contradiction.right.clone())
+    } else {
+        (contradiction.right.clone(), contradiction.left.clone())
+    }
+}
+
+fn ask_contradiction_follow_up(
+    config: &CliConfig,
+    logger: &mut SessionLogger,
+    turn: u64,
+    contradiction: &Contradiction,
+    input: &mut impl BufRead,
+    free_text_input: &mut FreeTextInput,
+    output: &mut impl Write,
+) -> Result<bool> {
+    let question = Question {
+        id: format!("contradiction-{turn}"),
+        title: format!(
+            "You leaned {} and also {} -- these seem to conflict; which holds, or how do you reconcile them?",
+            contradiction.left, contradiction.right
+        ),
+        tags: vec!["runtime:contradiction".to_string()],
+        answer_kind: AnswerKind::FreeText,
+        weight: 0,
+    };
+    logger.question_presented(
+        &config.session_id,
+        &config.user_id,
+        &config.branch_id,
+        turn,
+        &question,
+    )?;
+    render_question(&question, output)?;
+    match read_answer_or_end(&question.answer_kind, input, free_text_input, output)? {
+        AnswerInput::Answer(answer) => {
+            logger.answer_recorded(
+                &config.session_id,
+                &config.user_id,
+                &config.branch_id,
+                turn,
+                &question,
+                &answer,
+            )?;
+            Ok(false)
+        }
+        AnswerInput::End => {
+            writeln!(output, "Session ended.")?;
+            logger.session_ended(
+                &config.session_id,
+                &config.user_id,
+                &config.branch_id,
+                turn,
+                "User ended session.",
+            )?;
+            Ok(true)
+        }
+    }
 }
 
 fn settled_definition_for<'a>(
@@ -557,6 +688,7 @@ fn resume_session_with_term_persister(
         bank,
         strategy,
         term_persister,
+        &AidaCliContradictsEdges::default(),
         input,
         output,
         replay.next_turn,
