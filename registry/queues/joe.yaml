@@ -20,3 +20,15 @@
   added_at: 2026-05-31T20:37:01.144450883Z
   for_role: implementer
   for_scope: EPIC-9
+- user_id: joe
+  requirement_id: 019e7f96-4567-7303-8798-fac71e185a9f
+  position: 3000
+  added_by: joe
+  note: |-
+    Lane B (claude implementer-2) next. DISJOINT from codex-1 (which is on honing.rs/session.rs): STORY-48 touches strategy.rs + persist.rs + bank.rs ONLY. End your EPIC-9 session, then 'aida session start --owns STORY-48 --base main' for a fresh isolated worktree.
+
+    DESIGN PINNED (AIDA can't tag edges — VIS-2 note): record the triggering answer as a 'from-answer:<value>' TAG on the GENERATED question (in persist.rs, alongside the begets edge), plus keep an origin reference. Then in strategy.rs, among a question's begets-successors, PREFER those whose from-answer tag matches the current answer; fall back to untagged/any when none match. Read the tag in bank.rs parsing. So 'free will? -> yes' and '-> no' can beget different follow-ups.
+
+    Acceptance: a generated follow-up is tagged from-answer:<value>; the strategy prefers answer-matching successors; covered by tests. Ship branch+PR base main; Completed on merge.
+  added_at: 2026-05-31T20:57:46.920704268Z
+  for_role: implementer
