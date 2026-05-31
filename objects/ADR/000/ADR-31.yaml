@@ -1,0 +1,28 @@
+id: 019e7ea3-a4f9-7d02-a803-d016c925b2cd
+spec_id: ADR-31
+agreed_id: ADR-31
+title: Traverse the domain graph app-side (one-hop rel list) until AIDA supports custom-edge graph walk
+description: |-
+  AIDA's 'aida graph' / query_graph only follow built-in Parent/Child/Blocks edges, NOT Custom(...) edges. Verified on the STORY-16 seed cluster: 'aida graph Q-23 --tree' returns empty despite Q-23 having 4 custom edges; 'aida rel list Q-23' shows all of them. quizdom's domain graph is entirely custom edges (probes/begets/refines/contradicts/agrees/disagrees).
+
+  Consequence: until AIDA adds custom-edge traversal (tracked quizdom-side as the TASK-30 finding; upstream as ~/ai/aida FR-282), quizdom traverses its graph APP-SIDE — one 'aida rel list <node> --type <edge>' per hop, BFS/DFS in the session engine.
+
+  - EPIC-6 NextQuestionStrategy: query one-hop begets successors via rel list (all it needs — it walks as it goes, not transitively up front).
+  - EPIC-9 contradiction detection: app-side BFS over belief edges.
+  - EPIC-5 acceptance clause 'query_graph traverses Q->definitions->follow-ups' is SUPERSEDED: verify traversal via 'aida rel list' (edges exist + correct) instead. STORY-16 is acceptably complete on that basis.
+
+  Revisit and collapse to the native graph walk when FR-282 lands.
+status: Approved
+priority: High
+owner: ''
+feature: Uncategorized
+created_at: 2026-05-31T15:25:14.361384584Z
+modified_at: 2026-05-31T15:25:14.361384584Z
+req_type: Decision
+tags:
+- decision
+- graph
+- substrate
+- traversal
+- vis2
+- workaround
