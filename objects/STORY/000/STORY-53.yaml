@@ -1,0 +1,18 @@
+id: 019e7fa0-93f2-7f11-9dc4-d18f615b2e70
+spec_id: STORY-53
+agreed_id: STORY-53
+title: 'Punt (P): jump to a different-topic question + record curation signal'
+description: 'On P, skip the current begets thread and select a question from a DIFFERENT topic/area; record a light ''punted-here'' curation signal (down-weight this question for this context, EPIC-10). ## Acceptance: P moves to a different-topic question and records the punted-here signal; selection avoids the current thread. Depends on the input scheme + bank selection; ties to STORY-48.'
+status: Approved
+priority: High
+owner: ''
+feature: Uncategorized
+created_at: 2026-05-31T20:01:30.610872801Z
+modified_at: 2026-05-31T20:01:30.610872801Z
+req_type: Story
+tags:
+- curation
+- interaction
+- navigation
+- punt
+- story
