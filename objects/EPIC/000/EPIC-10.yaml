@@ -2,13 +2,39 @@ id: 019e7e5e-e038-77b0-a462-602c6b7db9df
 spec_id: EPIC-10
 agreed_id: EPIC-10
 title: Question bank evolution (tagging, weighting, curation)
-description: Tag questions insightful vs unhelpful; let tags govern whether a question is asked again and how heavily it's weighted when chosen. Good questions surface, weak ones fade. Anticipate cross-user weighting later.
-status: Draft
+description: |-
+  Make the question bank EVOLVE: good questions surface, weak ones fade (VIS-1).
+  Builds on the existing `weight:N` (0-100) + `quality:insightful|neutral|unhelpful`
+  tags (graph-schema.md) and weight-aware selection. ALL work lives in the
+  analysis/data modules — `strategy.rs` / `bank.rs` / `persist.rs` — DISJOINT from
+  the session loop (session.rs), so it runs in parallel with the integration lane.
+
+  ## Mechanics
+
+  - **Re-weighting engine** — a quality signal for a question adjusts its `weight:N`
+    (bump on insightful, decay on unhelpful/punted) within [0,100] and updates
+    `quality:*`. Persisted to AIDA via the bank.
+  - **Weighted selection** — the strategy SAMPLES successors by weight (not strict
+    max) so variety emerges; `weight:0` is never auto-selected; mismatched
+    `from-answer` (STORY-48) stays excluded.
+  - **Signals** — initially explicit (a question tagged insightful/unhelpful);
+    later derived from session logs (punt rate, branch productivity) and eventually
+    cross-user.
+
+  ## Acceptance
+
+  - A re-weighting function adjusts `weight:N` + `quality:*` from a signal, bounded
+    [0,100], persisted to AIDA; tested.
+  - Selection honors weights (weighted sampling), `weight:0` excluded; tested.
+  - (Later) signals derived from session logs feed re-weighting.
+
+  Done: STORY-48 (answer-conditioned follow-ons).
+status: Approved
 priority: Medium
 owner: ''
 feature: Uncategorized
 created_at: 2026-05-31T14:10:07.544177402Z
-modified_at: 2026-05-31T21:31:11.098252057Z
+modified_at: 2026-05-31T21:33:28.528992077Z
 req_type: Epic
 tags:
 - curation

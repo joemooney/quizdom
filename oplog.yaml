@@ -569,5 +569,47 @@ operations:
   timestamp: 2026-05-31T21:30:58.922732903Z
   kind: !SetStatus
     status: Completed
-clock: 44
+- id: 019e7ff4-c654-7811-b50a-fad17f55cabe
+  target_id: 019e7e5e-e038-77b0-a462-602c6b7db9df
+  author: aida
+  node_id: ''
+  lamport: 45
+  timestamp: 2026-05-31T21:33:28.532585225Z
+  kind: !SetStatus
+    status: Approved
+- id: 019e7ff4-c6d1-7661-af88-67d3c7675dc9
+  target_id: 019e7e5e-e038-77b0-a462-602c6b7db9df
+  author: aida
+  node_id: ''
+  lamport: 46
+  timestamp: 2026-05-31T21:33:28.657736903Z
+  kind: !SetDescription
+    description: |-
+      Make the question bank EVOLVE: good questions surface, weak ones fade (VIS-1).
+      Builds on the existing `weight:N` (0-100) + `quality:insightful|neutral|unhelpful`
+      tags (graph-schema.md) and weight-aware selection. ALL work lives in the
+      analysis/data modules — `strategy.rs` / `bank.rs` / `persist.rs` — DISJOINT from
+      the session loop (session.rs), so it runs in parallel with the integration lane.
+
+      ## Mechanics
+
+      - **Re-weighting engine** — a quality signal for a question adjusts its `weight:N`
+        (bump on insightful, decay on unhelpful/punted) within [0,100] and updates
+        `quality:*`. Persisted to AIDA via the bank.
+      - **Weighted selection** — the strategy SAMPLES successors by weight (not strict
+        max) so variety emerges; `weight:0` is never auto-selected; mismatched
+        `from-answer` (STORY-48) stays excluded.
+      - **Signals** — initially explicit (a question tagged insightful/unhelpful);
+        later derived from session logs (punt rate, branch productivity) and eventually
+        cross-user.
+
+      ## Acceptance
+
+      - A re-weighting function adjusts `weight:N` + `quality:*` from a signal, bounded
+        [0,100], persisted to AIDA; tested.
+      - Selection honors weights (weighted sampling), `weight:0` excluded; tested.
+      - (Later) signals derived from session logs feed re-weighting.
+
+      Done: STORY-48 (answer-conditioned follow-ons).
+clock: 46
 node_id: ''
