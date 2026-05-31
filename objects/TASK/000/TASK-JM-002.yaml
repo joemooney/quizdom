@@ -1,0 +1,17 @@
+id: 019e7e66-c2a4-7d33-9a9b-49633de29a66
+spec_id: TASK-JM-002
+title: AIDA has no native numeric field for per-node weighting
+description: 'quizdom needs continuous question weights; AIDA priority is only high/med/low. Workaround: encode as a ''weight:N'' tag. Surfaced by EPIC-5. Candidate AIDA improvement: an optional numeric/score field or first-class weight.'
+status: Draft
+priority: Medium
+owner: joe
+feature: Uncategorized
+created_at: 2026-05-31T14:18:44.260654725Z
+modified_at: 2026-05-31T14:18:44.260654725Z
+req_type: Task
+tags:
+- from-advisor:VIS-2
+- kind:observation
+- linked:EPIC-5
+- linked:VIS-2
+- severity:major
