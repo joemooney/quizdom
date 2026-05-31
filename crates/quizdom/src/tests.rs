@@ -723,6 +723,14 @@ fn accepts_explore_and_punt_controls() {
 }
 
 #[test]
+fn accepts_quit_end_commands() {
+    assert!(is_end_command("/end"));
+    assert!(is_end_command("q"));
+    assert!(is_end_command("Q"));
+    assert!(is_end_command("quit"));
+}
+
+#[test]
 fn editor_mode_uses_vi_for_vi_family_editors() {
     assert_eq!(edit_mode_from_editor("nvim"), EditMode::Vi);
     assert_eq!(edit_mode_from_editor("/usr/bin/vim"), EditMode::Vi);
@@ -737,12 +745,15 @@ fn editor_mode_defaults_to_emacs_for_other_editors() {
 #[test]
 fn renders_all_question_kinds() {
     let cases = [
-        (AnswerKind::YesNo, "[Y] Yes  [N] No  [X] eXplore  [P] Punt"),
+        (
+            AnswerKind::YesNo,
+            "[Y] Yes  [N] No  [X] eXplore  [P] Punt  [Q] Quit",
+        ),
         (
             AnswerKind::Choice(vec!["libertarian".to_string(), "compatibilist".to_string()]),
-            "[1-2] Choose  [X] eXplore  [P] Punt",
+            "[1-2] Choose  [X] eXplore  [P] Punt  [Q] Quit",
         ),
-        (AnswerKind::FreeText, "Answer in your own words, or /end"),
+        (AnswerKind::FreeText, "Answer in your own words, or Q/Quit"),
     ];
 
     for (answer_kind, expected) in cases {
