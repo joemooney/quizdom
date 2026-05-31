@@ -8,7 +8,7 @@ priority: High
 owner: ''
 feature: Uncategorized
 created_at: 2026-05-31T19:38:11.073740368Z
-modified_at: 2026-05-31T19:52:00.484195248Z
+modified_at: 2026-05-31T19:56:14.897612106Z
 req_type: Story
 tags:
 - llm
@@ -23,3 +23,9 @@ relationships:
   target_id: 019e7f8b-240e-7842-b04a-5c1be68ccb51
   created_at: 2026-05-31T19:38:42.655683079Z
   created_by: joe
+comments:
+- id: 019e7f9b-c2b1-7c82-b5d4-33777d9f1241
+  author: joe
+  content: 'Implemented user meaning capture and LLM mapping for surfaced loaded terms: after competing TERM definitions are shown, the session asks what the user means, maps the free-text meaning to the closest bank TERM via LLMClient when available, and renders a confirmation proposal. Deterministic/offline runs still capture the meaning and skip mapping gracefully. Added mocked LLM mapping tests, session proposal tests, and local deterministic Q-23 smoke coverage. Shipped in PR #12.'
+  created_at: 2026-05-31T19:56:14.897612106Z
+  modified_at: 2026-05-31T19:56:14.897612106Z
