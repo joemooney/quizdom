@@ -1,0 +1,84 @@
+id: 019e7e5d-0eb9-7fa1-be4e-c457b30f2289
+spec_id: VIS-1
+agreed_id: VIS-1
+title: 'quizdom: Socratic belief-exploration tool (quiz + wisdom)'
+description: |
+  quizdom = **quiz + wisdom**. A Socratic, branching belief-exploration tool. Not
+  trivia: there are no correct answers. The aim is to help a person map, examine,
+  and challenge their own beliefs about existential / philosophical questions, and
+  along the way educate them about semantic nuances they may not have noticed.
+
+  ## The problem
+
+  People hold beliefs ("I believe in free will") without having interrogated what
+  they actually mean by the terms, whether their beliefs are internally consistent,
+  or how their position relates to established academic / public definitions.
+  General trivia apps test recall; nothing helps you explore and stress-test what
+  you *believe*.
+
+  ## What it is
+
+  A chatbot-style experience that persists a **graph of understanding** per user.
+  A session starts from a seed question (e.g. "Do you believe in free will?") posed
+  as yes/no or multiple choice. Each answer begets more questions — branching down a
+  tree/graph. Free-text input (Claude-Code-style) is used when the system needs the
+  user to pin down what they personally mean by a term.
+
+  ## Core mechanics
+
+  - **Constrained-then-open questioning.** Default to yes/no or multiple choice;
+    fall back to free-text only to disambiguate a term's meaning.
+  - **Semantic honing.** When a loaded term appears (e.g. "free will"), drill into
+    the user's understanding and try to *steer toward a formal, academically /
+    publicly agreed definition* before resorting to a bespoke user-specific
+    definition. A user-specific definition is allowed but is the outcome we aim
+    against.
+  - **Socratic method, dual purpose:** (a) elicit the user's understanding of self;
+    (b) educate the user on semantic distinctions they were unaware of.
+  - **Contradiction detection.** The system surfaces inconsistencies / contradictions
+    across the user's answers in the belief graph.
+  - **Explore both sides.** A user can agree *and* disagree with the same proposition
+    and walk down both branches to see what interesting questions lie on each side.
+    Challenging existing beliefs is an explicit goal.
+  - **LLM-driven.** An LLM analyzes each answer and either generates a new question
+    or selects a fitting one from the evolved question bank.
+
+  ## Evolving knowledge base
+
+  - Questions live in a **git-backed knowledge base** that evolves over time.
+  - Questions are **tagged insightful vs unhelpful**; tags govern whether a question
+    is asked of future users and how much weight it carries when chosen again.
+  - Designed so good questions surface and weak ones fade through use.
+
+  ## Users
+
+  - **v1: single user (Joe only).** No accounts / multi-tenant concerns yet.
+  - Architecture should anticipate multiple users later (questions asked across
+    users, cross-user weighting of question quality).
+
+  ## Non-goals (v1)
+
+  - Not trivia; no scoring of "correctness."
+  - Not multi-user / social / accounts yet.
+  - Not steering the user to a *predetermined* conclusion — the steering is toward
+    shared *definitions*, not toward a particular belief.
+
+  ## Success looks like
+
+  A session where the user is asked a belief question, gets drawn into clarifying
+  what they mean, is shown a contradiction or a semantic distinction they hadn't
+  considered, and the question bank is measurably better (a question got tagged,
+  re-weighted, or a new one was minted and persisted to git) as a result.
+
+  See also the companion meta-goal: dogfooding AIDA as the data substrate.
+status: Approved
+priority: High
+owner: ''
+feature: Uncategorized
+created_at: 2026-05-31T14:08:08.377778527Z
+modified_at: 2026-05-31T14:08:08.377778527Z
+req_type: Vision
+tags:
+- product
+- socratic
+- vision
