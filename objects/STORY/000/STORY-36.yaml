@@ -15,3 +15,7 @@ tags:
 - llm
 - reqwest
 - story
+relationships:
+- rel_type: Child
+  target_id: 019e7e5e-bb29-71d3-be50-f14d76486472
+  created_at: 2026-05-31T17:46:00.828545488Z
