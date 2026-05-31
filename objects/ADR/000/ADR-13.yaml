@@ -1,0 +1,17 @@
+id: 019e7e65-c17e-7211-86ff-76950bc64b57
+spec_id: ADR-13
+agreed_id: ADR-13
+title: Questions version in-place via AIDA object history
+description: 'A question that is edited keeps its stable Q-id; AIDA''s built-in per-object history is the audit trail. We do NOT mint a new object per revision (rejected: heavier, fragments weight/selection across variants). Consequence: weighting and insightful/unhelpful tags attach to one durable id over the question''s lifetime. Revisit only if we need independently-weightable variants of the same question.'
+status: Approved
+priority: Medium
+owner: ''
+feature: Uncategorized
+created_at: 2026-05-31T14:17:38.430927688Z
+modified_at: 2026-05-31T14:17:38.430927688Z
+req_type: Decision
+tags:
+- architecture
+- bank
+- decision
+- versioning
