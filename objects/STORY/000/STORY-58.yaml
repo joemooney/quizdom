@@ -8,7 +8,7 @@ priority: Medium
 owner: ''
 feature: Uncategorized
 created_at: 2026-05-31T20:35:58.641742153Z
-modified_at: 2026-05-31T21:48:21.353884419Z
+modified_at: 2026-05-31T21:52:51.676781674Z
 req_type: Story
 tags:
 - contradiction
@@ -19,3 +19,9 @@ relationships:
 - rel_type: Child
   target_id: 019e7e5e-d586-7d73-84cc-19c6d739ae38
   created_at: 2026-05-31T20:35:59.866152367Z
+comments:
+- id: 019e8006-85dc-7323-9cb3-37b21de3f281
+  author: ai:codex:joe
+  content: 'Implemented live graph contradiction surfacing in the session loop: after an answer is logged, quizdom reuses contradiction.rs log parsing + graph detection and asks a free-text reconciliation follow-up for newly detected conflicts. Added regression coverage for the live surfacing path. Verification: cargo test -p quizdom; cargo test. Shipped in PR-23 / 38a170e.'
+  created_at: 2026-05-31T21:52:51.676781674Z
+  modified_at: 2026-05-31T21:52:51.676781674Z
