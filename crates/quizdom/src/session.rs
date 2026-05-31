@@ -33,7 +33,9 @@ pub(crate) struct CliConfig {
     pub(crate) seed: String,
     pub(crate) user_id: String,
     pub(crate) session_id: String,
+    pub(crate) session_id_provided: bool,
     pub(crate) log_path: PathBuf,
+    pub(crate) log_path_provided: bool,
     pub(crate) branch_id: String,
     pub(crate) proposition: Option<String>,
     pub(crate) agree_seed: Option<String>,
@@ -57,16 +59,19 @@ pub(crate) enum LlmBackendKind {
 pub(crate) enum SessionCommand {
     Start,
     Resume,
+    List,
     Fork,
 }
 
 impl CliConfig {
-    fn parse(args: impl IntoIterator<Item = String>) -> Result<Self> {
+    pub(crate) fn parse(args: impl IntoIterator<Item = String>) -> Result<Self> {
         let mut command = SessionCommand::Start;
         let mut seed = DEFAULT_SEED.to_string();
         let mut user_id = DEFAULT_USER.to_string();
         let mut session_id = format!("sess-{}", Utc::now().timestamp());
+        let mut session_id_provided = false;
         let mut log_path = None;
+        let mut log_path_provided = false;
         let mut branch_id = "main".to_string();
         let mut proposition = None;
         let mut agree_seed = None;
@@ -82,6 +87,9 @@ impl CliConfig {
         } else if matches!(args.peek().map(String::as_str), Some("resume")) {
             command = SessionCommand::Resume;
             args.next();
+        } else if matches!(args.peek().map(String::as_str), Some("list")) {
+            command = SessionCommand::List;
+            args.next();
         } else if matches!(args.peek().map(String::as_str), Some("fork")) {
             command = SessionCommand::Fork;
             args.next();
@@ -91,8 +99,14 @@ impl CliConfig {
             match arg.as_str() {
                 "--seed" => seed = next_arg(&mut args, "--seed")?,
                 "--user" => user_id = next_arg(&mut args, "--user")?,
-                "--session" => session_id = next_arg(&mut args, "--session")?,
-                "--log" => log_path = Some(PathBuf::from(next_arg(&mut args, "--log")?)),
+                "--session" => {
+                    session_id = next_arg(&mut args, "--session")?;
+                    session_id_provided = true;
+                }
+                "--log" => {
+                    log_path = Some(PathBuf::from(next_arg(&mut args, "--log")?));
+                    log_path_provided = true;
+                }
                 "--branch" => branch_id = next_arg(&mut args, "--branch")?,
                 "--proposition" => proposition = Some(next_arg(&mut args, "--proposition")?),
                 "--agree-seed" => agree_seed = Some(next_arg(&mut args, "--agree-seed")?),
@@ -108,20 +122,16 @@ impl CliConfig {
             }
         }
 
-        let log_path = log_path.unwrap_or_else(|| {
-            PathBuf::from("data")
-                .join("users")
-                .join(&user_id)
-                .join("sessions")
-                .join(format!("{session_id}.jsonl"))
-        });
+        let log_path = log_path.unwrap_or_else(|| session_log_path(&user_id, &session_id));
 
         Ok(Self {
             command,
             seed,
             user_id,
             session_id,
+            session_id_provided,
             log_path,
+            log_path_provided,
             branch_id,
             proposition,
             agree_seed,
@@ -172,7 +182,7 @@ fn next_arg(args: &mut impl Iterator<Item = String>, name: &str) -> Result<Strin
 }
 
 fn usage() -> String {
-    "usage: quizdom [session] [start|resume|fork] [--seed Q-23] [--branch main] [--strategy deterministic|llm] [--user local-user] [--session sess-id] [--log path] [--proposition text --agree-seed Q --disagree-seed Q]"
+    "usage: quizdom [session] [start|resume|list|fork] [--seed Q-23] [--branch main] [--strategy deterministic|llm] [--user local-user] [--session sess-id] [--log path] [--proposition text --agree-seed Q --disagree-seed Q]"
         .to_string()
 }
 
@@ -204,25 +214,83 @@ pub fn run_cli(
             ),
         },
         SessionCommand::Resume => match build_strategy(&config) {
-            Some(strategy) => resume_session_with_term_persister(
-                &config,
-                &bank,
-                strategy.as_ref(),
-                &AidaCliUserSpecificTermPersister::default(),
-                input,
-                &mut output,
-            ),
-            None => resume_session_with_term_persister(
-                &config,
-                &bank,
-                &deterministic,
-                &AidaCliUserSpecificTermPersister::default(),
-                input,
-                &mut output,
-            ),
+            Some(strategy) => {
+                let config = resolve_resume_config(config)?;
+                resume_session_with_term_persister(
+                    &config,
+                    &bank,
+                    strategy.as_ref(),
+                    &AidaCliUserSpecificTermPersister::default(),
+                    input,
+                    &mut output,
+                )
+            }
+            None => {
+                let config = resolve_resume_config(config)?;
+                resume_session_with_term_persister(
+                    &config,
+                    &bank,
+                    &deterministic,
+                    &AidaCliUserSpecificTermPersister::default(),
+                    input,
+                    &mut output,
+                )
+            }
         },
+        SessionCommand::List => list_sessions(&config, &mut output),
         SessionCommand::Fork => fork_session(&config, &mut output),
     }
+}
+
+pub(crate) fn resolve_resume_config(mut config: CliConfig) -> Result<CliConfig> {
+    // trace:STORY-65 | ai:codex
+    if !config.session_id_provided && !config.log_path_provided {
+        let summary =
+            latest_session_summary(&session_log_dir(&config.user_id))?.ok_or_else(|| {
+                QuizdomError::Usage(format!("no sessions found for user {}", config.user_id))
+            })?;
+        config.session_id = summary.session_id;
+        config.log_path = summary.path;
+    }
+    Ok(config)
+}
+
+fn session_log_dir(user_id: &str) -> PathBuf {
+    PathBuf::from("data")
+        .join("users")
+        .join(user_id)
+        .join("sessions")
+}
+
+fn session_log_path(user_id: &str, session_id: &str) -> PathBuf {
+    session_log_dir(user_id).join(format!("{session_id}.jsonl"))
+}
+
+pub(crate) fn list_sessions(config: &CliConfig, output: &mut impl Write) -> Result<()> {
+    let summaries = session_summaries(&session_log_dir(&config.user_id))?;
+    writeln!(output, "Sessions for user {}:", config.user_id)?;
+    if summaries.is_empty() {
+        writeln!(output, "(none)")?;
+        return Ok(());
+    }
+    writeln!(
+        output,
+        "SESSION\tSTARTED\tLAST_ACTIVE\tBRANCH\tLAST_ANSWERED"
+    )?;
+    for summary in summaries {
+        writeln!(
+            output,
+            "{}\t{}\t{}\t{}\t{}",
+            summary.session_id,
+            summary.started_at.unwrap_or_else(|| "-".to_string()),
+            summary.last_active_at.unwrap_or_else(|| "-".to_string()),
+            summary.branch_id.unwrap_or_else(|| "-".to_string()),
+            summary
+                .last_question_answered
+                .unwrap_or_else(|| "(no answers)".to_string())
+        )?;
+    }
+    Ok(())
 }
 
 fn build_strategy(config: &CliConfig) -> Option<Box<dyn NextQuestionStrategy>> {
@@ -473,6 +541,7 @@ fn resume_session_with_term_persister(
 ) -> Result<()> {
     // trace:STORY-20 | ai:codex
     let replay = SessionReplay::load(&config.log_path, &config.branch_id)?;
+    replay.render_recap(output)?;
     replay.render(output)?;
 
     let Some(next_question_ref) = replay.next_question_ref.as_ref() else {
@@ -494,6 +563,118 @@ fn resume_session_with_term_persister(
         false,
         recent_path,
     )
+}
+
+#[derive(Debug, Clone, Eq, PartialEq)]
+pub(crate) struct SessionSummary {
+    pub(crate) session_id: String,
+    pub(crate) path: PathBuf,
+    pub(crate) started_at: Option<String>,
+    pub(crate) last_active_at: Option<String>,
+    pub(crate) branch_id: Option<String>,
+    pub(crate) last_question_answered: Option<String>,
+}
+
+pub(crate) fn latest_session_summary(dir: &Path) -> Result<Option<SessionSummary>> {
+    Ok(session_summaries(dir)?.into_iter().next())
+}
+
+pub(crate) fn session_summaries(dir: &Path) -> Result<Vec<SessionSummary>> {
+    if !dir.exists() {
+        return Ok(Vec::new());
+    }
+    let mut summaries = Vec::new();
+    for entry in fs::read_dir(dir)? {
+        let entry = entry?;
+        let path = entry.path();
+        if path.extension().and_then(|extension| extension.to_str()) != Some("jsonl") {
+            continue;
+        }
+        if let Some(summary) = SessionSummary::load(&path)? {
+            summaries.push(summary);
+        }
+    }
+    summaries.sort_by(|left, right| {
+        right
+            .last_active_at
+            .cmp(&left.last_active_at)
+            .then_with(|| right.session_id.cmp(&left.session_id))
+    });
+    Ok(summaries)
+}
+
+impl SessionSummary {
+    fn load(path: &Path) -> Result<Option<Self>> {
+        let file = File::open(path)?;
+        Self::from_reader(file, path)
+    }
+
+    pub(crate) fn from_reader(reader: impl Read, path: &Path) -> Result<Option<Self>> {
+        let reader = BufReader::new(reader);
+        let mut session_id = path
+            .file_stem()
+            .and_then(|stem| stem.to_str())
+            .unwrap_or("unknown")
+            .to_string();
+        let mut started_at = None;
+        let mut last_active_at = None;
+        let mut branch_id = None;
+        let mut questions = BTreeMap::new();
+        let mut last_question_answered = None;
+
+        for line in reader.lines() {
+            let line = line?;
+            if line.trim().is_empty() {
+                continue;
+            }
+            let value: Value = serde_json::from_str(&line)
+                .map_err(|error| QuizdomError::Parse(error.to_string()))?;
+            if let Some(occurred_at) = value.get("occurred_at").and_then(Value::as_str) {
+                if started_at.is_none() {
+                    started_at = Some(occurred_at.to_string());
+                }
+                last_active_at = Some(occurred_at.to_string());
+            }
+            if let Some(id) = value.get("session_id").and_then(Value::as_str) {
+                session_id = id.to_string();
+            }
+            if let Some(branch) = value.get("branch_id").and_then(Value::as_str) {
+                branch_id = Some(branch.to_string());
+            }
+            match value.get("event_type").and_then(Value::as_str) {
+                Some("question_presented") => {
+                    if let (Some(turn), Some(question_text)) = (
+                        value.get("turn").and_then(Value::as_u64),
+                        value.get("question_text").and_then(Value::as_str),
+                    ) {
+                        questions.insert(turn, question_text.to_string());
+                    }
+                }
+                Some("answer_recorded") => {
+                    if let Some(turn) = value.get("turn").and_then(Value::as_u64) {
+                        let question = questions.get(&turn).cloned().unwrap_or_else(|| {
+                            json_string(&value, "question_ref").unwrap_or_default()
+                        });
+                        last_question_answered = Some(question);
+                    }
+                }
+                _ => {}
+            }
+        }
+
+        if started_at.is_none() && last_active_at.is_none() {
+            return Ok(None);
+        }
+
+        Ok(Some(Self {
+            session_id,
+            path: path.to_path_buf(),
+            started_at,
+            last_active_at,
+            branch_id,
+            last_question_answered,
+        }))
+    }
 }
 
 pub(crate) fn fork_session(config: &CliConfig, output: &mut impl Write) -> Result<()> {
@@ -636,6 +817,18 @@ impl SessionReplay {
             writeln!(output, "\n[turn {}] {}", answer.turn, answer.question_text)?;
             writeln!(output, "question_ref: {}", answer.question_ref)?;
             writeln!(output, "answer: {}", answer.raw_answer)?;
+        }
+        Ok(())
+    }
+
+    pub(crate) fn render_recap(&self, output: &mut impl Write) -> Result<()> {
+        writeln!(output, "RECAP:")?;
+        writeln!(output, "branch: {}", self.branch_id)?;
+        if let Some(answer) = self.answers.last() {
+            writeln!(output, "last question: {}", answer.question_text)?;
+            writeln!(output, "your answer: {}", answer.raw_answer)?;
+        } else {
+            writeln!(output, "last question: (none answered yet)")?;
         }
         Ok(())
     }
