@@ -89,6 +89,9 @@ impl CliConfig {
         if matches!(args.peek().map(String::as_str), Some("session")) {
             args.next();
         }
+        if matches!(args.peek().map(String::as_str), Some("--help" | "-h")) {
+            return Err(QuizdomError::Usage(usage()));
+        }
         if matches!(args.peek().map(String::as_str), Some("start")) {
             args.next();
         } else if matches!(args.peek().map(String::as_str), Some("resume")) {
@@ -100,6 +103,16 @@ impl CliConfig {
         } else if matches!(args.peek().map(String::as_str), Some("fork")) {
             command = SessionCommand::Fork;
             args.next();
+        } else if let Some(positional) = args.peek().cloned() {
+            if !positional.starts_with('-') {
+                session_id = normalize_session_id(&positional);
+                session_id_provided = true;
+                command = SessionCommand::Resume;
+                args.next();
+                if matches!(args.peek().map(String::as_str), Some("resume")) {
+                    args.next();
+                }
+            }
         }
 
         while let Some(arg) = args.next() {
@@ -107,7 +120,7 @@ impl CliConfig {
                 "--seed" => seed = next_arg(&mut args, "--seed")?,
                 "--user" => user_id = next_arg(&mut args, "--user")?,
                 "--session" => {
-                    session_id = next_arg(&mut args, "--session")?;
+                    session_id = normalize_session_id(&next_arg(&mut args, "--session")?);
                     session_id_provided = true;
                 }
                 "--log" => {
@@ -120,6 +133,10 @@ impl CliConfig {
                 "--disagree-seed" => disagree_seed = Some(next_arg(&mut args, "--disagree-seed")?),
                 "--strategy" => strategy = parse_strategy(&next_arg(&mut args, "--strategy")?)?,
                 "--help" | "-h" => return Err(QuizdomError::Usage(usage())),
+                other if command == SessionCommand::Resume && !other.starts_with('-') => {
+                    session_id = normalize_session_id(other);
+                    session_id_provided = true;
+                }
                 other => {
                     return Err(QuizdomError::Usage(format!(
                         "unknown argument: {other}\n{}",
@@ -145,6 +162,15 @@ impl CliConfig {
             disagree_seed,
             strategy,
         })
+    }
+}
+
+fn normalize_session_id(value: &str) -> String {
+    // trace:BUG-70 | ai:codex
+    if value.starts_with("sess-") {
+        value.to_string()
+    } else {
+        format!("sess-{value}")
     }
 }
 
@@ -189,8 +215,32 @@ fn next_arg(args: &mut impl Iterator<Item = String>, name: &str) -> Result<Strin
 }
 
 fn usage() -> String {
-    "usage: quizdom [session] [start|resume|list|fork] [--seed Q-23] [--branch main] [--strategy deterministic|llm] [--user local-user] [--session sess-id] [--log path] [--proposition text --agree-seed Q --disagree-seed Q]"
-        .to_string()
+    [
+        "usage: quizdom session <command> [options]",
+        "",
+        "Commands:",
+        "  start                 Start a new session",
+        "  resume [session-id]   Resume a session; omit session-id to resume latest",
+        "  list                  List saved sessions for a user",
+        "  fork                  Fork a proposition into agree/disagree branches",
+        "",
+        "Options:",
+        "  --seed Q-23                         Seed question for start",
+        "  --branch main                       Session branch to read/write",
+        "  --strategy deterministic|llm        Follow-up selection strategy",
+        "  --user local-user                   User id for session logs",
+        "  --session sess-id                   Session id alias for resume",
+        "  --log path                          Session log path",
+        "  --proposition text                  Proposition to fork",
+        "  --agree-seed Q --disagree-seed Q    Fork branch seed questions",
+        "  -h, --help                          Show this help",
+        "",
+        "Examples:",
+        "  quizdom session resume sess-1780256438",
+        "  quizdom session resume 1780256438",
+        "  quizdom session resume",
+    ]
+    .join("\n")
 }
 
 pub fn run_cli(

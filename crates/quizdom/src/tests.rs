@@ -1031,6 +1031,99 @@ fn resume_without_session_uses_latest_session_log() {
     let _ = fs::remove_dir_all(Path::new("data").join("users").join(user));
 }
 
+// trace:BUG-70 | ai:codex
+#[test]
+fn resume_accepts_positional_session_id_with_or_without_prefix() {
+    let prefixed = CliConfig::parse([
+        "session".to_string(),
+        "resume".to_string(),
+        "sess-1780256438".to_string(),
+    ])
+    .unwrap();
+    assert_eq!(prefixed.command, SessionCommand::Resume);
+    assert_eq!(prefixed.session_id, "sess-1780256438");
+    assert!(prefixed.session_id_provided);
+
+    let bare = CliConfig::parse([
+        "session".to_string(),
+        "resume".to_string(),
+        "1780256438".to_string(),
+    ])
+    .unwrap();
+    assert_eq!(bare.command, SessionCommand::Resume);
+    assert_eq!(bare.session_id, "sess-1780256438");
+    assert!(bare.session_id_provided);
+}
+
+// trace:BUG-70 | ai:codex
+#[test]
+fn session_id_before_resume_is_accepted_positionally() {
+    let config = CliConfig::parse([
+        "session".to_string(),
+        "1780256438".to_string(),
+        "resume".to_string(),
+    ])
+    .unwrap();
+
+    assert_eq!(config.command, SessionCommand::Resume);
+    assert_eq!(config.session_id, "sess-1780256438");
+    assert!(config.session_id_provided);
+}
+
+// trace:BUG-70 | ai:codex
+#[test]
+fn resume_session_flag_remains_supported_and_normalizes_bare_id() {
+    let config = CliConfig::parse([
+        "session".to_string(),
+        "resume".to_string(),
+        "--session".to_string(),
+        "1780256438".to_string(),
+    ])
+    .unwrap();
+
+    assert_eq!(config.command, SessionCommand::Resume);
+    assert_eq!(config.session_id, "sess-1780256438");
+    assert!(config.session_id_provided);
+}
+
+// trace:BUG-70 | ai:codex
+#[test]
+fn bare_resume_keeps_latest_session_resolution() {
+    let config = CliConfig::parse(["session".to_string(), "resume".to_string()]).unwrap();
+
+    assert_eq!(config.command, SessionCommand::Resume);
+    assert!(!config.session_id_provided);
+}
+
+// trace:BUG-70 | ai:codex
+#[test]
+fn session_help_lists_commands_flags_and_resume_examples() {
+    let error = CliConfig::parse(["session".to_string(), "--help".to_string()]).unwrap_err();
+    let QuizdomError::Usage(help) = error else {
+        panic!("expected usage help");
+    };
+
+    assert!(help.contains("Commands:"));
+    assert!(help.contains("start"));
+    assert!(help.contains("resume [session-id]"));
+    assert!(help.contains("list"));
+    assert!(help.contains("fork"));
+    assert!(help.contains("--session sess-id"));
+    assert!(help.contains("quizdom session resume sess-1780256438"));
+    assert!(help.contains("quizdom session resume 1780256438"));
+
+    let resume_error = CliConfig::parse([
+        "session".to_string(),
+        "resume".to_string(),
+        "--help".to_string(),
+    ])
+    .unwrap_err();
+    let QuizdomError::Usage(resume_help) = resume_error else {
+        panic!("expected resume usage help");
+    };
+    assert_eq!(resume_help, help);
+}
+
 #[test]
 fn start_end_resume_round_trip_replays_path_and_finishes() {
     let path = std::env::temp_dir().join(format!(
