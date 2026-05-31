@@ -8,7 +8,7 @@ priority: High
 owner: ''
 feature: Uncategorized
 created_at: 2026-05-31T14:18:17.787088554Z
-modified_at: 2026-05-31T14:35:14.197259602Z
+modified_at: 2026-05-31T14:35:40.316503909Z
 req_type: Story
 tags:
 - docs
@@ -30,3 +30,8 @@ comments:
   content: Commit c6d825f references this requirement
   created_at: 2026-05-31T14:35:14.197259602Z
   modified_at: 2026-05-31T14:35:14.197259602Z
+- id: 019e7e76-439c-78b0-bb1c-d25c2c0a3148
+  author: joe
+  content: 'Schema doc authored by codex; landed by advisor on branch feat/story-14-graph-schema as PR #1 (https://github.com/joemooney/quizdom/pull/1). Status walked back Completed -> in-progress: completed means merged. Will flip to completed when PR #1 merges.'
+  created_at: 2026-05-31T14:35:40.316503909Z
+  modified_at: 2026-05-31T14:35:40.316503909Z
