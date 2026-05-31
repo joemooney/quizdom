@@ -18,7 +18,7 @@ priority: High
 owner: ''
 feature: Uncategorized
 created_at: 2026-05-31T15:04:42.743310760Z
-modified_at: 2026-05-31T15:04:42.743310760Z
+modified_at: 2026-05-31T15:05:44.936417355Z
 req_type: Functional
 tags:
 - answer:yes-no
@@ -26,3 +26,8 @@ tags:
 - seed
 - topic:free-will
 - weight:70
+relationships:
+- rel_type: !Custom probes
+  target_id: 019e7e91-5314-7001-bab7-aa2094d28ae6
+  created_at: 2026-05-31T15:05:44.936407855Z
+  created_by: joe
