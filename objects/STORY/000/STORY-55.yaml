@@ -1,0 +1,28 @@
+id: 019e7fa7-1b21-78d3-b168-1c9c6f981d08
+spec_id: STORY-55
+agreed_id: STORY-55
+title: Full line editing for free-text input (rustyline; Vi/Emacs per $EDITOR) — fixes backspace
+description: |-
+  DEFECT + feature: free-text input uses bare read_line (cooked-mode line reads), so backspace/arrows/editing leak as escape sequences — no real line editor (reported while testing).
+
+  Fix: use rustyline for INTERACTIVE (TTY) free-text prompts — full keyboard editing (backspace, arrows, kill/yank, history) plus built-in edit modes. Select the mode from $EDITOR (fallback $VISUAL): vi/vim/nvim -> EditMode::Vi; else EditMode::Emacs (default).
+
+  CRITICAL for testability: branch on std::io::stdin().is_terminal(). When NOT a TTY (piped input, tests, scripts), keep the existing read_line path on the generic 'impl Read' so the test harness (which pipes bytes) and scripted runs are unaffected. rustyline only on the interactive path.
+
+  Applies to ALL free-text prompts (answers, the eXplore/STORY-42 'what do you mean by the term' capture, etc.). Complements STORY-51 (crossterm single-key Y/N/X/P): crossterm for single-key control prompts, rustyline for free-text lines.
+
+  ## Acceptance: interactive free-text supports backspace/arrows/line editing with no escape-sequence leakage; Vi vs Emacs follows $EDITOR; piped/non-TTY input still works via read_line (all existing tests pass unchanged).
+status: Approved
+priority: High
+owner: ''
+feature: Uncategorized
+created_at: 2026-05-31T20:08:38.433839675Z
+modified_at: 2026-05-31T20:08:38.433839675Z
+req_type: Story
+tags:
+- bug
+- input
+- interaction
+- line-editing
+- rustyline
+- story
