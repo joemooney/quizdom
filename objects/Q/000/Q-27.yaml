@@ -1,0 +1,23 @@
+id: 019e7e91-6f9f-7fa1-b3d0-c6119093bb3c
+spec_id: Q-27
+agreed_id: Q-27
+prefix_override: Q
+title: Can a choice be free if it is fully caused by prior events?
+description: |
+  answer: yes-no
+
+  Use: follow-up that pressure-tests the compatibilist sense — a "yes" here is
+  compatible with determinism, a "no" leans libertarian. trace:STORY-16 | ai:claude
+status: Approved
+priority: High
+owner: ''
+feature: Uncategorized
+created_at: 2026-05-31T15:05:21.055737605Z
+modified_at: 2026-05-31T15:05:21.055737605Z
+req_type: Functional
+tags:
+- answer:yes-no
+- quality:neutral
+- seed
+- topic:free-will
+- weight:65
