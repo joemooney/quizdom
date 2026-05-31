@@ -17,7 +17,7 @@ priority: High
 owner: ''
 feature: Uncategorized
 created_at: 2026-05-31T15:25:14.361384584Z
-modified_at: 2026-05-31T15:25:21.833777903Z
+modified_at: 2026-05-31T15:25:25.243459435Z
 req_type: Decision
 tags:
 - decision
@@ -30,4 +30,8 @@ relationships:
 - rel_type: References
   target_id: 019e7e93-a783-7933-bc21-57dd7a9c4186
   created_at: 2026-05-31T15:25:21.833769913Z
+  created_by: joe
+- rel_type: References
+  target_id: 019e7e5e-b073-7671-b834-ce12b2104736
+  created_at: 2026-05-31T15:25:25.243449270Z
   created_by: joe
