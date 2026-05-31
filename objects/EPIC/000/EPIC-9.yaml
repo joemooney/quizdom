@@ -1,0 +1,16 @@
+id: 019e7e5e-d586-7d73-84cc-19c6d739ae38
+spec_id: EPIC-9
+agreed_id: EPIC-9
+title: Contradiction detection
+description: Surface inconsistencies/contradictions across the user's answers in the belief graph, and present them as material for further questioning.
+status: Draft
+priority: Medium
+owner: ''
+feature: Uncategorized
+created_at: 2026-05-31T14:10:04.806294266Z
+modified_at: 2026-05-31T14:10:04.806294266Z
+req_type: Epic
+tags:
+- contradiction
+- epic
+- graph
