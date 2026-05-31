@@ -1,4 +1,5 @@
 use crate::bank::*;
+use crate::contradiction::*;
 use crate::error::*;
 use crate::honing::*;
 use crate::input::*;
@@ -1035,4 +1036,233 @@ impl QuestionBank for FakeBank {
             .cloned()
             .ok_or_else(|| QuizdomError::Parse(format!("missing {id}")))
     }
+}
+
+// trace:EPIC-9 | ai:claude
+struct FakeEdges {
+    edges: HashMap<String, Vec<String>>,
+}
+
+impl FakeEdges {
+    fn new() -> Self {
+        Self {
+            edges: HashMap::new(),
+        }
+    }
+
+    fn with(mut self, from: &str, to: impl IntoIterator<Item = &'static str>) -> Self {
+        self.edges.insert(
+            from.to_string(),
+            to.into_iter().map(str::to_string).collect(),
+        );
+        self
+    }
+}
+
+impl ContradictsEdges for FakeEdges {
+    fn contradicts(&self, belief_id: &str) -> Result<Vec<String>> {
+        Ok(self.edges.get(belief_id).cloned().unwrap_or_default())
+    }
+}
+
+fn adopted(id: Option<&str>, statement: &str) -> AdoptedBelief {
+    AdoptedBelief {
+        id: id.map(str::to_string),
+        statement: statement.to_string(),
+        source: id.unwrap_or("session").to_string(),
+    }
+}
+
+#[test]
+fn parses_contradicts_rel_list_to_targets() {
+    let output = r#"FROM       TYPE          TO         TITLE
+  BELIEF-1   contradicts   BELIEF-2   Free will is compatible with determinism
+  BELIEF-1   agrees        BELIEF-3   Some other belief
+
+2 edges
+"#;
+
+    let targets = parse_contradicts_rel_list(output);
+
+    assert_eq!(targets, vec!["BELIEF-2".to_string()]);
+}
+
+#[test]
+fn parses_empty_contradicts_rel_list() {
+    assert!(parse_contradicts_rel_list("(no outgoing edges)\n").is_empty());
+}
+
+#[test]
+fn graph_detection_flags_adopted_pair_joined_by_contradicts_edge() {
+    let beliefs = vec![
+        adopted(Some("BELIEF-1"), "Free will requires alternatives"),
+        adopted(Some("BELIEF-2"), "Free will is compatible with determinism"),
+    ];
+    let edges = FakeEdges::new().with("BELIEF-1", ["BELIEF-2"]);
+
+    let found = detect_graph_contradictions(&beliefs, &edges).unwrap();
+
+    assert_eq!(found.len(), 1);
+    assert_eq!(found[0].kind, ContradictionKind::Graph);
+    assert_eq!(found[0].left, "Free will requires alternatives");
+    assert_eq!(found[0].right, "Free will is compatible with determinism");
+}
+
+#[test]
+fn graph_detection_ignores_edges_to_unadopted_beliefs() {
+    let beliefs = vec![adopted(Some("BELIEF-1"), "Adopted belief")];
+    let edges = FakeEdges::new().with("BELIEF-1", ["BELIEF-9"]);
+
+    let found = detect_graph_contradictions(&beliefs, &edges).unwrap();
+
+    assert!(found.is_empty());
+}
+
+#[test]
+fn graph_detection_dedupes_reciprocal_edges() {
+    let beliefs = vec![
+        adopted(Some("BELIEF-1"), "One"),
+        adopted(Some("BELIEF-2"), "Two"),
+    ];
+    let edges = FakeEdges::new()
+        .with("BELIEF-1", ["BELIEF-2"])
+        .with("BELIEF-2", ["BELIEF-1"]);
+
+    let found = detect_graph_contradictions(&beliefs, &edges).unwrap();
+
+    assert_eq!(found.len(), 1);
+}
+
+#[test]
+fn semantic_detection_maps_llm_indices_to_statements() {
+    let beliefs = vec![
+        adopted(None, "Morality is objective"),
+        adopted(None, "All values are subjective"),
+    ];
+    let client = MockLlm::ok(
+        r#"{"contradictions":[{"a":0,"b":1,"explanation":"objective vs subjective values"}]}"#,
+    );
+
+    let found = detect_semantic_contradictions(&client, &beliefs).unwrap();
+
+    assert_eq!(found.len(), 1);
+    assert_eq!(found[0].kind, ContradictionKind::Semantic);
+    assert_eq!(found[0].left, "Morality is objective");
+    assert_eq!(found[0].right, "All values are subjective");
+    assert_eq!(found[0].explanation, "objective vs subjective values");
+}
+
+#[test]
+fn semantic_detection_skips_when_fewer_than_two_beliefs() {
+    let beliefs = vec![adopted(None, "Only one belief")];
+    let client = MockLlm::ok(r#"{"contradictions":[{"a":0,"b":0}]}"#);
+
+    let found = detect_semantic_contradictions(&client, &beliefs).unwrap();
+
+    assert!(found.is_empty());
+}
+
+#[test]
+fn semantic_parser_ignores_out_of_range_and_self_pairs() {
+    let beliefs = vec![adopted(None, "A"), adopted(None, "B")];
+    let text = r#"{"contradictions":[{"a":0,"b":0},{"a":0,"b":5},{"a":0,"b":1}]}"#;
+
+    let found = parse_semantic_contradictions(text, &beliefs).unwrap();
+
+    assert_eq!(found.len(), 1);
+    assert_eq!(found[0].left, "A");
+    assert_eq!(found[0].right, "B");
+}
+
+#[test]
+fn semantic_parser_rejects_invalid_json() {
+    let beliefs = vec![adopted(None, "A"), adopted(None, "B")];
+    assert!(parse_semantic_contradictions("not json", &beliefs).is_err());
+}
+
+#[test]
+fn semantic_prompt_lists_beliefs_with_indices() {
+    let beliefs = vec![adopted(None, "First"), adopted(None, "Second")];
+    let prompt = semantic_prompt(&beliefs);
+
+    assert!(prompt.contains("[0] First"));
+    assert!(prompt.contains("[1] Second"));
+    assert!(prompt.contains("\"contradictions\""));
+}
+
+#[test]
+fn merge_prefers_graph_over_semantic_for_same_pair() {
+    let graph = vec![Contradiction {
+        kind: ContradictionKind::Graph,
+        left: "X".to_string(),
+        right: "Y".to_string(),
+        explanation: "edge".to_string(),
+    }];
+    let semantic = vec![
+        Contradiction {
+            kind: ContradictionKind::Semantic,
+            left: "Y".to_string(),
+            right: "X".to_string(),
+            explanation: "semantic".to_string(),
+        },
+        Contradiction {
+            kind: ContradictionKind::Semantic,
+            left: "P".to_string(),
+            right: "Q".to_string(),
+            explanation: "other".to_string(),
+        },
+    ];
+
+    let merged = merge_contradictions(graph, semantic);
+
+    assert_eq!(merged.len(), 2);
+    assert_eq!(merged[0].kind, ContradictionKind::Graph);
+    assert_eq!(merged[1].kind, ContradictionKind::Semantic);
+    assert_eq!(merged[1].left, "P");
+}
+
+#[test]
+fn beliefs_from_session_log_pairs_questions_with_answers() {
+    let log = concat!(
+        r#"{"event_type":"session_started","branch_id":"main"}"#,
+        "\n",
+        r#"{"event_type":"question_presented","branch_id":"main","turn":0,"question_text":"Do you believe in free will?","question_ref":"Q-23"}"#,
+        "\n",
+        r#"{"event_type":"answer_recorded","branch_id":"main","turn":0,"question_ref":"Q-23","raw_answer":"yes"}"#,
+        "\n",
+    );
+
+    let beliefs = beliefs_from_session_log(log.as_bytes(), None).unwrap();
+
+    assert_eq!(beliefs.len(), 1);
+    assert_eq!(beliefs[0].id.as_deref(), Some("Q-23"));
+    assert_eq!(beliefs[0].statement, "Do you believe in free will? → yes");
+}
+
+#[test]
+fn beliefs_from_session_log_filters_by_branch() {
+    let log = concat!(
+        r#"{"event_type":"answer_recorded","branch_id":"agree","turn":0,"question_ref":"Q-1","raw_answer":"yes"}"#,
+        "\n",
+        r#"{"event_type":"answer_recorded","branch_id":"disagree","turn":1,"question_ref":"Q-2","raw_answer":"no"}"#,
+        "\n",
+    );
+
+    let beliefs = beliefs_from_session_log(log.as_bytes(), Some("agree")).unwrap();
+
+    assert_eq!(beliefs.len(), 1);
+    assert_eq!(beliefs[0].id.as_deref(), Some("Q-1"));
+}
+
+#[test]
+fn run_contradictions_reports_when_no_beliefs_found() {
+    let mut output = Vec::new();
+    run_contradictions(
+        strings(["contradictions", "--user", "nonexistent-user", "--no-llm"]),
+        &mut output,
+    )
+    .unwrap();
+
+    let rendered = String::from_utf8(output).unwrap();
+    assert!(rendered.contains("No adopted beliefs found to analyze."));
 }
