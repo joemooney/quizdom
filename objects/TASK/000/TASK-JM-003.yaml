@@ -2,12 +2,12 @@ id: 019e7e74-9556-7701-b5f9-74d962ee61c4
 spec_id: TASK-JM-003
 title: codex marked STORY-14 Completed but left the artifact uncommitted (no commit/PR/worktree)
 description: 'codex-unknown-1 wrote docs/architecture/graph-schema.md (good, 147 lines, correct trace:STORY-14 comment) and set STORY-14 -> Completed, then went idle. But: file is untracked in the SHARED main working tree (no worktree isolation), no commit or trace linkage in git, no PR. Lifecycle gap: Completed != committed != pushed != merged. Risk: another agent''s ''git add -A'' sweeps it into an unrelated commit, or it''s lost. Process fix candidate: codex implementer flow should commit + open PR (or at least commit) BEFORE flipping status to Completed. Recurs => promote into a codex-skill guardrail.'
-status: Draft
+status: Rejected
 priority: Medium
 owner: joe
 feature: Uncategorized
 created_at: 2026-05-31T14:33:50.166289465Z
-modified_at: 2026-05-31T14:33:50.166289465Z
+modified_at: 2026-05-31T15:03:16.212894131Z
 req_type: Task
 tags:
 - from-advisor:STORY-14
@@ -15,3 +15,9 @@ tags:
 - linked:STORY-14
 - linked:VIS-2
 - severity:major
+comments:
+- id: 019e7e8f-87f4-79d0-81f9-d8180c9c8617
+  author: joe
+  content: 'Dismissed by joe 2026-05-31: Resolved: STORY-14 doc landed in c6d825f via PR #1 (merged to master); systemic guardrail captured in ADR-21. Recur if completed-without-committing repeats.'
+  created_at: 2026-05-31T15:03:16.212894131Z
+  modified_at: 2026-05-31T15:03:16.212894131Z
