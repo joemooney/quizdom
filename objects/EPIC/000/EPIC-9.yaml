@@ -2,13 +2,48 @@ id: 019e7e5e-d586-7d73-84cc-19c6d739ae38
 spec_id: EPIC-9
 agreed_id: EPIC-9
 title: Contradiction detection
-description: Surface inconsistencies/contradictions across the user's answers in the belief graph, and present them as material for further questioning.
-status: Draft
+description: |-
+  Surface inconsistencies / contradictions across the user's belief graph and feed
+  them back as questions (VIS-1). Built on BELIEF nodes + `contradicts`/`agrees`/
+  `disagrees` edges and the user's adopted positions (session log / promoted
+  beliefs, ADR-12).
+
+  ## Detection (two modes)
+
+  1. **Graph-based** — the user has adopted/agreed with two beliefs joined by a
+     `contradicts` edge in the bank → flag directly.
+  2. **LLM-based** — analyze the user's set of answers/adopted beliefs for SEMANTIC
+     inconsistencies the graph doesn't pre-encode (default claude-cli backend).
+
+  ## Surface & resolve
+
+  Present a detected contradiction as a follow-up question ("You leaned X and also
+  Y — these seem to conflict; which holds, or how do you reconcile them?"). On the
+  user's response, record the resolution: add/confirm a `contradicts` edge, and note
+  which side the user kept (or a reconciling refinement).
+
+  ## Decomposition note (parallelism)
+
+  STORY (1) is a SELF-CONTAINED new module `contradiction.rs` + a standalone CLI
+  command — NO edits to the session loop, so it can be built in parallel with the
+  EPIC-50 input work (different files). STORY (2)/(3) integrate into `session.rs`
+  and should be sequenced after the input-cluster work to avoid session.rs
+  collisions.
+
+  ## Acceptance
+
+  - Given a user's adopted beliefs, detection finds graph-`contradicts` pairs and
+    (with an LLM) semantic contradictions; covered by mocked-LLM + graph tests.
+  - A standalone `quizdom contradictions --user <id>` (or --session) command lists
+    detected contradictions without touching the live loop.
+  - (Later stories) contradictions surface as in-session questions and resolutions
+    persist to the graph.
+status: Approved
 priority: Medium
 owner: ''
 feature: Uncategorized
 created_at: 2026-05-31T14:10:04.806294266Z
-modified_at: 2026-05-31T14:10:04.806294266Z
+modified_at: 2026-05-31T20:35:51.830924326Z
 req_type: Epic
 tags:
 - contradiction
