@@ -8,7 +8,7 @@ priority: High
 owner: ''
 feature: Uncategorized
 created_at: 2026-05-31T20:01:24.193061740Z
-modified_at: 2026-05-31T21:06:08.862581024Z
+modified_at: 2026-05-31T21:09:53.209221324Z
 req_type: Story
 tags:
 - explore
@@ -19,3 +19,9 @@ relationships:
 - rel_type: Child
   target_id: 019e7f9f-f1bf-7ab2-b508-291f0849be84
   created_at: 2026-05-31T20:01:25.876067355Z
+comments:
+- id: 019e7fdf-2db9-71c0-8b47-39affc66b167
+  author: joe
+  content: 'Implemented eXplore control handling: normalized explore answers now trigger the current question''s semantic honing flow, avoid recording explore as a belief answer, and then re-present the same anchored question for Y/N. The pre-question term context still renders, but free-text definition steering runs only after X. Added coverage that X runs honing, logs term_interpreted, reasks the same question, and then records the eventual Y/N answer. Verified with cargo fmt --all --check, cargo test --workspace, git diff --check, and a scripted X-path CLI smoke. Shipped in PR #19.'
+  created_at: 2026-05-31T21:09:53.209221324Z
+  modified_at: 2026-05-31T21:09:53.209221324Z
