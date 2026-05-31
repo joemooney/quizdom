@@ -15,5 +15,64 @@ operations:
   timestamp: 2026-05-31T14:13:20.598391717Z
   kind: !SetStatus
     status: Completed
-clock: 2
+- id: 019e7e66-575f-79d3-92ec-5989b912681d
+  target_id: 019e7e5e-a5e1-78b2-9419-9523f83fab27
+  author: aida
+  node_id: ''
+  lamport: 3
+  timestamp: 2026-05-31T14:18:16.799645262Z
+  kind: !SetStatus
+    status: Approved
+- id: 019e7e66-5760-7df0-a580-5ed9b05e545d
+  target_id: 019e7e5e-a5e1-78b2-9419-9523f83fab27
+  author: aida
+  node_id: ''
+  lamport: 4
+  timestamp: 2026-05-31T14:18:16.800247155Z
+  kind: !SetDescription
+    description: |-
+      Define and validate quizdom's domain graph modeled on the AIDA store (ADR-3).
+      This EPIC is the foundation for the session engine, contradiction detection, and
+      bank evolution, and the primary proving ground for VIS-2.
+
+      ## Model
+
+      Nodes (AIDA objects):
+      - Question — `--prefix Q`. Title = question text. Body holds kind
+        (yes-no | multiple-choice | free-text-disambiguation) and options. Tags:
+        topic(s), `insightful`/`unhelpful`, `weight:N`. Versions in-place (ADR-13).
+      - Definition — `--type term`. A term's meaning; tags `formal`/`academic` vs
+        `user-specific`. Steering target for semantic honing (EPIC-8).
+      - Belief — `--prefix BELIEF`. A position a user holds/explores. Only notable
+        beliefs are promoted here (ADR-12).
+
+      Edges (custom relationship types):
+      - `begets`  question -> follow-up question
+      - `probes`  question -> term it interrogates
+      - `refines` definition -> narrower definition
+      - `contradicts` belief <-> belief (bidirectional)
+      - `agrees` / `disagrees` belief -> proposition
+
+      Data partition (ADR-12): shared knowledge (questions + definitions) is
+      git-canonical in AIDA; per-user raw answers + session traversal live in a
+      lighter per-user log; promotion lifts notable beliefs into AIDA.
+
+      ## Acceptance
+
+      - A written schema doc enumerates the node types, prefixes, tag conventions
+        (incl. `weight:N` encoding), and the closed list of edge types, with an
+        example subgraph.
+      - A per-user session-log format is specified (lighter store) and a promotion
+        path (log belief -> AIDA BELIEF object + edges) is defined.
+      - A seed cluster for "free will" (>= 1 question, >= 2 competing definitions,
+        the `probes` and `begets` edges between them) exists as real AIDA objects and
+        is reachable via `aida query_graph`.
+      - Every place AIDA strains (numeric weight, churn, query ergonomics) is filed as
+        a finding linked to VIS-2 rather than worked around silently.
+
+      ## Verify
+
+      `aida query_graph` traverses from the seed question to its definitions and
+      follow-ups; `aida rel list <Q-id>` shows the custom edges; tags carry weight.
+clock: 4
 node_id: ''
