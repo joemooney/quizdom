@@ -1,0 +1,16 @@
+id: 019e7e5e-b073-7671-b834-ce12b2104736
+spec_id: EPIC-6
+agreed_id: EPIC-6
+title: Session engine (branching Q&A loop)
+description: 'The core loop: pose a seed question, accept yes/no or multiple-choice answers, branch to follow-up questions, persist the path as a graph of understanding. Supports exploring both sides (agree AND disagree) of a proposition.'
+status: Draft
+priority: High
+owner: ''
+feature: Uncategorized
+created_at: 2026-05-31T14:09:55.315076807Z
+modified_at: 2026-05-31T14:09:55.315076807Z
+req_type: Epic
+tags:
+- core
+- epic
+- session
