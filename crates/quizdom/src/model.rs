@@ -56,6 +56,16 @@ pub struct TermMappingProposal {
     pub rationale: String,
 }
 
+// trace:STORY-48 | ai:claude
+/// The triggering answer recorded on an answer-conditioned `begets` follow-on,
+/// read from a `from-answer:<value>` tag. `None` for unconditional follow-ons.
+pub(crate) fn from_answer_tag(tags: &[String]) -> Option<&str> {
+    tags.iter()
+        .find_map(|tag| tag.strip_prefix("from-answer:"))
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+}
+
 pub(crate) fn answer_kind_from_tags(tags: &[String]) -> Option<AnswerKind> {
     tags.iter().find_map(|tag| {
         if tag == "answer:yes-no" {

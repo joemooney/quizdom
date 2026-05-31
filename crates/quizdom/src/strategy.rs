@@ -1,7 +1,8 @@
 use crate::bank::QuestionBank;
 use crate::error::{QuizdomError, Result};
 use crate::model::{
-    answer_kind_from_tags, Answer, AnswerKind, Question, TermDefinition, TermMappingProposal,
+    answer_kind_from_tags, from_answer_tag, Answer, AnswerKind, Question, TermDefinition,
+    TermMappingProposal,
 };
 use crate::persist::{GeneratedQuestionPersister, NoopGeneratedQuestionPersister};
 use llm::{LLMClient, Message};
@@ -51,10 +52,10 @@ impl NextQuestionStrategy for DeterministicNextQuestionStrategy {
     fn next_question(
         &self,
         current: &Question,
-        _context: &StrategyContext,
+        context: &StrategyContext,
         bank: &dyn QuestionBank,
     ) -> Result<Option<Question>> {
-        let successors = sorted_successors(current, bank)?;
+        let successors = relevant_successors(current, &context.answer, bank)?;
         Ok(successors.into_iter().next())
     }
 }
@@ -66,15 +67,67 @@ fn successor_questions(current: &Question, bank: &dyn QuestionBank) -> Result<Ve
         .collect()
 }
 
-fn sorted_successors(current: &Question, bank: &dyn QuestionBank) -> Result<Vec<Question>> {
-    let mut successors = successor_questions(current, bank)?;
-    successors.sort_by(|left, right| {
-        right
-            .weight
-            .cmp(&left.weight)
+// trace:STORY-48 | ai:claude
+/// How relevant a `begets` successor is to the answer just given. A higher
+/// score is preferred; a score of `0` excludes the successor from automatic
+/// selection because it was conditioned on a different answer.
+fn successor_relevance(question: &Question, answer: &Answer) -> u8 {
+    match from_answer_tag(&question.tags) {
+        // Conditioned on this exact answer — answer-conditioned branching.
+        Some(tag) if answer_tag_matches(tag, answer) => 2,
+        // Conditioned on a different answer — not for this branch.
+        Some(_) => 0,
+        // Unconditional follow-on — always eligible (legacy behavior).
+        None => 1,
+    }
+}
+
+fn answer_tag_matches(tag_value: &str, answer: &Answer) -> bool {
+    let needle = tag_value.trim().to_ascii_lowercase();
+    !needle.is_empty()
+        && (needle == answer.normalized.trim().to_ascii_lowercase()
+            || needle == answer.raw.trim().to_ascii_lowercase())
+}
+
+/// Successors eligible for the current answer, ordered by answer relevance,
+/// then weight, then id. Successors conditioned on a different answer are
+/// dropped so different answers branch to different follow-ups (STORY-48).
+fn relevant_successors(
+    current: &Question,
+    answer: &Answer,
+    bank: &dyn QuestionBank,
+) -> Result<Vec<Question>> {
+    let mut successors = successor_questions(current, bank)?
+        .into_iter()
+        .filter_map(|question| {
+            let relevance = successor_relevance(&question, answer);
+            (relevance > 0).then_some((relevance, question))
+        })
+        .collect::<Vec<_>>();
+    successors.sort_by(|(left_relevance, left), (right_relevance, right)| {
+        right_relevance
+            .cmp(left_relevance)
+            .then_with(|| right.weight.cmp(&left.weight))
             .then_with(|| left.id.cmp(&right.id))
     });
-    Ok(successors)
+    Ok(successors
+        .into_iter()
+        .map(|(_, question)| question)
+        .collect())
+}
+
+// trace:STORY-48 | ai:claude
+/// The answer value to record on a generated follow-on so it can be matched
+/// later. Only bounded answers (yes/no, choice) branch usefully; free-text
+/// answers are open-ended, so their follow-ons stay unconditional.
+fn triggering_answer(current: &Question, context: &StrategyContext) -> Option<String> {
+    match current.answer_kind {
+        AnswerKind::YesNo | AnswerKind::Choice(_) => {
+            let normalized = context.answer.normalized.trim();
+            (!normalized.is_empty()).then(|| normalized.to_ascii_lowercase())
+        }
+        AnswerKind::FreeText => None,
+    }
 }
 
 fn strategy_prompt(
@@ -260,7 +313,7 @@ where
         context: &StrategyContext,
         bank: &dyn QuestionBank,
     ) -> Result<Option<Question>> {
-        let candidates = successor_questions(current, bank).unwrap_or_default();
+        let candidates = relevant_successors(current, &context.answer, bank).unwrap_or_default();
         let prompt = strategy_prompt(current, context, &candidates);
         let runtime = tokio::runtime::Builder::new_current_thread()
             .enable_time()
@@ -276,7 +329,12 @@ where
         match next {
             Some(question) if question.id == "generated:llm" => self
                 .generated_question_persister
-                .persist_generated_question(current, &question)
+                // trace:STORY-48 | ai:claude
+                .persist_generated_question(
+                    current,
+                    &question,
+                    triggering_answer(current, context).as_deref(),
+                )
                 .map(Some),
             other => Ok(other),
         }

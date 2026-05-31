@@ -78,7 +78,37 @@ colon.
 | `definition:<kind>` | `TERM` | Definition source class: `formal`, `academic`, `public`, or `user-specific`. |
 | `quality:<state>` | `Q` | Reuse signal: `insightful`, `neutral`, or `unhelpful`. |
 | `weight:N` | reusable nodes | Selection weight from `0` through `100`. |
+| `from-answer:<value>` | `Q` | Records the normalized answer that triggered this follow-on, so different answers to the origin can branch to different follow-ups. |
 | `seed` | all nodes | Hand-authored seed data used to bootstrap a cluster. |
+
+### Answer-Conditioned Follow-ons
+
+<!-- trace:STORY-48 | ai:claude -->
+
+A `begets` edge is `Q -> Q` and records *that* one question leads to another,
+but not *which* answer triggered it. To branch different answers to different
+follow-ups, the generated follow-on question carries a `from-answer:<value>`
+tag whose value is the normalized triggering answer (e.g. `from-answer:yes`,
+`from-answer:no`, or a choice option). Only bounded answers (yes/no, choice)
+condition a follow-on; open-ended free-text answers leave the follow-on
+unconditional.
+
+The `NextQuestionStrategy` (STORY-18/37) reads this tag when picking the next
+question:
+
+- A successor whose `from-answer` matches the current answer is **preferred**.
+- A successor with **no** `from-answer` tag is an **unconditional** follow-on,
+  always eligible as a fallback.
+- A successor whose `from-answer` names a **different** answer is **excluded**
+  from automatic selection for the current answer.
+
+**VIS-2 substrate note.** The triggering answer lives on the target node as a
+tag rather than on the `begets` edge itself, because `aida rel add` has no
+edge-tag/attribute support today (the alternative would be answer-specific
+custom edge types, which AIDA cannot express). If AIDA gains edge attributes,
+the cleaner model is an `on-answer:<value>` attribute on the `begets` edge,
+which would also let a single shared follow-on be reached from more than one
+answer. Tracked as a substrate gap for the AIDA dogfooding goal.
 
 ### Weight Encoding
 
