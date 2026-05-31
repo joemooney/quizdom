@@ -1,0 +1,18 @@
+id: 019e7fdf-8a09-7810-a4c5-9afd58aca190
+spec_id: STORY-65
+agreed_id: STORY-65
+title: 'Resume discoverability + recap: ''quizdom session list'', resume-latest, where-you-were recap'
+description: 'Make pause/resume usable ''another time'' without remembering a session id. Add: (1) ''quizdom session list [--user]'' listing past sessions (id, started/last-active, last question answered, branch); (2) ''session resume'' WITHOUT --session defaults to the user''s most recent session; (3) on resume, print a short RECAP of where you left off (last question + your answer, current branch) before continuing. Builds on the existing STORY-20 resume. Touches session.rs + main.rs — codex-1''s lane. ## Acceptance: session list shows resumable sessions; resume with no id picks the latest; resume prints a recap then continues from the next question; tests cover list + latest + recap.'
+status: Approved
+priority: High
+owner: ''
+feature: Uncategorized
+created_at: 2026-05-31T21:10:16.841954224Z
+modified_at: 2026-05-31T21:10:16.841954224Z
+req_type: Story
+tags:
+- discoverability
+- resume
+- session
+- story
+- ux
