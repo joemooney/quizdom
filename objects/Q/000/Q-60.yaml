@@ -1,0 +1,24 @@
+id: 019e7fce-6ded-7b01-a3c6-639d8785dc1d
+spec_id: Q-60
+agreed_id: Q-60
+prefix_override: Q
+title: If reason isn't the guiding force and the soul can always cycle back to swap one note for another, what makes any given swap an act of *will* rather than just an arbitrary re-roll — what does the willing, if not the soul's reasons?
+description: |-
+  LLM-generated quizdom question.
+
+  answer: free-text
+  origin: Q-54
+
+  Generated from origin question: You say the soul lives outside time and each note reshapes the whole composition. But when the soul feels one note as the right 'fit,' does that feeling spring from the soul's own enduring character — and if so, isn't that just prior cause moved inside the soul? Or if the fit isn't fixed by the soul's nature either, what stops it from being the very chance you set out to reject?
+status: Approved
+priority: Medium
+owner: ''
+feature: Uncategorized
+created_at: 2026-05-31T20:51:35.533383281Z
+modified_at: 2026-05-31T20:51:35.533383281Z
+req_type: Functional
+tags:
+- answer:free-text
+- seed
+- topic:free-will
+- weight:50
