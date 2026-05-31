@@ -468,6 +468,63 @@ fn session_asks_user_meaning_and_renders_mapping_proposal() {
     assert!(output.contains("Does this capture it?"));
     assert!(output.contains("Adopted free will / compatibilist."));
     assert!(output.contains("without coercion"));
+    let log = fs::read_to_string(&path).unwrap();
+    assert!(log.contains(r#""event_type":"term_interpreted""#));
+    assert!(log.contains(r#""term_ref":"TERM-25""#));
+    assert!(log.contains(r#""raw_definition":"Acting from my own reasons without coercion.""#));
+
+    let _ = fs::remove_file(path);
+}
+
+#[test]
+fn settled_definition_is_reapplied_downstream() {
+    let path = std::env::temp_dir().join(format!(
+        "quizdom-story-44-test-{}.jsonl",
+        std::process::id()
+    ));
+    let _ = fs::remove_file(&path);
+    let bank = FakeBank::new([
+        question_with_tags(
+            "Q-23",
+            70,
+            AnswerKind::YesNo,
+            ["topic:free-will", "answer:yes-no", "weight:70"],
+        ),
+        question_with_tags(
+            "Q-27",
+            60,
+            AnswerKind::YesNo,
+            ["topic:free-will", "answer:yes-no", "weight:60"],
+        ),
+    ])
+    .with_edges("Q-23", ["Q-27"])
+    .with_probes("Q-23", ["TERM-24", "TERM-25"])
+    .with_probes("Q-27", ["TERM-24", "TERM-25"])
+    .with_terms(free_will_terms());
+    let strategy = LlmNextQuestionStrategy::new(MockLlm::ok(
+        r#"{"term_id":"TERM-25","rationale":"The user emphasized reasons without coercion."}"#,
+    ));
+    let config = test_config(&path, "Q-23");
+    let mut output = Vec::new();
+
+    run_session(
+        &config,
+        &bank,
+        &strategy,
+        "Acting from my own reasons without coercion.\nyes\nyes\nno\n".as_bytes(),
+        &mut output,
+    )
+    .unwrap();
+
+    let output = String::from_utf8(output).unwrap();
+    assert_eq!(output.matches("What do you mean by free will?").count(), 1);
+    assert!(output.contains("Settled meaning for free will:"));
+    assert!(output.contains("free will / compatibilist"));
+    assert!(output.contains("without coercion"));
+
+    let log = fs::read_to_string(&path).unwrap();
+    assert!(log.contains(r#""event_type":"term_interpreted""#));
+    assert!(log.contains(r#""term_ref":"TERM-25""#));
 
     let _ = fs::remove_file(path);
 }
@@ -508,6 +565,10 @@ fn rejected_mapping_mints_user_specific_term_after_steering() {
     let output = String::from_utf8(output).unwrap();
     assert!(output.contains("What would make the shared definition fit better?"));
     assert!(output.contains("Recorded a user-specific definition"));
+    let log = fs::read_to_string(&path).unwrap();
+    assert!(log.contains(r#""event_type":"term_interpreted""#));
+    assert!(log.contains(r#""term_ref":"TERM-99""#));
+    assert!(log.contains(r#""raw_definition":"It must originate outside the causal chain.""#));
     assert_eq!(
             runner.calls(),
             vec![strings([

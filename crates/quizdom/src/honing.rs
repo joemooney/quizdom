@@ -6,6 +6,13 @@ use crate::persist::UserSpecificTermPersister;
 use crate::strategy::NextQuestionStrategy;
 use std::io::{BufRead, Write};
 
+#[derive(Debug, Clone, Eq, PartialEq)]
+pub(crate) struct SettledTermDefinition {
+    pub(crate) term_label: String,
+    pub(crate) raw_meaning: String,
+    pub(crate) term: TermDefinition,
+}
+
 pub(crate) fn prompt_for_term_meaning(
     definitions: &[TermDefinition],
     strategy: &dyn NextQuestionStrategy,
@@ -13,19 +20,19 @@ pub(crate) fn prompt_for_term_meaning(
     input: &mut impl BufRead,
     free_text_input: &mut FreeTextInput,
     output: &mut impl Write,
-) -> Result<()> {
+) -> Result<Option<SettledTermDefinition>> {
     if definitions.len() < 2 {
-        return Ok(());
+        return Ok(None);
     }
     // trace:STORY-42 | ai:codex
     let term_label = term_label(definitions);
     writeln!(output, "\nWhat do you mean by {term_label}?")?;
     let Some(raw) = free_text_input.read_line(input, output, "> ")? else {
-        return Ok(());
+        return Ok(None);
     };
     let meaning = raw.trim();
     if meaning.is_empty() || meaning == "/end" {
-        return Ok(());
+        return Ok(None);
     }
     if let Some(proposal) = strategy
         .map_term_meaning(&term_label, meaning, definitions)
@@ -36,33 +43,51 @@ pub(crate) fn prompt_for_term_meaning(
         output.flush()?;
         let mut confirmation = String::new();
         if input.read_line(&mut confirmation)? == 0 {
-            return Ok(());
+            return Ok(None);
         }
         if is_confirmation_yes(&confirmation) {
             writeln!(output, "Adopted {}.", proposal.term_title)?;
-            return Ok(());
+            let Some(term) = definitions
+                .iter()
+                .find(|definition| definition.id == proposal.term_id)
+                .cloned()
+            else {
+                return Ok(None);
+            };
+            return Ok(Some(SettledTermDefinition {
+                term_label,
+                raw_meaning: meaning.to_string(),
+                term,
+            }));
         }
         writeln!(output, "What would make the shared definition fit better?")?;
         let Some(refinement) = free_text_input.read_line(input, output, "> ")? else {
-            return Ok(());
+            return Ok(None);
         };
         let refinement = refinement.trim();
         if refinement.is_empty() || refinement == "/end" {
-            return Ok(());
+            return Ok(None);
         }
         match term_persister.persist_user_specific_term(&term_label, refinement, definitions) {
-            Ok(term) => writeln!(
-                output,
-                "Recorded a user-specific definition: {} ({})",
-                term.title, term.id
-            )?,
+            Ok(term) => {
+                writeln!(
+                    output,
+                    "Recorded a user-specific definition: {} ({})",
+                    term.title, term.id
+                )?;
+                return Ok(Some(SettledTermDefinition {
+                    term_label,
+                    raw_meaning: refinement.to_string(),
+                    term,
+                }));
+            }
             Err(_) => writeln!(
                 output,
                 "No shared definition was adopted; user-specific persistence is unavailable."
             )?,
         }
     }
-    Ok(())
+    Ok(None)
 }
 
 pub(crate) fn is_confirmation_yes(input: &str) -> bool {
@@ -169,5 +194,19 @@ pub(crate) fn render_term_definitions(
             definition.title, definition.definition
         )?;
     }
+    Ok(())
+}
+
+pub(crate) fn render_settled_term_definition(
+    settled: &SettledTermDefinition,
+    output: &mut impl Write,
+) -> Result<()> {
+    // trace:STORY-44 | ai:codex
+    writeln!(output, "\nSettled meaning for {}:", settled.term_label)?;
+    writeln!(
+        output,
+        "- {}: {}",
+        settled.term.title, settled.term.definition
+    )?;
     Ok(())
 }
