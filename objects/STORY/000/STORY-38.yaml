@@ -3,12 +3,12 @@ spec_id: STORY-38
 agreed_id: STORY-38
 title: Persist LLM-minted questions to the AIDA bank (Q-object + begets edge)
 description: 'When the LLM generates a new question, write it back to AIDA as a Q-object (--prefix Q) with a begets edge from the originating question and a seed weight:N, so the bank evolves (ties to EPIC-10). ## Acceptance: a generated question becomes a real Q-object reachable via aida rel list. Depends on the LLM strategy + graph schema (STORY-14).'
-status: Approved
+status: InProgress
 priority: Medium
 owner: ''
 feature: Uncategorized
 created_at: 2026-05-31T17:46:13.267343079Z
-modified_at: 2026-05-31T17:46:45.784711955Z
+modified_at: 2026-05-31T19:13:11.342257568Z
 req_type: Story
 tags:
 - bank
