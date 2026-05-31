@@ -3,12 +3,12 @@ spec_id: STORY-64
 agreed_id: STORY-64
 title: Q (Quit) single-key control = /end; show [Q] Quit in prompts
 description: 'Add a Q/q single-key control mapped to the existing /end behavior (clean end + save), in input.rs. Today ESC maps to /end but isn''t shown; Q is the discoverable key. Update the [Y/N/X/P] prompt to [Y/N/X/P/Q] (and the choice/free-text prompts to mention Q/Quit). NOTE: input.rs is codex-1''s lane (STORY-52 in flight) — sequence this AFTER STORY-52 to avoid colliding in input.rs. ## Acceptance: pressing Q ends + saves the session like /end (resumable later); prompt shows [Q] Quit; tests cover it.'
-status: Approved
+status: InProgress
 priority: High
 owner: ''
 feature: Uncategorized
 created_at: 2026-05-31T21:10:08.679398558Z
-modified_at: 2026-05-31T21:10:08.679398558Z
+modified_at: 2026-05-31T21:23:48.077581546Z
 req_type: Story
 tags:
 - input
