@@ -2,12 +2,12 @@ id: 019e7e66-bfd5-7261-b298-5f8faa336b26
 spec_id: TASK-JM-001
 title: AIDA accepts arbitrary custom edge types (positive substrate signal)
 description: 'Confirmed: ''aida rel add --type contradicts'' creates Custom("contradicts") edges, with --bidirectional and remove support. Belief-graph edges (begets/probes/refines/contradicts/agrees/disagrees) are expressible as first-class typed relationships. Strong positive signal for VIS-2 (AIDA as a general substrate).'
-status: Draft
+status: Rejected
 priority: Medium
 owner: joe
 feature: Uncategorized
 created_at: 2026-05-31T14:18:43.541129091Z
-modified_at: 2026-05-31T14:18:43.541129091Z
+modified_at: 2026-05-31T17:46:50.588399339Z
 req_type: Task
 tags:
 - from-advisor:VIS-2
@@ -15,3 +15,9 @@ tags:
 - linked:EPIC-5
 - linked:VIS-2
 - severity:minor
+comments:
+- id: 019e7f25-495c-7b11-a20c-c110e83a4e96
+  author: joe
+  content: 'Dismissed by joe 2026-05-31: Positive substrate signal recorded; custom edges confirmed working and now used throughout the domain graph (graph-schema.md). No action.'
+  created_at: 2026-05-31T17:46:50.588399339Z
+  modified_at: 2026-05-31T17:46:50.588399339Z
