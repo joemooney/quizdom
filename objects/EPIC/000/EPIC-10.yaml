@@ -34,7 +34,7 @@ priority: Medium
 owner: ''
 feature: Uncategorized
 created_at: 2026-05-31T14:10:07.544177402Z
-modified_at: 2026-05-31T21:33:28.528992077Z
+modified_at: 2026-05-31T22:30:32.430648275Z
 req_type: Epic
 tags:
 - curation
@@ -62,3 +62,8 @@ comments:
   content: 'STORY-48 (answer-conditioned follow-ons) complete via PR #20 — the answer-aware branching the user requested. EPIC-10 still has bank-evolution/curation work (weighting from feedback) undecomposed.'
   created_at: 2026-05-31T21:31:11.098252057Z
   modified_at: 2026-05-31T21:31:11.098252057Z
+- id: 019e8029-04ee-7531-a719-e06f7b46fd93
+  author: joe
+  content: 'STORY-67 (weighted-probabilistic selection) merged PR #28 — new --strategy weighted; samples proportional to weight, excludes weight:0, keeps STORY-48 from-answer precedence. EPIC-10 3/4; STORY-68 (signals from logs) remains.'
+  created_at: 2026-05-31T22:30:32.430648275Z
+  modified_at: 2026-05-31T22:30:32.430648275Z
