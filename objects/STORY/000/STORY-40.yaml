@@ -8,7 +8,7 @@ priority: High
 owner: ''
 feature: Uncategorized
 created_at: 2026-05-31T19:20:02.329277944Z
-modified_at: 2026-05-31T19:22:10.645537020Z
+modified_at: 2026-05-31T19:26:45.857494262Z
 req_type: Story
 tags:
 - backend
@@ -24,3 +24,9 @@ relationships:
   target_id: 019e7f24-6538-7612-bf0f-13341e58d0b8
   created_at: 2026-05-31T19:20:40.514994374Z
   created_by: joe
+comments:
+- id: 019e7f80-c461-7920-9582-f82b6a132f6e
+  author: joe
+  content: 'Implemented ClaudeCliClient as the default llm backend: it invokes claude -p --output-format json, strips ANTHROPIC_API_KEY from the subprocess environment for Max-plan OAuth/keychain auth, maps prompt/messages/tool definitions into the CLI prompt, parses result/content/tool_use output into LLMClient output, and adds mocked subprocess tests plus an ignored live claude -p smoke. Wired quizdom LLM strategy selection so QUIZDOM_BACKEND=anthropic opts into AnthropicClient; default is claude-cli. Shipped in PR #10.'
+  created_at: 2026-05-31T19:26:45.857494262Z
+  modified_at: 2026-05-31T19:26:45.857494262Z
