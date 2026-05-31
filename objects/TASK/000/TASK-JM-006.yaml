@@ -10,10 +10,16 @@ priority: Medium
 owner: joe
 feature: Uncategorized
 created_at: 2026-05-31T21:16:41.526953022Z
-modified_at: 2026-05-31T21:16:41.526953022Z
+modified_at: 2026-05-31T21:18:50.755354099Z
 req_type: Task
 tags:
 - from-advisor:VIS-2
 - kind:observation
 - linked:VIS-2
 - severity:major
+comments:
+- id: 019e7fe7-6183-7c12-91ef-3bbfc1a20f6c
+  author: joe
+  content: 'ADDENDUM (same handoff): ''aida session end'' also HANGS in a non-interactive/no-TTY context — it blocks indefinitely on its ''gh'' CI/PR probe with NO output and NO timeout (observed: a session-end ran 177s with zero output before I killed it). Workaround that worked: ''aida session end <id> --skip-ci -y''. So two concrete fixes for AIDA: (1) timeout/auto-skip the CI probe when stdin isn''t a TTY (or no PR exists); (2) the reaper/chained-handoff from the main note. Filing the hang upstream as a bug.'
+  created_at: 2026-05-31T21:18:50.755354099Z
+  modified_at: 2026-05-31T21:18:50.755354099Z
