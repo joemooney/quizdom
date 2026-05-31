@@ -1,0 +1,24 @@
+id: 019e7f8d-e89a-7d53-86cd-0403d4966eb8
+spec_id: Q-45
+agreed_id: Q-45
+prefix_override: Q
+title: If absolutely nothing about you or the situation differed beforehand, would a different choice be anything more than random chance?
+description: |-
+  LLM-generated quizdom question.
+
+  answer: yes-no
+  origin: Q-26
+
+  Generated from origin question: Do you mean the ability to have chosen otherwise in exactly the same conditions?
+status: Approved
+priority: Medium
+owner: ''
+feature: Uncategorized
+created_at: 2026-05-31T19:41:07.098934554Z
+modified_at: 2026-05-31T19:41:07.098934554Z
+req_type: Functional
+tags:
+- answer:yes-no
+- seed
+- topic:free-will
+- weight:50
