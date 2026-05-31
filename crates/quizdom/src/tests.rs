@@ -363,7 +363,7 @@ fn session_surfaces_probed_competing_definitions() {
         &config,
         &bank,
         &DeterministicNextQuestionStrategy,
-        "I mean acting from my own reasons.\nyes\n".as_bytes(),
+        "yes\n".as_bytes(),
         &mut output,
     )
     .unwrap();
@@ -458,7 +458,7 @@ fn session_asks_user_meaning_and_renders_mapping_proposal() {
         &config,
         &bank,
         &strategy,
-        "Acting from my own reasons without coercion.\nyes\nyes\n".as_bytes(),
+        "x\nActing from my own reasons without coercion.\nyes\nyes\n".as_bytes(),
         &mut output,
     )
     .unwrap();
@@ -473,6 +473,49 @@ fn session_asks_user_meaning_and_renders_mapping_proposal() {
     assert!(log.contains(r#""event_type":"term_interpreted""#));
     assert!(log.contains(r#""term_ref":"TERM-25""#));
     assert!(log.contains(r#""raw_definition":"Acting from my own reasons without coercion.""#));
+
+    let _ = fs::remove_file(path);
+}
+
+#[test]
+fn explore_runs_honing_then_reasks_same_question() {
+    let path = std::env::temp_dir().join(format!(
+        "quizdom-story-52-test-{}.jsonl",
+        std::process::id()
+    ));
+    let _ = fs::remove_file(&path);
+    let bank = FakeBank::new([question_with_tags(
+        "Q-23",
+        70,
+        AnswerKind::YesNo,
+        ["topic:free-will", "answer:yes-no", "weight:70"],
+    )])
+    .with_probes("Q-23", ["TERM-24", "TERM-25"])
+    .with_terms(free_will_terms());
+    let strategy = LlmNextQuestionStrategy::new(MockLlm::ok(
+        r#"{"term_id":"TERM-25","rationale":"The user emphasized reasons without coercion."}"#,
+    ));
+    let config = test_config(&path, "Q-23");
+    let mut output = Vec::new();
+
+    run_session(
+        &config,
+        &bank,
+        &strategy,
+        "x\nActing from my own reasons without coercion.\nyes\nyes\n".as_bytes(),
+        &mut output,
+    )
+    .unwrap();
+
+    let output = String::from_utf8(output).unwrap();
+    assert!(output.contains("What do you mean by free will?"));
+    assert!(output.contains("Adopted free will / compatibilist."));
+    assert_eq!(output.matches("\nQ-23\n").count(), 2);
+
+    let log = fs::read_to_string(&path).unwrap();
+    assert!(log.contains(r#""event_type":"term_interpreted""#));
+    assert!(!log.contains(r#""normalized_answer":"explore""#));
+    assert!(log.contains(r#""normalized_answer":"yes""#));
 
     let _ = fs::remove_file(path);
 }
@@ -512,7 +555,7 @@ fn settled_definition_is_reapplied_downstream() {
         &config,
         &bank,
         &strategy,
-        "Acting from my own reasons without coercion.\nyes\nyes\nno\n".as_bytes(),
+        "x\nActing from my own reasons without coercion.\nyes\nyes\nno\n".as_bytes(),
         &mut output,
     )
     .unwrap();
@@ -558,7 +601,8 @@ fn rejected_mapping_mints_user_specific_term_after_steering() {
         &bank,
         &strategy,
         &persister,
-        "A self-authored cause.\nno\nIt must originate outside the causal chain.\nyes\n".as_bytes(),
+        "x\nA self-authored cause.\nno\nIt must originate outside the causal chain.\nyes\n"
+            .as_bytes(),
         &mut output,
     )
     .unwrap();
