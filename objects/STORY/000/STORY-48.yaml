@@ -11,7 +11,7 @@ priority: High
 owner: ''
 feature: Uncategorized
 created_at: 2026-05-31T19:50:15.143944670Z
-modified_at: 2026-05-31T21:18:06.249614105Z
+modified_at: 2026-05-31T21:18:16.209544693Z
 req_type: Story
 tags:
 - answer-conditioning
@@ -30,3 +30,8 @@ comments:
   content: 'Design: chose option (a) — a from-answer:<value> tag on the generated Q-object (normalized triggering answer; bounded answers only, free-text stays unconditional). NextQuestionStrategy now prefers answer-matching successors, treats untagged successors as unconditional fallbacks, and excludes successors conditioned on a different answer. Option (b) (answer-specific edge attributes) deferred — aida rel add has no edge-tag support; captured as a VIS-2 substrate note in graph-schema.md. Touched model.rs (from_answer_tag helper), persist.rs (persister records the tag), strategy.rs (relevant_successors + triggering_answer), graph-schema.md, plus tests.'
   created_at: 2026-05-31T21:18:06.249614105Z
   modified_at: 2026-05-31T21:18:06.249614105Z
+- id: 019e7fe6-da91-7723-bb39-7584afa440f0
+  author: joe
+  content: Commit b07ec2b references this requirement
+  created_at: 2026-05-31T21:18:16.209544693Z
+  modified_at: 2026-05-31T21:18:16.209544693Z
