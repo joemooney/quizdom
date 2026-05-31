@@ -2,15 +2,21 @@ id: 019e7e8c-312f-7521-bcfb-f1c71ac7d349
 spec_id: TASK-JM-004
 title: codex lacks /aida-pickup (uses briefs); intent-improvisation makes the gap look intermittent
 description: 'A user running a codex implementer agent typed /aida-pickup: worked once, then errored ''Unrecognized command''. Root cause: aida-pickup is NOT in the .codex/skills/ subset (queue/pickup/pr/triage are Claude-only); codex''s coordination channel is BRIEFS (list_briefs / aida brief), not the queue + slash command (docs/agents/codex-brief-pickup.md). The ''worked first time'' was codex improvising on the typed words, not a registered command — which makes a missing capability look like a flaky one. Onboarding/substrate gap: (a) the queue-vs-brief channel split per agent type isn''t obvious to an operator driving a mixed fleet; (b) codex silently improvising a non-existent slash command is a confusing failure mode. Candidate: a clearer ''this agent picks up via briefs'' signal, or scaffolding a codex aida-pickup that just runs the brief flow.'
-status: Draft
+status: Rejected
 priority: Medium
 owner: joe
 feature: Uncategorized
 created_at: 2026-05-31T14:59:37.391035787Z
-modified_at: 2026-05-31T14:59:37.391035787Z
+modified_at: 2026-05-31T17:46:51.604676567Z
 req_type: Task
 tags:
 - from-advisor:VIS-2
 - kind:observation
 - linked:VIS-2
 - severity:minor
+comments:
+- id: 019e7f25-4d54-7600-b785-04d034312d5d
+  author: joe
+  content: 'Dismissed by joe 2026-05-31: Remediated: CLAUDE.md ''Agent working discipline'' codifies brief-vs-queue routing per agent type; advisor routes codex via briefs automatically.'
+  created_at: 2026-05-31T17:46:51.604676567Z
+  modified_at: 2026-05-31T17:46:51.604676567Z
