@@ -3,10 +3,16 @@ use crate::model::{AnswerKind, Question, TermDefinition};
 use std::process::{Command, Output};
 
 pub trait GeneratedQuestionPersister {
+    /// Persist a generated follow-on linked to `origin` via a `begets` edge.
+    ///
+    /// `from_answer` (STORY-48) is the normalized answer that triggered the
+    /// follow-on; when present it is recorded as a `from-answer:<value>` tag so
+    /// the strategy can branch different answers to different follow-ups.
     fn persist_generated_question(
         &self,
         origin: &Question,
         question: &Question,
+        from_answer: Option<&str>,
     ) -> Result<Question>;
 }
 
@@ -43,6 +49,7 @@ impl GeneratedQuestionPersister for NoopGeneratedQuestionPersister {
         &self,
         _origin: &Question,
         question: &Question,
+        _from_answer: Option<&str>,
     ) -> Result<Question> {
         Ok(question.clone())
     }
@@ -185,10 +192,11 @@ where
         &self,
         origin: &Question,
         question: &Question,
+        from_answer: Option<&str>,
     ) -> Result<Question> {
         // trace:STORY-38 | ai:codex
         let topic = question_topic(origin);
-        let tags = generated_question_tags(&topic, &question.answer_kind);
+        let tags = generated_question_tags(&topic, &question.answer_kind, from_answer);
         let description = generated_question_description(question, origin);
         let add_args = vec![
             "add".to_string(),
@@ -249,13 +257,22 @@ fn question_topic(question: &Question) -> String {
         .to_string()
 }
 
-fn generated_question_tags(topic: &str, answer_kind: &AnswerKind) -> Vec<String> {
-    vec![
+fn generated_question_tags(
+    topic: &str,
+    answer_kind: &AnswerKind,
+    from_answer: Option<&str>,
+) -> Vec<String> {
+    // trace:STORY-48 | ai:claude
+    let mut tags = vec![
         format!("topic:{topic}"),
         format!("answer:{}", answer_kind.mode()),
         "weight:50".to_string(),
         "seed".to_string(),
-    ]
+    ];
+    if let Some(answer) = from_answer.map(str::trim).filter(|value| !value.is_empty()) {
+        tags.push(format!("from-answer:{answer}"));
+    }
+    tags
 }
 
 fn generated_question_description(question: &Question, origin: &Question) -> String {

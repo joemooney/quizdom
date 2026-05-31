@@ -132,6 +132,94 @@ fn deterministic_strategy_uses_highest_weight_then_lowest_id() {
     assert_eq!(next.id, "Q-2");
 }
 
+// trace:STORY-48 | ai:claude
+#[test]
+fn deterministic_strategy_branches_on_triggering_answer() {
+    let bank = FakeBank::new([
+        question("Q-1", 0, AnswerKind::YesNo),
+        question_with_tags(
+            "Q-yes",
+            80,
+            AnswerKind::YesNo,
+            ["weight:80", "from-answer:yes"],
+        ),
+        question_with_tags(
+            "Q-no",
+            90,
+            AnswerKind::YesNo,
+            ["weight:90", "from-answer:no"],
+        ),
+    ])
+    .with_edges("Q-1", ["Q-yes", "Q-no"]);
+    let current = bank.load_question("Q-1").unwrap();
+
+    let on_yes = DeterministicNextQuestionStrategy
+        .next_question(&current, &strategy_context("yes"), &bank)
+        .unwrap()
+        .unwrap();
+    assert_eq!(on_yes.id, "Q-yes");
+
+    // Even though Q-no carries a higher weight, "yes" must not branch into it.
+    let on_no = DeterministicNextQuestionStrategy
+        .next_question(&current, &strategy_context("no"), &bank)
+        .unwrap()
+        .unwrap();
+    assert_eq!(on_no.id, "Q-no");
+}
+
+// trace:STORY-48 | ai:claude
+#[test]
+fn deterministic_strategy_prefers_matching_answer_over_unconditional() {
+    let bank = FakeBank::new([
+        question("Q-1", 0, AnswerKind::YesNo),
+        question_with_tags("Q-any", 90, AnswerKind::YesNo, ["weight:90"]),
+        question_with_tags(
+            "Q-yes",
+            50,
+            AnswerKind::YesNo,
+            ["weight:50", "from-answer:yes"],
+        ),
+    ])
+    .with_edges("Q-1", ["Q-any", "Q-yes"]);
+    let current = bank.load_question("Q-1").unwrap();
+
+    // The answer-matched successor wins despite its lower weight.
+    let on_yes = DeterministicNextQuestionStrategy
+        .next_question(&current, &strategy_context("yes"), &bank)
+        .unwrap()
+        .unwrap();
+    assert_eq!(on_yes.id, "Q-yes");
+
+    // With no matching successor, the unconditional follow-on still applies.
+    let on_no = DeterministicNextQuestionStrategy
+        .next_question(&current, &strategy_context("no"), &bank)
+        .unwrap()
+        .unwrap();
+    assert_eq!(on_no.id, "Q-any");
+}
+
+// trace:STORY-48 | ai:claude
+#[test]
+fn deterministic_strategy_excludes_mismatched_answer_successors() {
+    let bank = FakeBank::new([
+        question("Q-1", 0, AnswerKind::YesNo),
+        question_with_tags(
+            "Q-no",
+            90,
+            AnswerKind::YesNo,
+            ["weight:90", "from-answer:no"],
+        ),
+    ])
+    .with_edges("Q-1", ["Q-no"]);
+    let current = bank.load_question("Q-1").unwrap();
+
+    // The only successor is conditioned on "no", so "yes" has nowhere to go.
+    let next = DeterministicNextQuestionStrategy
+        .next_question(&current, &strategy_context("yes"), &bank)
+        .unwrap();
+    assert!(next.is_none());
+}
+
 #[test]
 fn parses_llm_backend_selection() {
     assert_eq!(
@@ -223,7 +311,8 @@ fn llm_strategy_persists_generated_question_when_configured() {
             "topic:free-will".to_string(),
             "answer:free-text".to_string(),
             "weight:50".to_string(),
-            "seed".to_string()
+            "seed".to_string(),
+            "from-answer:yes".to_string()
         ]
     );
     assert_eq!(
@@ -245,13 +334,49 @@ fn llm_strategy_persists_generated_question_when_configured() {
                     "--description",
                     "LLM-generated quizdom question.\n\nanswer: free-text\norigin: Q-1\n\nGenerated from origin question: Q-1",
                     "--tags",
-                    "topic:free-will,answer:free-text,weight:50,seed",
+                    "topic:free-will,answer:free-text,weight:50,seed,from-answer:yes",
                 ]),
                 strings([
                     "aida", "rel", "add", "--from", "Q-1", "--to", "Q-42", "--type", "begets",
                 ]),
             ]
         );
+}
+
+// trace:STORY-48 | ai:claude
+#[test]
+fn llm_strategy_leaves_free_text_followon_unconditional() {
+    let bank = FakeBank::new([question_with_tags(
+        "Q-1",
+        0,
+        AnswerKind::FreeText,
+        ["topic:free-will", "answer:free-text", "weight:70"],
+    )]);
+    let runner = RecordingCommandRunner::new([
+        command_output(true, "Added: Q-42\n", ""),
+        command_output(true, "relationship added\n", ""),
+    ]);
+    let strategy = LlmNextQuestionStrategy::with_generated_question_persister(
+        MockLlm::ok(
+            r#"{"action":"generate","question":"What definition of responsibility are you using?","answer_mode":"free-text"}"#,
+        ),
+        AidaCliGeneratedQuestionPersister::new("aida", runner.clone()),
+    );
+
+    let next = strategy
+        .next_question(
+            &bank.load_question("Q-1").unwrap(),
+            &strategy_context("freedom from coercion"),
+            &bank,
+        )
+        .unwrap()
+        .unwrap();
+
+    // An open-ended answer does not condition the follow-on, so no from-answer tag.
+    assert!(!next.tags.iter().any(|tag| tag.starts_with("from-answer:")));
+    assert!(!runner.calls()[0]
+        .iter()
+        .any(|arg| arg.contains("from-answer:")));
 }
 
 #[test]
