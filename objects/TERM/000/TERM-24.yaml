@@ -1,0 +1,24 @@
+id: 019e7e91-5314-7001-bab7-aa2094d28ae6
+spec_id: TERM-24
+agreed_id: TERM-24
+title: free will / libertarian
+description: |
+  source: libertarian (incompatibilist) free will, academic philosophy.
+
+  definition: An agent has free will only if, at the moment of choice and holding
+  all prior conditions fixed, the agent could genuinely have chosen otherwise.
+  Free will in this sense is incompatible with full causal determinism.
+
+  scope: formal/academic definition, not user-specific. trace:STORY-16 | ai:claude
+status: Approved
+priority: High
+owner: ''
+feature: Uncategorized
+created_at: 2026-05-31T15:05:13.748450391Z
+modified_at: 2026-05-31T15:05:13.748450391Z
+req_type: Term
+tags:
+- definition:academic
+- seed
+- topic:free-will
+- weight:60
