@@ -13,7 +13,7 @@ priority: High
 owner: ''
 feature: Uncategorized
 created_at: 2026-05-31T22:01:42.038457866Z
-modified_at: 2026-05-31T22:09:30.015368904Z
+modified_at: 2026-05-31T22:12:52.129824041Z
 req_type: Bug
 tags:
 - bug
@@ -26,3 +26,9 @@ relationships:
 - rel_type: Child
   target_id: 019e7f9f-f1bf-7ab2-b508-291f0849be84
   created_at: 2026-05-31T22:01:47.073955471Z
+comments:
+- id: 019e8018-d721-78c2-9364-453e21a1ef93
+  author: ai:codex:joe
+  content: 'Implemented resume CLI ergonomics in CliConfig::parse: positional session ids are accepted after resume and in the natural ''session <id> resume'' order, bare ids normalize to sess-* for both positional and --session, bare resume still resolves latest, and session/resume --help returns command/flag help with resume examples. Verification: cargo test -p quizdom; cargo test. Shipped in PR-26 / 7306605.'
+  created_at: 2026-05-31T22:12:52.129824041Z
+  modified_at: 2026-05-31T22:12:52.129824041Z
