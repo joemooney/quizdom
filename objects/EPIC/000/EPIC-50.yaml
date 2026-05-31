@@ -1,0 +1,58 @@
+id: 019e7f9f-f1bf-7ab2-b508-291f0849be84
+spec_id: EPIC-50
+agreed_id: EPIC-50
+title: 'Answer interaction model: Yes/No/eXplore/Punt single-key controls'
+description: |
+  Extend the belief-question interaction from binary yes/no to a four-way
+  SINGLE-KEYPRESS control set — **Y**(es) / **N**(o) / e**X**plore / **P**unt —
+  read as single keys (no ENTER). Respects how people actually reason about
+  beliefs: "I can't answer until I know what you mean" (eXplore) and "not this,
+  ask me something else" (Punt).
+
+  ## Controls
+
+  - **Y / N** — answer the question (existing behaviour).
+  - **X (eXplore)** — the user won't answer until they understand the question.
+    Trigger EPIC-8 semantic honing on the current question's terms, then
+    RE-PRESENT the same question to answer Y/N (decided: explore-then-re-ask,
+    anchored to the original question).
+  - **P (Punt)** — "not this." Skip the current `begets` thread, jump to a
+    question in a DIFFERENT topic/area, and record a light curation signal
+    (`punted-here` → down-weight this question for this context, feeding EPIC-10).
+
+  ## Input model
+
+  Single-key reads via `crossterm` (the standard cross-platform Rust TUI crate),
+  no ENTER. Scope: y/n/x/p for yes/no questions; digit keys for multiple-choice
+  (+ x/p); free-text still needs typing + ENTER, with x/p available as leading
+  escape commands. This is the core of the interactive surface; EPIC-11 covers
+  broader TUI/output polish on top.
+
+  ## Dependencies
+
+  - **eXplore** depends on EPIC-8 (semantic honing) being functional.
+  - **Punt** curation signal ties to EPIC-10 (weighting) and complements STORY-48
+    (answer-conditioned follow-ons).
+
+  ## Acceptance
+
+  - Belief questions render a `[Y/N/X/P]` prompt and respond to single keypresses
+    with no ENTER.
+  - X runs honing on the current question then re-presents it; Y/N then answers.
+  - P moves to a different-topic question and records the `punted-here` signal.
+  - Multiple-choice accepts digit keys; free-text still reads a typed line.
+  - Degrades gracefully where raw-mode terminal isn't available (fall back to
+    line input).
+status: Approved
+priority: High
+owner: ''
+feature: Uncategorized
+created_at: 2026-05-31T20:00:49.087516076Z
+modified_at: 2026-05-31T20:00:49.087516076Z
+req_type: Epic
+tags:
+- epic
+- explore
+- interaction
+- punt
+- tui
