@@ -1,0 +1,27 @@
+id: 019e7e82-8b51-70b1-a36b-b9c99611b2f7
+spec_id: ADR-22
+agreed_id: ADR-22
+title: 'Question selection weight: weight:N tags + in-app selection now; first-class AIDA field deferred'
+description: |-
+  Operation: the session engine (EPIC-6 NextQuestionStrategy) selects the next question among the begets-successors of the current node, ranked/weighted-sampled by weight; EPIC-10 re-weights questions from insightful/unhelpful feedback. The candidate set is small (one node's begets successors), so selection is a BOUNDED IN-APP max/weighted-sample — no substrate-side numeric ops required.
+
+  Decision: use weight:N tags (0-100), per docs/architecture/graph-schema.md, computed in-app. This matches AIDA's established pattern (tags + the priority enum; scored attrs like complexity: are word-valued tags). Zero schema change.
+
+  Deferred (NOT requested now): a first-class AIDA numeric field. It is warranted ONLY if a substrate-level operation appears that tags cannot do: (a) the aida graph walk itself should rank/weighted-sample successors, or (b) cross-bank numeric queries — range (weight>70), sort, sum/rollup, weighted-sampling distribution over the whole bank. Promotion trigger: in-app weight-tag re-parsing becomes a real cost, OR we need weighted traversal inside aida graph / cross-bank weighted queries.
+
+  If promoted, scope it concretely (per the aida advisor's guidance): a NODE field selection_weight: u8 (0-100) matching the doc, wired into the aida graph walk as ranked/weighted successor selection; per-edge begets weight is a possible later refinement. NOT a speculative general score: f64.
+
+  This is the VIS-2 driver to watch: if quizdom genuinely needs substrate-side weighted traversal, that is a concrete, generalizable AIDA capability (ranked blockers, weighted impact) worth a deliberate yes/no in ~/ai/aida — promoted by real friction, not added speculatively.
+status: Approved
+priority: Medium
+owner: ''
+feature: Uncategorized
+created_at: 2026-05-31T14:49:05.105592939Z
+modified_at: 2026-05-31T14:49:05.105592939Z
+req_type: Decision
+tags:
+- decision
+- graph
+- substrate
+- vis2
+- weighting
