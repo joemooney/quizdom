@@ -19,10 +19,3 @@
   note: Seed 'free will' cluster as real AIDA objects (Q + 2 term defs + probes/begets edges). Model is specified in EPIC-5; validates the schema via aida query_graph.
   added_at: 2026-05-31T14:19:12.338020084Z
   for_role: implementer
-- user_id: joe
-  requirement_id: 019e7e66-670e-79a2-960e-a0ff69e2b9bd
-  position: 3000
-  added_by: joe
-  note: Spec the per-user session log + promotion path (ADR-12). References STORY-14 schema.
-  added_at: 2026-05-31T14:19:13.051634800Z
-  for_role: implementer
