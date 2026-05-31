@@ -7,9 +7,15 @@ priority: Medium
 owner: ''
 feature: Uncategorized
 created_at: 2026-05-31T15:25:32.378133170Z
-modified_at: 2026-05-31T15:25:32.378133170Z
+modified_at: 2026-05-31T17:30:21.713508481Z
 req_type: Task
 tags:
 - from-implementer:STORY-15
 - kind:bug-spotted
 - severity:minor
+comments:
+- id: 019e7f16-3291-7a61-bb6f-953c18cd9a84
+  author: joe
+  content: 'Quizdom default branch renamed master->main (origin default + HEAD now main). This resolves the base-ref half of BUG-417 for THIS repo: aida pr ship assumes main, which now matches. The upstream AIDA bug (assume-main + CI-wait on no-workflow repos) remains valid generally — tracked as ~/ai/aida BUG-417.'
+  created_at: 2026-05-31T17:30:21.713508481Z
+  modified_at: 2026-05-31T17:30:21.713508481Z
