@@ -15,10 +15,15 @@ priority: Medium
 owner: ''
 feature: Uncategorized
 created_at: 2026-05-31T21:00:30.027556832Z
-modified_at: 2026-05-31T21:00:30.027556832Z
+modified_at: 2026-05-31T21:05:32.748313641Z
 req_type: Functional
 tags:
 - answer:free-text
 - seed
 - topic:free-will
 - weight:50
+relationships:
+- rel_type: !Custom begets
+  target_id: 019e7fdb-273e-7e63-94a3-b4b6d3db2a4a
+  created_at: 2026-05-31T21:05:32.748297288Z
+  created_by: joe
