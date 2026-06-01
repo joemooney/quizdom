@@ -9,12 +9,12 @@ description: |-
     Resume:  quizdom session resume sess-1780256438
 
   BUG-71 restores the strategy/backend on resume, so the command needs no --strategy flag. Lane: session.rs (end-of-session output) — disjoint from STORY-76 (input.rs styling) and STORY-77 (main.rs session show). ## Acceptance: every session-end message includes the session id + the exact resume command; tests cover the end paths.
-status: Approved
+status: InProgress
 priority: High
 owner: ''
 feature: Uncategorized
 created_at: 2026-06-01T04:38:58.107523007Z
-modified_at: 2026-06-01T04:38:58.107523007Z
+modified_at: 2026-06-01T05:35:46.955093987Z
 req_type: Story
 tags:
 - polish
