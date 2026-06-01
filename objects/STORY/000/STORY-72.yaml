@@ -8,7 +8,7 @@ priority: High
 owner: ''
 feature: Uncategorized
 created_at: 2026-06-01T01:29:10.762374435Z
-modified_at: 2026-06-01T02:33:59.324443607Z
+modified_at: 2026-06-01T02:34:11.192064124Z
 req_type: Story
 tags:
 - bank
@@ -26,3 +26,8 @@ comments:
   content: 'Wired ''quizdom curate [--user] [--session] [--log] [--branch]'' in main.rs dispatch + signals.rs run_curate(). Reads the user''s session log(s) (mirroring the contradictions command''s log resolution), folds them into one analysis pass, drives apply_log_signals over AidaCliQuestionBank + AidaCliQuestionReweighter (persists re-weights to AIDA), and prints a summary of weight changes. 7 new tests cover flag parsing, path resolution, summary rendering, and end-to-end wiring. Lane held: main.rs + lib.rs re-export + signals.rs only; session.rs untouched.'
   created_at: 2026-06-01T02:33:59.324443607Z
   modified_at: 2026-06-01T02:33:59.324443607Z
+- id: 019e8108-1578-75c3-b647-970e5ec087c7
+  author: joe
+  content: Commit 7d84e95 references this requirement
+  created_at: 2026-06-01T02:34:11.192064124Z
+  modified_at: 2026-06-01T02:34:11.192064124Z
