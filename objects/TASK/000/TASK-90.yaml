@@ -1,0 +1,35 @@
+id: 019e81a3-2cf9-7af3-9683-af8db7590ef5
+spec_id: TASK-90
+agreed_id: TASK-90
+title: STORY-76 gates color on a process-global flag (not threaded ColorChoice)
+description: |
+  style.rs gates colorization on a process-global AtomicBool (COLOR_ENABLED)
+  that defaults off; run_cli flips it on once at startup via init_from_env()
+  when stdout is a TTY and NO_COLOR is unset. Chosen over threading a
+  ColorChoice through render_question / render_term_definitions / the
+  contradiction renderer because that would have widened several session.rs +
+  honing.rs signatures for a cross-cutting display concern — the global is the
+  same pattern owo-colors/anstream/colored use.
+
+  Implications the advisor should know shipped:
+    - Tests stay plain because the global defaults off and tests call the
+      render fns directly (never run_cli). A future test that wants to assert
+      *styled* output must use style::paint_with(true, ..) rather than toggling
+      the global, to avoid racing other parallel tests.
+    - All quizdom subcommands share one process, so the flag is set once for the
+      session command; run_curate / run_contradictions don't enable it (out of
+      scope — they're not interactive session output).
+
+  Raised by the implementer while working STORY-76.
+  Branch: epic-11  ·  Commit: 02a7845  (PR link added on merge)
+status: Draft
+priority: Medium
+owner: ''
+feature: Uncategorized
+created_at: 2026-06-01T05:23:35.289817846Z
+modified_at: 2026-06-01T05:23:35.289817846Z
+req_type: Task
+tags:
+- from-implementer:STORY-76
+- kind:design-choice
+- severity:minor
