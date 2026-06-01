@@ -4,6 +4,7 @@ use crate::input::FreeTextInput;
 use crate::model::{Question, TermDefinition, TermMappingProposal};
 use crate::persist::UserSpecificTermPersister;
 use crate::strategy::NextQuestionStrategy;
+use crate::style;
 use std::io::{BufRead, Write};
 
 #[derive(Debug, Clone, Eq, PartialEq)]
@@ -181,7 +182,12 @@ pub(crate) fn render_term_definitions(
     if definitions.is_empty() {
         return Ok(());
     }
-    writeln!(output, "\nTerms to distinguish:")?;
+    // trace:STORY-76 | ai:claude — set off the surfaced TERM block by its header.
+    writeln!(
+        output,
+        "\n{}",
+        style::paint(style::term(), "Terms to distinguish:")
+    )?;
     for definition in definitions {
         let definition_kind = definition
             .tags
@@ -201,8 +207,15 @@ pub(crate) fn render_settled_term_definition(
     settled: &SettledTermDefinition,
     output: &mut impl Write,
 ) -> Result<()> {
-    // trace:STORY-44 | ai:codex
-    writeln!(output, "\nSettled meaning for {}:", settled.term_label)?;
+    // trace:STORY-44 | ai:codex  trace:STORY-76 | ai:claude
+    writeln!(
+        output,
+        "\n{}",
+        style::paint(
+            style::term(),
+            &format!("Settled meaning for {}:", settled.term_label)
+        )
+    )?;
     writeln!(
         output,
         "- {}: {}",
