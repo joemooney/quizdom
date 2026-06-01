@@ -1,0 +1,24 @@
+id: 019e8109-38b1-7f61-8f99-91351c15aad3
+spec_id: Q-73
+agreed_id: Q-73
+prefix_override: Q
+title: You say the soul changes its choice for emotional rather than rational reasons — but if an emotion tips the choice one way, either that emotion was already part of you (a prior fact about your soul) or it arose arbitrarily. Which is it, and how does that escape the very cause-or-chance dilemma you're trying to get past?
+description: |-
+  LLM-generated quizdom question.
+
+  answer: free-text
+  origin: Q-46
+
+  Generated from origin question: If the different choice isn't random and isn't fixed by anything that differed beforehand, what is it that makes it yours rather than just uncaused?
+status: Approved
+priority: Medium
+owner: ''
+feature: Uncategorized
+created_at: 2026-06-01T02:35:25.745771798Z
+modified_at: 2026-06-01T02:35:25.745771798Z
+req_type: Functional
+tags:
+- answer:free-text
+- seed
+- topic:free-will
+- weight:50
