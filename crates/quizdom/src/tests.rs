@@ -6,7 +6,7 @@ use crate::input::*;
 use crate::model::*;
 use crate::persist::{
     AidaCliGeneratedQuestionPersister, AidaCliUserSpecificTermPersister, CommandRunner,
-    UserSpecificTermPersister,
+    QuestionReweighter, UserSpecificTermPersister,
 };
 use crate::session::*;
 use crate::strategy::*;
@@ -86,6 +86,24 @@ fn parses_probes_relationships_from_aida_rel_list() {
     );
 }
 
+// trace:STORY-53 | ai:codex
+#[test]
+fn parses_question_ids_from_aida_list() {
+    let output = r#"ID             Type         Status     Priority   Title
+──────────────────────────────────────────────────────────────────────────
+Q-23           Functional   Approved   High       Do you believe in free will?
+BELIEF-28      Functional   Approved   Medium     Free will requires genuine alternatives
+Q-27           Functional   Approved   High       Can a choice be free if caused?
+
+3 requirements
+"#;
+
+    assert_eq!(
+        parse_question_list_ids(output),
+        vec!["Q-23".to_string(), "Q-27".to_string()]
+    );
+}
+
 #[test]
 fn parses_term_definition_from_aida_show() {
     let output = r#"ID: TERM-24
@@ -130,6 +148,43 @@ fn deterministic_strategy_uses_highest_weight_then_lowest_id() {
         .unwrap();
 
     assert_eq!(next.id, "Q-2");
+}
+
+// trace:STORY-53 | ai:codex
+#[test]
+fn punt_selection_skips_current_thread_and_current_topic() {
+    let bank = FakeBank::new([
+        question_with_tags(
+            "Q-1",
+            70,
+            AnswerKind::YesNo,
+            ["topic:free-will", "answer:yes-no", "weight:70"],
+        ),
+        question_with_tags(
+            "Q-thread",
+            90,
+            AnswerKind::YesNo,
+            ["topic:ethics", "answer:yes-no", "weight:90"],
+        ),
+        question_with_tags(
+            "Q-same-topic",
+            80,
+            AnswerKind::YesNo,
+            ["topic:free-will", "answer:yes-no", "weight:80"],
+        ),
+        question_with_tags(
+            "Q-other",
+            60,
+            AnswerKind::YesNo,
+            ["topic:meaning", "answer:yes-no", "weight:60"],
+        ),
+    ])
+    .with_edges("Q-1", ["Q-thread"]);
+
+    let next =
+        different_topic_punt_question(&bank.load_question("Q-1").unwrap(), &[], &bank).unwrap();
+
+    assert_eq!(next.unwrap().id, "Q-other");
 }
 
 // trace:STORY-48 | ai:claude
@@ -650,6 +705,64 @@ fn session_surfaces_probed_competing_definitions() {
     assert!(output.contains("free will / compatibilist"));
     assert!(output.contains("chosen otherwise"));
     assert!(output.contains("without coercion"));
+
+    let _ = fs::remove_file(path);
+}
+
+// trace:STORY-53 | ai:codex
+#[test]
+fn punt_jumps_to_different_topic_and_records_signal() {
+    let path = std::env::temp_dir().join(format!(
+        "quizdom-story-53-test-{}.jsonl",
+        std::process::id()
+    ));
+    let _ = fs::remove_file(&path);
+    let bank = FakeBank::new([
+        question_with_tags(
+            "Q-1",
+            70,
+            AnswerKind::YesNo,
+            ["topic:free-will", "answer:yes-no", "weight:70"],
+        ),
+        question_with_tags(
+            "Q-thread",
+            90,
+            AnswerKind::YesNo,
+            ["topic:free-will", "answer:yes-no", "weight:90"],
+        ),
+        question_with_tags(
+            "Q-other",
+            60,
+            AnswerKind::YesNo,
+            ["topic:meaning", "answer:yes-no", "weight:60"],
+        ),
+    ])
+    .with_edges("Q-1", ["Q-thread"]);
+    let config = test_config(&path, "Q-1");
+    let reweighter = RecordingQuestionReweighter::default();
+    let mut output = Vec::new();
+
+    run_session_with_question_reweighter(
+        &config,
+        &bank,
+        &DeterministicNextQuestionStrategy,
+        &reweighter,
+        "p\n/end\n".as_bytes(),
+        &mut output,
+    )
+    .unwrap();
+
+    let output = String::from_utf8(output).unwrap();
+    assert!(output.contains("Q-other"));
+    assert!(!output.contains("Q-thread"));
+    assert_eq!(
+        reweighter.calls.borrow().as_slice(),
+        &[("Q-1".to_string(), QualitySignal::Punted)]
+    );
+    let log = fs::read_to_string(&path).unwrap();
+    assert!(log.contains(r#""normalized_answer":"punt""#));
+    assert!(log.contains(r#""selected_next_question_ref":"Q-other""#));
+    assert!(log.contains("Punt selected a different-topic question."));
 
     let _ = fs::remove_file(path);
 }
@@ -1904,6 +2017,18 @@ impl ResolutionCommandRunner for RecordingCommandRunner {
     }
 }
 
+#[derive(Default)]
+struct RecordingQuestionReweighter {
+    calls: RefCell<Vec<(String, QualitySignal)>>,
+}
+
+impl QuestionReweighter for RecordingQuestionReweighter {
+    fn reweight_question(&self, question: &Question, signal: QualitySignal) -> Result<Question> {
+        self.calls.borrow_mut().push((question.id.clone(), signal));
+        Ok(question.clone())
+    }
+}
+
 fn command_output(success: bool, stdout: &str, stderr: &str) -> Output {
     Output {
         status: if success {
@@ -1979,6 +2104,10 @@ impl QuestionBank for FakeBank {
 
     fn begets(&self, id: &str) -> Result<Vec<QuestionRef>> {
         Ok(self.edges.get(id).cloned().unwrap_or_default())
+    }
+
+    fn all_questions(&self) -> Result<Vec<Question>> {
+        Ok(self.questions.values().cloned().collect())
     }
 
     fn probes(&self, id: &str) -> Result<Vec<TermRef>> {

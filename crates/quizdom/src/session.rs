@@ -14,12 +14,15 @@ use crate::input::{
     InputContext,
 };
 use crate::model::{Answer, AnswerKind, Question, TermDefinition};
-#[cfg(test)]
-use crate::persist::NoopUserSpecificTermPersister;
 use crate::persist::{
-    AidaCliGeneratedQuestionPersister, AidaCliUserSpecificTermPersister, UserSpecificTermPersister,
+    AidaCliGeneratedQuestionPersister, AidaCliQuestionReweighter, AidaCliUserSpecificTermPersister,
+    QuestionReweighter, UserSpecificTermPersister,
 };
-use crate::strategy::{AnsweredQuestion, StrategyContext};
+#[cfg(test)]
+use crate::persist::{NoopQuestionReweighter, NoopUserSpecificTermPersister};
+use crate::strategy::{
+    different_topic_punt_question, AnsweredQuestion, QualitySignal, StrategyContext,
+};
 use crate::strategy::{
     DeterministicNextQuestionStrategy, LlmNextQuestionStrategy, NextQuestionStrategy,
     WeightedNextQuestionStrategy,
@@ -506,6 +509,7 @@ pub(crate) fn run_session_with_term_persister(
 ) -> Result<()> {
     let contradiction_edges = AidaCliContradictsEdges::default();
     let contradiction_resolution_persister = AidaCliContradictionResolutionPersister::default();
+    let question_reweighter = AidaCliQuestionReweighter::default();
     run_session_from_current(
         config,
         bank,
@@ -513,6 +517,7 @@ pub(crate) fn run_session_with_term_persister(
         term_persister,
         &contradiction_edges,
         &contradiction_resolution_persister,
+        &question_reweighter,
         input,
         output,
         0,
@@ -558,6 +563,32 @@ pub(crate) fn run_session_with_contradiction_edges_and_resolution_persister(
         &NoopUserSpecificTermPersister,
         edges,
         resolution_persister,
+        &NoopQuestionReweighter,
+        input,
+        output,
+        0,
+        true,
+        Vec::new(),
+    )
+}
+
+#[cfg(test)]
+pub(crate) fn run_session_with_question_reweighter(
+    config: &CliConfig,
+    bank: &dyn QuestionBank,
+    strategy: &dyn NextQuestionStrategy,
+    question_reweighter: &dyn QuestionReweighter,
+    input: impl Read,
+    output: &mut impl Write,
+) -> Result<()> {
+    run_session_from_current(
+        config,
+        bank,
+        strategy,
+        &NoopUserSpecificTermPersister,
+        &AidaCliContradictsEdges::default(),
+        &crate::contradiction::NoopContradictionResolutionPersister,
+        question_reweighter,
         input,
         output,
         0,
@@ -573,6 +604,7 @@ fn run_session_from_current(
     term_persister: &dyn UserSpecificTermPersister,
     contradiction_edges: &dyn ContradictsEdges,
     contradiction_resolution_persister: &dyn ContradictionResolutionPersister,
+    question_reweighter: &dyn QuestionReweighter,
     input: impl Read,
     output: &mut impl Write,
     mut turn: u64,
@@ -721,6 +753,44 @@ fn run_session_from_current(
             &current,
             &answer,
         )?;
+        if answer.normalized == "punt" {
+            // trace:STORY-53 | ai:codex
+            let _updated =
+                question_reweighter.reweight_question(&current, QualitySignal::Punted)?;
+            match different_topic_punt_question(&current, &recent_path, bank)? {
+                Some(next) => {
+                    logger.next_question_selected(
+                        &config.session_id,
+                        &config.user_id,
+                        &config.branch_id,
+                        answered_turn,
+                        &current.id,
+                        &next.id,
+                        "Punt selected a different-topic question.",
+                    )?;
+                    recent_path.push(AnsweredQuestion {
+                        question_ref: current.id.clone(),
+                        question_text: current.title.clone(),
+                        raw_answer: answer.raw,
+                        normalized_answer: answer.normalized,
+                    });
+                    current = next;
+                    turn += 1;
+                    continue;
+                }
+                None => {
+                    writeln!(output, "No different-topic questions. Session complete.")?;
+                    logger.session_ended(
+                        &config.session_id,
+                        &config.user_id,
+                        &config.branch_id,
+                        answered_turn,
+                        "No different-topic punt target.",
+                    )?;
+                    break;
+                }
+            }
+        }
         if let Some(contradiction) = next_live_contradiction(
             &config.log_path,
             &config.branch_id,
@@ -1037,6 +1107,7 @@ fn resume_session_with_term_persister(
     let mut resumed_config = config.clone();
     resumed_config.seed = next_question_ref.clone();
     let recent_path = replay.recent_path();
+    let question_reweighter = AidaCliQuestionReweighter::default();
     run_session_from_current(
         &resumed_config,
         bank,
@@ -1044,6 +1115,7 @@ fn resume_session_with_term_persister(
         term_persister,
         &AidaCliContradictsEdges::default(),
         &AidaCliContradictionResolutionPersister::default(),
+        &question_reweighter,
         input,
         output,
         replay.next_turn,

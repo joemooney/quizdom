@@ -6,6 +6,9 @@ use std::process::Command;
 pub trait QuestionBank {
     fn load_question(&self, id: &str) -> Result<Question>;
     fn begets(&self, id: &str) -> Result<Vec<QuestionRef>>;
+    fn all_questions(&self) -> Result<Vec<Question>> {
+        Ok(Vec::new())
+    }
     fn probes(&self, _id: &str) -> Result<Vec<TermRef>> {
         Ok(Vec::new())
     }
@@ -51,6 +54,26 @@ impl QuestionBank for AidaCliQuestionBank {
         Ok(parse_begets_rel_list(&String::from_utf8_lossy(
             &output.stdout,
         )))
+    }
+
+    fn all_questions(&self) -> Result<Vec<Question>> {
+        // trace:STORY-53 | ai:codex
+        let output = Command::new(&self.command)
+            .args(["list", "--type", "functional", "--no-scope"])
+            .output()?;
+        if !output.status.success() {
+            return Err(QuizdomError::Aida(
+                String::from_utf8_lossy(&output.stderr).to_string(),
+            ));
+        }
+
+        let mut questions = Vec::new();
+        for id in parse_question_list_ids(&String::from_utf8_lossy(&output.stdout)) {
+            if let Ok(question) = self.load_question(&id) {
+                questions.push(question);
+            }
+        }
+        Ok(questions)
     }
 
     fn probes(&self, id: &str) -> Result<Vec<TermRef>> {
@@ -194,6 +217,17 @@ pub fn parse_probes_rel_list(output: &str) -> Vec<TermRef> {
     parse_rel_list(output, "probes")
         .into_iter()
         .map(|id| TermRef { id })
+        .collect()
+}
+
+// trace:STORY-53 | ai:codex
+pub fn parse_question_list_ids(output: &str) -> Vec<String> {
+    output
+        .lines()
+        .filter_map(|line| {
+            let id = line.split_whitespace().next()?;
+            id.starts_with("Q-").then(|| id.to_string())
+        })
         .collect()
 }
 
