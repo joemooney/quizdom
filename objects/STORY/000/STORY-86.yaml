@@ -1,0 +1,18 @@
+id: 019e8186-13da-7d62-964d-096ab248b818
+spec_id: STORY-86
+agreed_id: STORY-86
+title: 'LLM assist: dedup against the bank + refinement (approve flow)'
+description: 'Before persisting, run two LLM-backed steps the user approves: (1) DEDUP — search the bank for a near-duplicate question; if found, offer to reuse/link it instead of creating a rephrasing; (2) REFINE — the LLM critiques/improves phrasing, suggests the answer shape, flags weak-Socratic questions; the user approves the final wording or keeps their own. Degrade gracefully offline (skip both; add verbatim). Lane: strategy.rs/llm + bank.rs search. ## Acceptance: near-duplicate is detected + offered for reuse; refinement proposal returned for approval; offline path adds verbatim; mocked-LLM tests cover dedup + refine + approve + offline.'
+status: Approved
+priority: High
+owner: ''
+feature: Uncategorized
+created_at: 2026-06-01T04:51:48.314837340Z
+modified_at: 2026-06-01T04:51:48.314837340Z
+req_type: Story
+tags:
+- dedup
+- llm
+- refine
+- story
+- user-authored
