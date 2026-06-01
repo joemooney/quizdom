@@ -3,6 +3,9 @@ fn main() {
     let mut args = std::env::args().skip(1).peekable();
     let result = if args.peek().map(String::as_str) == Some("contradictions") {
         quizdom::run_contradictions(args, &mut std::io::stdout())
+    } else if args.peek().map(String::as_str) == Some("curate") {
+        // trace:STORY-72 | ai:claude
+        quizdom::run_curate(args, &mut std::io::stdout())
     } else {
         quizdom::run_cli(args, std::io::stdin(), std::io::stdout())
     };

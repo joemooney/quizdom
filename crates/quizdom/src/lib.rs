@@ -33,8 +33,8 @@ pub use persist::{
 pub use session::run_cli;
 // trace:STORY-68 | ai:claude
 pub use signals::{
-    analyze_session_log, apply_log_signals, signals_from_log, QuestionSignalStats, ReweightOutcome,
-    DEEP_BRANCH_DEPTH, PUNT_RATE_THRESHOLD,
+    analyze_session_log, apply_log_signals, run_curate, signals_from_log, QuestionSignalStats,
+    ReweightOutcome, DEEP_BRANCH_DEPTH, PUNT_RATE_THRESHOLD,
 };
 pub use strategy::{reweight, AnsweredQuestion, QualitySignal, StrategyContext};
 pub use strategy::{

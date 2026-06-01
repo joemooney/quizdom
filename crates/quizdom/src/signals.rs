@@ -9,14 +9,19 @@
 //! when asked, drives the existing [`QuestionReweighter`]. It never edits the
 //! session loop — mirroring the disjoint-from-the-loop discipline of STORY-66.
 
-use crate::bank::QuestionBank;
+use crate::bank::{AidaCliQuestionBank, QuestionBank};
 use crate::error::{QuizdomError, Result};
 use crate::model::Question;
-use crate::persist::QuestionReweighter;
+use crate::persist::{AidaCliQuestionReweighter, QuestionReweighter};
 use crate::strategy::QualitySignal;
 use serde_json::Value;
 use std::collections::{BTreeMap, BTreeSet};
-use std::io::{BufRead, BufReader, Read};
+use std::io::{BufRead, BufReader, Read, Write};
+use std::path::PathBuf;
+
+/// Default quizdom user whose session logs `quizdom curate` reads when no
+/// `--user` is given — matching the session loop's own default.
+const DEFAULT_USER: &str = "local-user";
 
 /// A question punted on at least this fraction of the times it was answered is
 /// treated as [`QualitySignal::Unhelpful`].
@@ -226,6 +231,168 @@ pub fn apply_log_signals(
         });
     }
     Ok(outcomes)
+}
+
+// --- `quizdom curate` command wiring (STORY-72) -----------------------------
+
+/// Parsed flags for the `quizdom curate` command.
+///
+/// Mirrors the `quizdom contradictions` command's log-resolution flags so the
+/// two share a mental model: `--log` reads one explicit file, `--session`
+/// reads one recorded session, otherwise every session for `--user` is folded
+/// together. `--branch` filters to a single session branch (default: all).
+#[derive(Debug)]
+struct CurateConfig {
+    user_id: String,
+    session_id: Option<String>,
+    log_path: Option<PathBuf>,
+    branch: Option<String>,
+}
+
+impl CurateConfig {
+    fn parse(args: impl IntoIterator<Item = String>) -> Result<Self> {
+        let mut user_id = DEFAULT_USER.to_string();
+        let mut session_id = None;
+        let mut log_path = None;
+        let mut branch = None;
+        let mut args = args.into_iter().peekable();
+
+        if matches!(args.peek().map(String::as_str), Some("curate")) {
+            args.next();
+        }
+
+        while let Some(arg) = args.next() {
+            match arg.as_str() {
+                "--user" => user_id = next_arg(&mut args, "--user")?,
+                "--session" => session_id = Some(next_arg(&mut args, "--session")?),
+                "--log" => log_path = Some(PathBuf::from(next_arg(&mut args, "--log")?)),
+                "--branch" => branch = Some(next_arg(&mut args, "--branch")?),
+                "--help" | "-h" => return Err(QuizdomError::Usage(curate_usage())),
+                other => {
+                    return Err(QuizdomError::Usage(format!(
+                        "unknown argument: {other}\n{}",
+                        curate_usage()
+                    )))
+                }
+            }
+        }
+
+        Ok(Self {
+            user_id,
+            session_id,
+            log_path,
+            branch,
+        })
+    }
+
+    /// The log files to read: an explicit `--log`, a single `--session`, or
+    /// every session recorded for `--user`. Mirrors the contradictions
+    /// command's resolution so both read the same on-disk layout.
+    fn log_paths(&self) -> Result<Vec<PathBuf>> {
+        if let Some(log_path) = &self.log_path {
+            return Ok(vec![log_path.clone()]);
+        }
+        let sessions_dir = PathBuf::from("data")
+            .join("users")
+            .join(&self.user_id)
+            .join("sessions");
+        if let Some(session_id) = &self.session_id {
+            return Ok(vec![sessions_dir.join(format!("{session_id}.jsonl"))]);
+        }
+        if !sessions_dir.exists() {
+            return Ok(Vec::new());
+        }
+        let mut paths = Vec::new();
+        for entry in std::fs::read_dir(&sessions_dir)? {
+            let path = entry?.path();
+            if path.extension().and_then(|ext| ext.to_str()) == Some("jsonl") {
+                paths.push(path);
+            }
+        }
+        paths.sort();
+        Ok(paths)
+    }
+}
+
+fn curate_usage() -> String {
+    "usage: quizdom curate [--user local-user] [--session sess-id] [--log path] [--branch main]"
+        .to_string()
+}
+
+fn next_arg(args: &mut impl Iterator<Item = String>, name: &str) -> Result<String> {
+    args.next()
+        .filter(|value| !value.is_empty())
+        .ok_or_else(|| QuizdomError::Usage(format!("{name} requires a value")))
+}
+
+/// Concatenate every (existing) log file into one buffer so signals fold
+/// across a user's whole history in a single analysis pass. A newline is
+/// inserted between files so the last record of one log can't merge with the
+/// first record of the next.
+fn read_logs(paths: &[PathBuf]) -> Result<Vec<u8>> {
+    let mut buffer = Vec::new();
+    for path in paths {
+        if !path.exists() {
+            continue;
+        }
+        let mut file = std::fs::File::open(path)?;
+        file.read_to_end(&mut buffer)?;
+        if buffer.last().is_some_and(|byte| *byte != b'\n') {
+            buffer.push(b'\n');
+        }
+    }
+    Ok(buffer)
+}
+
+/// Print a human-readable summary of what curation changed.
+fn render_curation(outcomes: &[ReweightOutcome], output: &mut impl Write) -> Result<()> {
+    if outcomes.is_empty() {
+        writeln!(
+            output,
+            "Nothing to curate: no questions earned a re-weight."
+        )?;
+        return Ok(());
+    }
+    writeln!(output, "Re-weighted {} question(s):", outcomes.len())?;
+    for outcome in outcomes {
+        let signal = outcome
+            .signal
+            .quality_tag()
+            .strip_prefix("quality:")
+            .unwrap_or("changed");
+        writeln!(
+            output,
+            "  {} [{}] -> weight {}",
+            outcome.question_ref, signal, outcome.question.weight
+        )?;
+    }
+    Ok(())
+}
+
+/// Run curation with caller-supplied bank + reweighter (the seam the command
+/// entry point and tests share).
+fn curate(
+    config: &CurateConfig,
+    bank: &dyn QuestionBank,
+    reweighter: &dyn QuestionReweighter,
+    output: &mut impl Write,
+) -> Result<()> {
+    let log = read_logs(&config.log_paths()?)?;
+    let outcomes = apply_log_signals(log.as_slice(), config.branch.as_deref(), bank, reweighter)?;
+    render_curation(&outcomes, output)
+}
+
+/// Entry point for the standalone `quizdom curate` command. Reads the user's
+/// session log(s), derives per-question quality signals (STORY-68), and applies
+/// the STORY-66 re-weighting — persisting each change to AIDA — then prints a
+/// summary of what moved. This is the wiring STORY-72 adds: the bank-evolution
+/// loop was built but, until now, nothing invoked it.
+// trace:STORY-72 | ai:claude
+pub fn run_curate(args: impl IntoIterator<Item = String>, output: &mut impl Write) -> Result<()> {
+    let config = CurateConfig::parse(args)?;
+    let bank = AidaCliQuestionBank::default();
+    let reweighter = AidaCliQuestionReweighter::default();
+    curate(&config, &bank, &reweighter, output)
 }
 
 #[cfg(test)]
@@ -439,5 +606,145 @@ mod tests {
             .expect("apply should succeed");
         assert!(outcomes.is_empty());
         assert!(reweighter.applied.borrow().is_empty());
+    }
+
+    // --- `quizdom curate` command wiring (STORY-72) ----------------------
+
+    use std::sync::atomic::{AtomicU32, Ordering};
+
+    fn strings<const N: usize>(args: [&str; N]) -> Vec<String> {
+        args.iter().map(|arg| arg.to_string()).collect()
+    }
+
+    /// Write `contents` to a unique temp file and return its path. Uniqueness
+    /// comes from pid + a process-wide counter so parallel tests don't collide.
+    fn temp_log(contents: &str) -> PathBuf {
+        static COUNTER: AtomicU32 = AtomicU32::new(0);
+        let nonce = COUNTER.fetch_add(1, Ordering::Relaxed);
+        let path = std::env::temp_dir().join(format!(
+            "quizdom-curate-{}-{}.jsonl",
+            std::process::id(),
+            nonce
+        ));
+        std::fs::write(&path, contents).expect("write temp log");
+        path
+    }
+
+    #[test]
+    fn curate_parses_all_flags() {
+        let config = CurateConfig::parse(strings([
+            "curate",
+            "--user",
+            "ada",
+            "--session",
+            "s-1",
+            "--log",
+            "/tmp/x.jsonl",
+            "--branch",
+            "main",
+        ]))
+        .expect("parse should succeed");
+        assert_eq!(config.user_id, "ada");
+        assert_eq!(config.session_id.as_deref(), Some("s-1"));
+        assert_eq!(config.log_path, Some(PathBuf::from("/tmp/x.jsonl")));
+        assert_eq!(config.branch.as_deref(), Some("main"));
+    }
+
+    #[test]
+    fn curate_defaults_to_local_user_and_all_branches() {
+        let config = CurateConfig::parse(strings(["curate"])).expect("parse should succeed");
+        assert_eq!(config.user_id, DEFAULT_USER);
+        assert!(config.session_id.is_none());
+        assert!(config.log_path.is_none());
+        assert!(config.branch.is_none());
+    }
+
+    #[test]
+    fn curate_rejects_unknown_flag() {
+        let error = CurateConfig::parse(strings(["curate", "--nope"])).unwrap_err();
+        assert!(matches!(error, QuizdomError::Usage(_)));
+    }
+
+    #[test]
+    fn curate_explicit_log_path_wins() {
+        let config = CurateConfig::parse(strings(["curate", "--log", "/tmp/only.jsonl"]))
+            .expect("parse should succeed");
+        assert_eq!(
+            config.log_paths().expect("paths"),
+            vec![PathBuf::from("/tmp/only.jsonl")]
+        );
+    }
+
+    #[test]
+    fn curate_reweights_logged_questions_and_summarizes() {
+        let log = temp_log(SAMPLE_LOG);
+        let config = CurateConfig {
+            user_id: DEFAULT_USER.to_string(),
+            session_id: None,
+            log_path: Some(log.clone()),
+            branch: Some("main".to_string()),
+        };
+        let mut questions = BTreeMap::new();
+        questions.insert("Q-1".to_string(), question("Q-1", 50));
+        questions.insert("Q-2".to_string(), question("Q-2", 50));
+        let bank = FakeBank { questions };
+        let reweighter = RecordingReweighter::default();
+
+        let mut output = Vec::new();
+        curate(&config, &bank, &reweighter, &mut output).expect("curate should succeed");
+        std::fs::remove_file(&log).ok();
+
+        // The command drove the re-weighting engine over exactly the
+        // non-neutral questions in the log.
+        assert_eq!(
+            *reweighter.applied.borrow(),
+            vec![
+                ("Q-1".to_string(), QualitySignal::Unhelpful),
+                ("Q-2".to_string(), QualitySignal::Insightful),
+            ]
+        );
+
+        let rendered = String::from_utf8(output).expect("utf8");
+        assert!(rendered.contains("Re-weighted 2 question(s):"));
+        assert!(rendered.contains("Q-1 [unhelpful] -> weight 38"));
+        assert!(rendered.contains("Q-2 [insightful] -> weight 62"));
+    }
+
+    #[test]
+    fn curate_reports_when_nothing_changed() {
+        let log = temp_log(""); // empty log -> no signals -> no re-weights
+        let config = CurateConfig {
+            user_id: DEFAULT_USER.to_string(),
+            session_id: None,
+            log_path: Some(log.clone()),
+            branch: None,
+        };
+        let bank = FakeBank {
+            questions: BTreeMap::new(),
+        };
+        let reweighter = RecordingReweighter::default();
+
+        let mut output = Vec::new();
+        curate(&config, &bank, &reweighter, &mut output).expect("curate should succeed");
+        std::fs::remove_file(&log).ok();
+
+        assert!(reweighter.applied.borrow().is_empty());
+        let rendered = String::from_utf8(output).expect("utf8");
+        assert!(rendered.contains("Nothing to curate"));
+    }
+
+    #[test]
+    fn run_curate_on_unknown_user_reports_nothing() {
+        // End-to-end through the real default bank + reweighter: a user with no
+        // session logs yields no outcomes, so neither the bank nor the
+        // reweighter ever shells out to aida.
+        let mut output = Vec::new();
+        run_curate(
+            strings(["curate", "--user", "no-such-user-xyz"]),
+            &mut output,
+        )
+        .expect("run_curate should succeed");
+        let rendered = String::from_utf8(output).expect("utf8");
+        assert!(rendered.contains("Nothing to curate"));
     }
 }
