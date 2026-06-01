@@ -1,0 +1,24 @@
+id: 019e817a-533b-7e32-912f-3360f56fe82c
+spec_id: STORY-80
+agreed_id: STORY-80
+title: Show session id + resume command on session end
+description: |-
+  When a session ends, the message (e.g. 'Session ended.' / 'No follow-up questions. Session complete.') gives no way back. Print the session id AND the exact resume command on EVERY end path (Q/quit, /end, dead-end, normal completion), e.g.:
+
+    Session sess-1780256438 ended.
+    Resume:  quizdom session resume sess-1780256438
+
+  BUG-71 restores the strategy/backend on resume, so the command needs no --strategy flag. Lane: session.rs (end-of-session output) — disjoint from STORY-76 (input.rs styling) and STORY-77 (main.rs session show). ## Acceptance: every session-end message includes the session id + the exact resume command; tests cover the end paths.
+status: Approved
+priority: High
+owner: ''
+feature: Uncategorized
+created_at: 2026-06-01T04:38:58.107523007Z
+modified_at: 2026-06-01T04:38:58.107523007Z
+req_type: Story
+tags:
+- polish
+- resume
+- session
+- story
+- ux
