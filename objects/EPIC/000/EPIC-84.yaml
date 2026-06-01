@@ -1,0 +1,45 @@
+id: 019e8185-e86d-79a0-9cfc-aa65f74461a8
+spec_id: EPIC-84
+agreed_id: EPIC-84
+title: 'User-authored questions: contribute to the bank (in-session + command, LLM-assisted)'
+description: |
+  Let the user contribute their own questions to the bank — the natural third
+  source alongside the hand-authored seed and LLM generation. Both **in-session**
+  (a key while exploring) and a **standalone command**, with **LLM-assisted
+  refinement the user approves**, dedup against the existing bank, provenance
+  tagging, and entry into EPIC-10 weighting/curation like any question.
+
+  ## Flow
+
+  1. User drafts a question (in-session or `quizdom question add`): text + answer
+     shape (yes-no | choice[...] | free-text) + optional link.
+  2. **Dedup** — check the bank for a near-duplicate; if found, offer to reuse/link
+     instead of creating a rephrasing.
+  3. **LLM refinement (approve)** — the LLM critiques/improves phrasing, suggests
+     the answer shape, and flags weak-Socratic or near-duplicate questions; the
+     user approves the final wording (or keeps their own).
+  4. **Persist** — create the Q-object (`--prefix Q`) tagged `source:user-authored`
+     + `answer:*` + `topic:*` + a neutral `weight:N`; link it (`begets` from the
+     current question in-session, `probes` a term, or a standalone seed).
+  5. It then participates in selection + EPIC-10 curation like any bank question.
+
+  ## Acceptance
+
+  - A user can add a question BOTH in-session (a control key) and via
+    `quizdom question add`.
+  - The LLM offers dedup + refinement; the user approves the final wording.
+  - The question persists to AIDA as a Q-object tagged `source:user-authored`,
+    linked into the graph, and is selectable in later sessions.
+  - Degrades gracefully offline (verbatim add + tagging; no LLM dedup/refine).
+status: Approved
+priority: Medium
+owner: ''
+feature: Uncategorized
+created_at: 2026-06-01T04:51:37.197656111Z
+modified_at: 2026-06-01T04:51:37.197656111Z
+req_type: Epic
+tags:
+- bank
+- contribution
+- epic
+- user-authored
