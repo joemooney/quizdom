@@ -137,3 +137,10 @@
   note: Autonomous drain (EPIC-11 polish + EPIC-84 user-authored). Work from the spec description; ship branch+PR base main (CI auto-merges).
   added_at: 2026-06-01T05:14:22.642491325Z
   for_role: implementer
+- user_id: joe
+  requirement_id: 019e81a4-3062-7421-a325-e1b650f27f5a
+  position: 19000
+  added_by: joe
+  note: auto-queued by `aida pr` (019e819d); covers 1 spec
+  added_at: 2026-06-01T05:24:48.707681978Z
+  for_role: reviewer
