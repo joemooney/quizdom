@@ -1295,6 +1295,179 @@ fn resume_without_session_uses_latest_session_log() {
     let _ = fs::remove_dir_all(Path::new("data").join("users").join(user));
 }
 
+// trace:STORY-82 | ai:claude
+// A PID that no live process owns: marker files naming it are stale and so the
+// session they guard is resumable. u32::MAX is never a valid Linux PID.
+const DEAD_PID: u32 = u32::MAX;
+
+// trace:STORY-82 | ai:claude
+fn write_session_log(dir: &Path, session_id: &str, occurred_at: &str) {
+    fs::write(
+        dir.join(format!("{session_id}.jsonl")),
+        format!(
+            r#"{{"event_id":"evt-000001","event_type":"session_started","occurred_at":"{occurred_at}","session_id":"{session_id}","user_id":"user","branch_id":"main","seed_question_ref":"Q-1"}}"#
+        ),
+    )
+    .unwrap();
+}
+
+// trace:STORY-82 | ai:claude
+fn mark_session_active(dir: &Path, session_id: &str, pid: u32) {
+    fs::write(dir.join(format!("{session_id}.active")), pid.to_string()).unwrap();
+}
+
+// trace:STORY-82 | ai:claude
+// Two live sessions plus one ended: bare resume must skip both live ones (even
+// though they are newer) and target the ended session.
+#[test]
+fn bare_resume_skips_active_sessions_and_targets_latest_ended() {
+    let user = format!("story-82-bare-{}", std::process::id());
+    let root = Path::new("data").join("users").join(&user);
+    let dir = root.join("sessions");
+    let _ = fs::remove_dir_all(&root);
+    fs::create_dir_all(&dir).unwrap();
+
+    write_session_log(&dir, "ended", "2026-05-31T10:00:00Z");
+    write_session_log(&dir, "live-older", "2026-05-31T11:00:00Z");
+    write_session_log(&dir, "live-newest", "2026-05-31T12:00:00Z");
+    // Both newer sessions are owned by this (live) process.
+    mark_session_active(&dir, "live-older", std::process::id());
+    mark_session_active(&dir, "live-newest", std::process::id());
+
+    let config = CliConfig::parse([
+        "session".to_string(),
+        "resume".to_string(),
+        "--user".to_string(),
+        user.clone(),
+    ])
+    .unwrap();
+
+    let resolved = resolve_resume_config(config).unwrap();
+    assert_eq!(resolved.session_id, "ended");
+    assert_eq!(resolved.log_path, dir.join("ended.jsonl"));
+
+    let _ = fs::remove_dir_all(root);
+}
+
+// trace:STORY-82 | ai:claude
+// A marker left by a dead process is stale, so its session is still the bare
+// resume target — a crash must not strand the newest session.
+#[test]
+fn bare_resume_treats_stale_marker_as_resumable() {
+    let user = format!("story-82-stale-{}", std::process::id());
+    let root = Path::new("data").join("users").join(&user);
+    let dir = root.join("sessions");
+    let _ = fs::remove_dir_all(&root);
+    fs::create_dir_all(&dir).unwrap();
+
+    write_session_log(&dir, "crashed-newest", "2026-05-31T12:00:00Z");
+    mark_session_active(&dir, "crashed-newest", DEAD_PID);
+
+    let config = CliConfig::parse([
+        "session".to_string(),
+        "resume".to_string(),
+        "--user".to_string(),
+        user.clone(),
+    ])
+    .unwrap();
+
+    let resolved = resolve_resume_config(config).unwrap();
+    assert_eq!(resolved.session_id, "crashed-newest");
+
+    let _ = fs::remove_dir_all(root);
+}
+
+// trace:STORY-82 | ai:claude
+// When every session is live, bare resume has nothing safe to attach to.
+#[test]
+fn bare_resume_refuses_when_all_sessions_active() {
+    let user = format!("story-82-allactive-{}", std::process::id());
+    let root = Path::new("data").join("users").join(&user);
+    let dir = root.join("sessions");
+    let _ = fs::remove_dir_all(&root);
+    fs::create_dir_all(&dir).unwrap();
+
+    write_session_log(&dir, "live", "2026-05-31T12:00:00Z");
+    mark_session_active(&dir, "live", std::process::id());
+
+    let config = CliConfig::parse([
+        "session".to_string(),
+        "resume".to_string(),
+        "--user".to_string(),
+        user.clone(),
+    ])
+    .unwrap();
+
+    let error = resolve_resume_config(config).unwrap_err();
+    assert!(
+        matches!(&error, QuizdomError::Usage(message) if message.contains("currently active")),
+        "expected a usage error about active sessions, got: {error:?}"
+    );
+
+    let _ = fs::remove_dir_all(root);
+}
+
+// trace:STORY-82 | ai:claude
+// Explicitly resuming a live session would double-attach two processes to one
+// log; refuse it.
+#[test]
+fn explicit_resume_of_active_session_is_refused() {
+    let user = format!("story-82-explicit-live-{}", std::process::id());
+    let root = Path::new("data").join("users").join(&user);
+    let dir = root.join("sessions");
+    let _ = fs::remove_dir_all(&root);
+    fs::create_dir_all(&dir).unwrap();
+
+    write_session_log(&dir, "sess-live", "2026-05-31T12:00:00Z");
+    mark_session_active(&dir, "sess-live", std::process::id());
+
+    let config = CliConfig::parse([
+        "session".to_string(),
+        "resume".to_string(),
+        "sess-live".to_string(),
+        "--user".to_string(),
+        user.clone(),
+    ])
+    .unwrap();
+
+    let error = resolve_resume_config(config).unwrap_err();
+    assert!(
+        matches!(&error, QuizdomError::Usage(message) if message.contains("currently active")),
+        "expected refusal to resume an in-use session, got: {error:?}"
+    );
+
+    let _ = fs::remove_dir_all(root);
+}
+
+// trace:STORY-82 | ai:claude
+// A stale marker (dead PID) does not block explicit resume — a crashed session
+// can be picked back up by id.
+#[test]
+fn explicit_resume_of_stale_session_is_allowed() {
+    let user = format!("story-82-explicit-stale-{}", std::process::id());
+    let root = Path::new("data").join("users").join(&user);
+    let dir = root.join("sessions");
+    let _ = fs::remove_dir_all(&root);
+    fs::create_dir_all(&dir).unwrap();
+
+    write_session_log(&dir, "sess-crashed", "2026-05-31T12:00:00Z");
+    mark_session_active(&dir, "sess-crashed", DEAD_PID);
+
+    let config = CliConfig::parse([
+        "session".to_string(),
+        "resume".to_string(),
+        "sess-crashed".to_string(),
+        "--user".to_string(),
+        user.clone(),
+    ])
+    .unwrap();
+
+    let resolved = resolve_resume_config(config).unwrap();
+    assert_eq!(resolved.session_id, "sess-crashed");
+
+    let _ = fs::remove_dir_all(root);
+}
+
 // trace:BUG-70 | ai:codex
 #[test]
 fn resume_accepts_positional_session_id_with_or_without_prefix() {
