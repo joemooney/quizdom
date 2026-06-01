@@ -12,6 +12,8 @@ mod signals;
 mod strategy;
 // trace:STORY-76 | ai:claude
 mod style;
+// trace:STORY-77 | ai:claude
+mod transcript;
 
 pub use bank::{
     parse_begets_rel_list, parse_probes_rel_list, parse_question_show, parse_term_show,
@@ -43,6 +45,8 @@ pub use strategy::{
     DeterministicNextQuestionStrategy, LlmNextQuestionStrategy, NextQuestionStrategy,
     WeightSampler, WeightedNextQuestionStrategy, XorShiftWeightSampler,
 };
+// trace:STORY-77 | ai:claude
+pub use transcript::{render_transcript, run_session_show};
 
 #[cfg(test)]
 mod tests;

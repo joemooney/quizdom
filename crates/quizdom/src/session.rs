@@ -182,7 +182,7 @@ impl CliConfig {
     }
 }
 
-fn normalize_session_id(value: &str) -> String {
+pub(crate) fn normalize_session_id(value: &str) -> String {
     // trace:BUG-70 | ai:codex
     if value.starts_with("sess-") {
         value.to_string()
@@ -260,6 +260,7 @@ fn usage() -> String {
         "  start                 Start a new session",
         "  resume [session-id]   Resume a session; omit session-id to resume latest",
         "  list                  List saved sessions for a user",
+        "  show <session-id>     Pretty-print a saved session's full transcript",
         "  fork                  Fork a proposition into agree/disagree branches",
         "",
         "Options:",
