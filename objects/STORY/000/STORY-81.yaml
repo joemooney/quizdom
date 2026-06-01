@@ -16,3 +16,7 @@ tags:
 - polish
 - session
 - story
+relationships:
+- rel_type: Child
+  target_id: 019e7e5e-eaf4-7502-9f78-c38964bf8293
+  created_at: 2026-06-01T04:39:33.855725113Z
