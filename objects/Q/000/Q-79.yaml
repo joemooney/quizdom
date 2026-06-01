@@ -1,0 +1,24 @@
+id: 019e8178-2ea7-7033-847e-c5013e398d48
+spec_id: Q-79
+agreed_id: Q-79
+prefix_override: Q
+title: 'You now add a key requirement: a choice is only free once you''ve *seen* how it plays out. But grant the soul that outcome-knowledge — when it then revises the note in light of what it saw, that revision is guided by the apprehended outcome, which is now just one more prior fact the soul possesses. So does ''needing to see the outcome'' actually dissolve the cause-or-chance fork, or does it only enrich the ''cause'' horn by feeding the outcome back in as another thing that shapes the soul''s choice?'
+description: |-
+  LLM-generated quizdom question.
+
+  answer: free-text
+  origin: Q-75
+
+  Generated from origin question: You've moved the 'I' to a soul outside time that reflects and revises each note. But grant it that vantage: when the soul reflects and decides to change a note, that decision is either shaped by what the soul already is and apprehends (a prior fact about the soul) or it isn't (arbitrary). What does stepping outside time add that dissolves the fork, rather than just relocating the same cause-or-chance choice one level up, into the soul?
+status: Approved
+priority: Medium
+owner: ''
+feature: Uncategorized
+created_at: 2026-06-01T04:36:37.671720152Z
+modified_at: 2026-06-01T04:36:37.671720152Z
+req_type: Functional
+tags:
+- answer:free-text
+- seed
+- topic:free-will
+- weight:50
