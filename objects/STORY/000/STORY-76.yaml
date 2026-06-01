@@ -8,7 +8,7 @@ priority: Medium
 owner: ''
 feature: Uncategorized
 created_at: 2026-06-01T04:27:02.168225974Z
-modified_at: 2026-06-01T05:23:01.048870511Z
+modified_at: 2026-06-01T05:24:19.525777741Z
 req_type: Story
 tags:
 - color
@@ -26,3 +26,22 @@ comments:
   content: Commit 02a7845 references this requirement
   created_at: 2026-06-01T05:23:01.048870511Z
   modified_at: 2026-06-01T05:23:01.048870511Z
+- id: 019e81a3-d9c5-73a0-8655-578532549e46
+  author: joe
+  content: |-
+    Implemented via commit 02a7845 (PR pending):
+
+    - New crate::style helper colorizes the question title, choice option
+      markers, the [Y/N/X/P/B/F/Q] control prompt, surfaced TERM-definition
+      headers (honing.rs), and contradiction prompts (styled distinctly via the
+      runtime:contradiction tag).
+    - Color gated on a process-global flag defaulting off; run_cli enables it at
+      startup only when stdout is a TTY and NO_COLOR is unset. Piped use and unit
+      tests stay byte-for-byte plain.
+    - Dep: anstyle (lightweight, no transitive deps).
+
+    Test status: 111/111 tests green (3 new in style.rs). Verified: piped
+    session output emits 0 escape sequences (non-TTY -> plain).
+    Follow-ups filed: TASK-89 (lane deviation), TASK-90 (global-flag design call).
+  created_at: 2026-06-01T05:24:19.525777741Z
+  modified_at: 2026-06-01T05:24:19.525777741Z
