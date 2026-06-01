@@ -1,0 +1,26 @@
+id: 019e81a4-3062-7421-a325-e1b650f27f5a
+spec_id: STORY-91
+agreed_id: STORY-91
+title: 'Review PR-33: EPIC-11: style session output (color/structure; honor NO_COLOR + non-TTY)'
+description: |
+  Auto-filed by `aida pr auto-queue-review` (typically from /aida-pr) (session `019e819d`) for branch `epic-11`.
+
+  - PR: <https://github.com/joemooney/quizdom/pull/33>
+  - Branch: `epic-11` → `main`
+
+  ## Covers
+
+  - STORY-76
+
+  ## Acceptance
+
+  - Generate a structured review prompt with `aida review prompt --pr 33` and verify each spec's acceptance criteria.
+  - Approve and merge, or request changes by spec id.
+  - Mark this story `completed` once the PR is merged.
+status: Approved
+priority: Medium
+owner: ''
+feature: Uncategorized
+created_at: 2026-06-01T05:24:41.698135699Z
+modified_at: 2026-06-01T05:24:41.698135699Z
+req_type: Story
