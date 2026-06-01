@@ -339,13 +339,39 @@ pub fn run_cli(
 
 pub(crate) fn resolve_resume_config(mut config: CliConfig) -> Result<CliConfig> {
     // trace:STORY-65 | ai:codex
+    // trace:STORY-82 | ai:claude
     if !config.session_id_provided && !config.log_path_provided {
-        let summary =
-            latest_session_summary(&session_log_dir(&config.user_id))?.ok_or_else(|| {
-                QuizdomError::Usage(format!("no sessions found for user {}", config.user_id))
+        // Bare resume targets the newest session that is NOT currently active.
+        // With several explorations possibly running at once, attaching to the
+        // most-recent-overall could collide with a live process; skip any
+        // session whose active marker names a live PID.
+        let dir = session_log_dir(&config.user_id);
+        let summaries = session_summaries(&dir)?;
+        if summaries.is_empty() {
+            return Err(QuizdomError::Usage(format!(
+                "no sessions found for user {}",
+                config.user_id
+            )));
+        }
+        let summary = summaries
+            .into_iter()
+            .find(|summary| !session_is_active(&summary.path))
+            .ok_or_else(|| {
+                QuizdomError::Usage(format!(
+                    "no resumable sessions for user {} (all are currently active)",
+                    config.user_id
+                ))
             })?;
         config.session_id = summary.session_id;
         config.log_path = summary.path;
+    } else if session_is_active(&config.log_path) {
+        // Explicit resume of a live session would double-attach two processes
+        // to one log; refuse. A stale marker (dead PID) is not active, so a
+        // crashed session remains explicitly resumable.
+        return Err(QuizdomError::Usage(format!(
+            "session {} is currently active; refusing to resume an in-use session",
+            config.session_id
+        )));
     }
     // trace:BUG-71 | ai:codex
     if !config.strategy_provided {
@@ -426,6 +452,67 @@ fn session_log_dir(user_id: &str) -> PathBuf {
 
 fn session_log_path(user_id: &str, session_id: &str) -> PathBuf {
     session_log_dir(user_id).join(format!("{session_id}.jsonl"))
+}
+
+// trace:STORY-82 | ai:claude
+// Liveness marker for a running session. Sessions are JSONL logs with no
+// inherent process-liveness signal, so we track "active" out-of-band: a
+// `<session>.active` file holding the owning PID sits next to the log. The
+// marker is written on session start and removed on clean end; a marker left
+// behind by a dead process is STALE and treated as resumable.
+fn session_active_marker_path(log_path: &Path) -> PathBuf {
+    log_path.with_extension("active")
+}
+
+// A session is active iff its marker exists AND records a live PID. A missing
+// marker, an unparseable one, or a marker naming a dead PID (stale, e.g. from a
+// crashed/killed process) all count as inactive — i.e. safe to resume.
+fn session_is_active(log_path: &Path) -> bool {
+    match fs::read_to_string(session_active_marker_path(log_path)) {
+        Ok(contents) => contents
+            .trim()
+            .parse::<u32>()
+            .map(process_is_alive)
+            .unwrap_or(false),
+        Err(_) => false,
+    }
+}
+
+#[cfg(target_os = "linux")]
+fn process_is_alive(pid: u32) -> bool {
+    pid != 0 && Path::new("/proc").join(pid.to_string()).exists()
+}
+
+#[cfg(not(target_os = "linux"))]
+fn process_is_alive(pid: u32) -> bool {
+    // Non-Linux fallback: without /proc we cannot cheaply probe liveness, so we
+    // assume the recorded PID is live (conservative — never silently double-
+    // attaches). The marker is still cleared on clean end via the RAII guard.
+    pid != 0
+}
+
+// RAII guard that publishes the active marker on session start and clears it on
+// clean end (any return or unwind). A SIGKILL leaves the marker behind, which
+// `session_is_active` then recognises as stale via the dead PID.
+struct SessionActiveGuard {
+    marker_path: PathBuf,
+}
+
+impl SessionActiveGuard {
+    fn acquire(log_path: &Path) -> Result<Self> {
+        let marker_path = session_active_marker_path(log_path);
+        if let Some(parent) = marker_path.parent() {
+            fs::create_dir_all(parent)?;
+        }
+        fs::write(&marker_path, std::process::id().to_string())?;
+        Ok(Self { marker_path })
+    }
+}
+
+impl Drop for SessionActiveGuard {
+    fn drop(&mut self) {
+        let _ = fs::remove_file(&self.marker_path);
+    }
 }
 
 pub(crate) fn list_sessions(config: &CliConfig, output: &mut impl Write) -> Result<()> {
@@ -616,6 +703,10 @@ fn run_session_from_current(
 ) -> Result<()> {
     let mut input = BufReader::new(input);
     let mut free_text_input = FreeTextInput::from_stdin()?;
+    // trace:STORY-82 | ai:claude
+    // Mark this session active for its whole lifetime; the guard clears the
+    // marker on clean end so concurrent bare-resume never picks a live session.
+    let _active_guard = SessionActiveGuard::acquire(&config.log_path)?;
     let mut logger = SessionLogger::open(&config.log_path)?;
     let mut current = bank.load_question(&config.seed)?;
     let mut settled_terms = Vec::new();
@@ -1135,10 +1226,6 @@ pub(crate) struct SessionSummary {
     pub(crate) last_active_at: Option<String>,
     pub(crate) branch_id: Option<String>,
     pub(crate) last_question_answered: Option<String>,
-}
-
-pub(crate) fn latest_session_summary(dir: &Path) -> Result<Option<SessionSummary>> {
-    Ok(session_summaries(dir)?.into_iter().next())
 }
 
 pub(crate) fn session_summaries(dir: &Path) -> Result<Vec<SessionSummary>> {
