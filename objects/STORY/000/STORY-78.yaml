@@ -3,12 +3,12 @@ spec_id: STORY-78
 agreed_id: STORY-78
 title: In-session orientation breadcrumb (topic / depth / branch)
 description: 'Show a compact orientation line each turn: current topic, exploration depth, and branch (agree/disagree) so the user doesn''t feel lost in a long session. session.rs/input.rs. ## Acceptance: each turn shows topic+depth+branch; tests cover the breadcrumb.'
-status: NeedsAttention
+status: Approved
 priority: Low
 owner: ''
 feature: Uncategorized
 created_at: 2026-06-01T04:27:15.203125348Z
-modified_at: 2026-06-01T05:35:56.329245650Z
+modified_at: 2026-06-01T05:38:22.819843974Z
 req_type: Story
 tags:
 - orientation
@@ -19,10 +19,3 @@ relationships:
 - rel_type: Child
   target_id: 019e7e5e-eaf4-7502-9f78-c38964bf8293
   created_at: 2026-06-01T04:27:16.372718887Z
-failure_reason:
-  phase: implementer
-  phase_index: 1
-  kind: failed
-  detail: the implementer session exited 1 — it was aborted or errored
-  recovery_hint: 'Continue the implementer session: `aida queue work STORY-78 --resume`'
-  shelved_at: 2026-06-01T05:35:56.329245650Z
