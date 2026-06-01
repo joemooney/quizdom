@@ -13,7 +13,7 @@ priority: High
 owner: ''
 feature: Uncategorized
 created_at: 2026-06-01T04:41:06.286294045Z
-modified_at: 2026-06-01T06:53:13.592777377Z
+modified_at: 2026-06-01T07:00:51.060392311Z
 req_type: Story
 tags:
 - concurrency
@@ -25,3 +25,9 @@ relationships:
 - rel_type: Child
   target_id: 019e7e5e-eaf4-7502-9f78-c38964bf8293
   created_at: 2026-06-01T04:41:09.349988976Z
+comments:
+- id: 019e81fc-38f4-7b50-9bd0-e22b7960f8db
+  author: joe
+  content: Implemented per-session liveness markers for concurrency-safe resume. A '<session>.active' file (holding the owning PID) sits next to each JSONL log, written on session start via an RAII SessionActiveGuard and removed on clean end; a SIGKILL leaves a stale marker that session_is_active() recognizes as dead (PID not in /proc) and thus resumable. Bare 'session resume' now picks the newest session whose marker is absent/stale (skips live ones); explicit resume of a live session is refused (no double-attach). 6 new tests cover multi-session selection, stale-marker handling, and double-attach refusal. session.rs + tests.rs only.
+  created_at: 2026-06-01T07:00:51.060392311Z
+  modified_at: 2026-06-01T07:00:51.060392311Z
