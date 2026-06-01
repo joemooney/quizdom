@@ -543,12 +543,18 @@ where
             .enable_time()
             .build()
             .map_err(QuizdomError::Io)?;
-        let (text, _tool_calls) = runtime
-            .block_on(
-                self.client
-                    .call(SOCRATIC_SYSTEM_PROMPT, &[Message::user(prompt)], &[]),
-            )
-            .map_err(|error| QuizdomError::Aida(error.to_string()))?;
+        // trace:STORY-83 | ai:claude
+        // Show a 'thinking' spinner on stderr for the blocking call; the guard
+        // clears the line when it drops, before the answer is printed.
+        let call = {
+            let _spinner = crate::spinner::Spinner::start("thinking");
+            runtime.block_on(self.client.call(
+                SOCRATIC_SYSTEM_PROMPT,
+                &[Message::user(prompt)],
+                &[],
+            ))
+        };
+        let (text, _tool_calls) = call.map_err(|error| QuizdomError::Aida(error.to_string()))?;
         let next = apply_llm_decision(&text, &candidates)?;
         match next {
             Some(question) if question.id == "generated:llm" => self
