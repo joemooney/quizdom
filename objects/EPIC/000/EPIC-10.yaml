@@ -34,7 +34,7 @@ priority: Medium
 owner: ''
 feature: Uncategorized
 created_at: 2026-05-31T14:10:07.544177402Z
-modified_at: 2026-06-01T01:29:09.187101908Z
+modified_at: 2026-06-01T01:29:19.840598553Z
 req_type: Epic
 tags:
 - curation
@@ -70,3 +70,8 @@ comments:
   content: 'STORY-67 (weighted-probabilistic selection) merged PR #28 — new --strategy weighted; samples proportional to weight, excludes weight:0, keeps STORY-48 from-answer precedence. EPIC-10 3/4; STORY-68 (signals from logs) remains.'
   created_at: 2026-05-31T22:30:32.430648275Z
   modified_at: 2026-05-31T22:30:32.430648275Z
+- id: 019e80cc-b4e0-76f0-b86f-9aed54039c32
+  author: joe
+  content: 'Reopened: 4 stories (48/66/67/68) complete, but discovered apply_log_signals (STORY-68) has no caller — the bank-evolution loop never runs. Added a ''quizdom curate'' command story to wire it. Epic done when that lands.'
+  created_at: 2026-06-01T01:29:19.840598553Z
+  modified_at: 2026-06-01T01:29:19.840598553Z
