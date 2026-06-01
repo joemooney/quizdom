@@ -48,7 +48,7 @@ priority: High
 owner: ''
 feature: Uncategorized
 created_at: 2026-05-31T20:00:49.087516076Z
-modified_at: 2026-06-01T02:29:07.680448558Z
+modified_at: 2026-06-01T02:29:10.435730017Z
 req_type: Epic
 tags:
 - epic
@@ -96,3 +96,9 @@ relationships:
 - rel_type: Parent
   target_id: 019e8025-2879-78d2-bbb8-b14445c2204d
   created_at: 2026-05-31T22:26:25.306951743Z
+comments:
+- id: 019e8103-7ea3-7a03-8c42-0fb858f9efb3
+  author: joe
+  content: COMPLETE. Single-key Y/N/X/P (STORY-51), rustyline free-text (STORY-55), eXplore (STORY-52), Punt (STORY-53), B/F review+revise (STORY-69), Q-quit (STORY-64), resume discoverability (STORY-65), resume CLI ergonomics (BUG-70), resume strategy restore (BUG-71). The full belief-exploration interaction surface.
+  created_at: 2026-06-01T02:29:10.435730017Z
+  modified_at: 2026-06-01T02:29:10.435730017Z
