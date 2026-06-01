@@ -8,12 +8,12 @@ description: |-
   Implementation: a reusable spinner util (new spinner.rs) that animates on a BACKGROUND thread and writes to STDERR (so stdout / piped output stays clean), active ONLY when stderr is a TTY (no spinner in tests/pipes). Clear the spinner line before the next output. Wrap the LLM call in strategy.rs (LlmNextQuestionStrategy) for the primary next-question case; honing.rs / contradiction.rs can adopt the same util later.
 
   Lane: spinner.rs (new) + strategy.rs — disjoint from input.rs (STORY-76), main.rs (STORY-77), and the session.rs lifecycle bundle (STORY-80/81/82), so it can run as its own parallel task. ## Acceptance: interactive LLM calls show an animated spinner on stderr that clears when the answer arrives; non-TTY/piped shows nothing; existing tests unaffected.
-status: InProgress
+status: Completed
 priority: High
 owner: ''
 feature: Uncategorized
 created_at: 2026-06-01T04:48:19.117829902Z
-modified_at: 2026-06-01T06:33:45.076302077Z
+modified_at: 2026-06-01T06:33:48.971309687Z
 req_type: Story
 tags:
 - llm
