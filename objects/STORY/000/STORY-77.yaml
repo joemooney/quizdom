@@ -3,12 +3,12 @@ spec_id: STORY-77
 agreed_id: STORY-77
 title: 'quizdom session show <id>: pretty-print a full session transcript'
 description: 'Add a ''quizdom session show <id> [--user]'' command that pretty-prints a past exploration''s full path from the JSONL log: each question + the user''s answer, branch markers, surfaced definitions, and detected/resolved contradictions. Complements ''session list'' (which only shows the last question). Lane: main.rs (new subcommand, mirror ''contradictions''/''curate'') + a transcript renderer that reads logs — disjoint from input.rs. ## Acceptance: ''session show <id>'' renders the full Q&A path with branches + contradictions; tests cover rendering against a sample log.'
-status: Completed
+status: Done
 priority: Medium
 owner: ''
 feature: Uncategorized
 created_at: 2026-06-01T04:27:07.262010137Z
-modified_at: 2026-06-01T05:34:36.475304427Z
+modified_at: 2026-06-01T05:35:01.629137927Z
 req_type: Story
 tags:
 - cli
@@ -27,6 +27,8 @@ comments:
   created_at: 2026-06-01T05:31:45.723530605Z
   modified_at: 2026-06-01T05:31:45.723530605Z
 implementation_info:
-  implemented: false
+  implemented: true
+  implemented_at: 2026-06-01T05:35:01.629137927Z
+  implemented_by: joe
   completed_at: 2026-06-01T05:34:36.475304427Z
   completion_sha: bbf739aada042f3559bcd25880331c2e9d0383e5
