@@ -7,6 +7,7 @@ use crate::model::{
 use crate::persist::{GeneratedQuestionPersister, NoopGeneratedQuestionPersister};
 use llm::{LLMClient, Message};
 use serde_json::Value;
+use std::collections::BTreeSet;
 
 const SOCRATIC_SYSTEM_PROMPT: &str = "You are quizdom's Socratic belief-exploration engine. There are no correct answers. Explore and challenge the user's beliefs, probe semantic nuance, and prefer formal or shared definitions before bespoke meanings. Decide whether to select an existing follow-up question or generate one new concise follow-up question.";
 
@@ -205,6 +206,52 @@ fn successor_questions(current: &Question, bank: &dyn QuestionBank) -> Result<Ve
         .into_iter()
         .map(|question_ref| bank.load_question(&question_ref.id))
         .collect()
+}
+
+// trace:STORY-53 | ai:codex
+/// Select a punt target outside the current question's direct `begets` thread
+/// and outside the current topic. Ordered by weight then id to keep curation
+/// jumps deterministic while preferring stronger bank questions.
+pub(crate) fn different_topic_punt_question(
+    current: &Question,
+    recent_path: &[AnsweredQuestion],
+    bank: &dyn QuestionBank,
+) -> Result<Option<Question>> {
+    let current_topic = question_topic(current);
+    let thread_ids = bank
+        .begets(&current.id)?
+        .into_iter()
+        .map(|question_ref| question_ref.id)
+        .collect::<BTreeSet<_>>();
+    let answered_ids = recent_path
+        .iter()
+        .map(|answer| answer.question_ref.clone())
+        .collect::<BTreeSet<_>>();
+    let mut candidates = bank
+        .all_questions()?
+        .into_iter()
+        .filter(|question| question.id != current.id)
+        .filter(|question| !thread_ids.contains(&question.id))
+        .filter(|question| !answered_ids.contains(&question.id))
+        .filter(|question| question_topic(question) != current_topic)
+        .filter(|question| question.weight > 0)
+        .collect::<Vec<_>>();
+    candidates.sort_by(|left, right| {
+        right
+            .weight
+            .cmp(&left.weight)
+            .then_with(|| left.id.cmp(&right.id))
+    });
+    Ok(candidates.into_iter().next())
+}
+
+fn question_topic(question: &Question) -> Option<&str> {
+    question
+        .tags
+        .iter()
+        .find_map(|tag| tag.strip_prefix("topic:"))
+        .map(str::trim)
+        .filter(|topic| !topic.is_empty())
 }
 
 // trace:STORY-48 | ai:claude
