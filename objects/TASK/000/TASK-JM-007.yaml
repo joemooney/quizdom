@@ -1,5 +1,6 @@
 id: 019e8144-b382-77e3-9808-8adc3f597153
 spec_id: TASK-JM-007
+agreed_id: TASK-8
 title: Agent edited the SHARED main worktree despite running in an isolated session worktree (self-corrected)
 description: 'claude-2 on STORY-72, though running in an isolated worktree (quizdom-story-72), accidentally landed its first edits in the SHARED main worktree (/home/joe/ai/quizdom). It self-corrected — moved the diff to story-72 via patch and reverted main to clean before build/commit, so no harm. But: worktree isolation alone doesn''t prevent an agent from WRITING to the shared main checkout (wrong cwd / absolute path). Recurrence of the isolation-discipline family (cf TASK-JM-005/006). Mitigation candidates: agents verify cwd before edits; a pre-edit guard warning when a scoped session edits the main worktree; or harness-level scoping of file ops to the session worktree.'
 status: Draft

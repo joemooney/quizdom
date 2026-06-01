@@ -1,5 +1,6 @@
 id: 019e81ab-58a7-7962-9572-e8646dafcc35
 spec_id: TASK-JM-008
+agreed_id: TASK-7
 title: 'queue work autonomous drain: reviewer phase fails on PRs that back both a story AND its parent epic'
 description: 'Running ''aida queue work next N --no-human=both'' to drain a batch of EPIC-child stories: the implementer + CI phases pass, but phase 3 (headless reviewer) fails with ''PR-N has multiple backing specs: EPIC-X, STORY-Y. Use a single SPEC-ID.'' Cause: the PR title leads with the parent epic (''EPIC-11: ...'') while the commit references the story, so spec-extraction yields two backing specs and the reviewer resolver refuses. The drain then advances WITHOUT merging, stacking unmerged PRs off the same base — same-file stories later conflict. Mitigations: (a) PR title/commit should reference exactly ONE spec (the story, not its epic); (b) the reviewer resolver should pick the most-specific spec (the story) when an epic+child pair is present; (c) a true skip-review / autonomous-merge mode for solo drains. cf upstream BUG-412 (spec-extraction false positives).'
 status: Draft
