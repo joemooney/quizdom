@@ -13,7 +13,7 @@ priority: High
 owner: ''
 feature: Uncategorized
 created_at: 2026-06-01T04:48:19.117829902Z
-modified_at: 2026-06-01T06:33:42.589037587Z
+modified_at: 2026-06-01T06:33:45.076302077Z
 req_type: Story
 tags:
 - llm
@@ -32,3 +32,8 @@ comments:
   content: 'Added reusable spinner util (crates/quizdom/src/spinner.rs): ascii ''thinking'' spinner on a background thread, writes to stderr, active only when stderr is a TTY (inert handle otherwise), clears its line on drop before the next output. Wired into LlmNextQuestionStrategy::llm_next_question around the blocking next-question call. honing.rs/contradiction.rs can adopt the same util later.'
   created_at: 2026-06-01T06:33:42.589037587Z
   modified_at: 2026-06-01T06:33:42.589037587Z
+- id: 019e81e3-6974-7ae3-8c64-1d4a622be8b5
+  author: joe
+  content: Commit 4c7765f references this requirement
+  created_at: 2026-06-01T06:33:45.076302077Z
+  modified_at: 2026-06-01T06:33:45.076302077Z
