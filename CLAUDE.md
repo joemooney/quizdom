@@ -47,21 +47,42 @@ Layout: `Cargo.toml` (workspace) · `crates/quizdom/{src/main.rs,src/lib.rs}`.
 ## Agent working discipline
 
 Rules for driving the multi-agent fleet on this project (learned the hard way —
-see the VIS-2 findings):
+see the VIS-2 findings).
 
-- **Routing by agent type** — route **codex/antigravity** work via AIDA
-  **briefs** (`aida brief <agent> <SPEC> --note ...`); route **Claude Code**
-  implementers via the **queue** (`aida queue add <SPEC> --for implementer`,
-  picked up with `/aida-pickup`). codex has no `aida-pickup` skill. Never
-  queue+brief the same spec (the channels collide).
-- **Always launch implementers isolated** — start every implementer session
-  with `aida session start --owns <SPEC> --base main` so it runs in its own
-  sibling worktree + lease. Never `git checkout -b` in the shared main
-  worktree (causes lease/role bleed, scope bleed, and stale-branch breakage).
-- **Ship via branch + PR to `main`** (`ADR-21`). A spec is `Completed` only
-  when its PR **merges**; while a PR is open it's `in-progress`. Pure
-  AIDA-store data (e.g. seed clusters) lands via `aida push --store-only`, not
-  a code PR. Default branch is `main`.
+### Launch an implementer (one command, isolated)
+
+```bash
+aida agent new claude --role implementer --spec <SPEC>   # Claude implementer
+aida agent new codex  --role implementer --spec <SPEC>   # Codex implementer
+```
+
+`--spec` creates a scoped sibling worktree + lease, spawns the agent, and
+auto-prompts it to work `<SPEC>` — no `/aida-pickup`, no manual `aida session
+start`, no `cd`. NEVER `git checkout -b` in the shared main worktree (causes
+lease/role bleed, scope bleed, stale-branch breakage). Even inside a scoped
+worktree, verify cwd before editing — an agent can still accidentally write to
+the shared main checkout (a near-miss we hit). If a worktree already exists
+(e.g. prepped via `aida session start`), attach with `--cwd <worktree>` instead
+of `--spec` (which errors "already owned").
+
+### Work routing (advisor posts detail; agent reads it)
+
+- **codex** reads its detail from a **brief** the advisor posts:
+  `aida brief codex <SPEC> --note ...` → the agent sees it via
+  `aida brief list --for-agent codex`. (codex has no `/aida-pickup` skill.)
+- **claude** gets its detail from the `--spec` auto-prompt directly.
+- Keep parallel agents on **file-disjoint** specs — two implementers editing
+  the same file is the real failure mode.
+
+### Ship & reap
+
+- Ship via branch + PR to `main` (`ADR-21`). CI (`.github/workflows/ci.yml`)
+  runs fmt + clippy + test, so `aida pr ship` self-completes (no `gh` fallback).
+  A spec is `Completed` only when its PR **merges**. Pure AIDA-store data (e.g.
+  seed clusters) lands via `aida push --store-only`, not a code PR.
+- Reap a finished worktree from the MAIN repo (not from inside it): exit the
+  agent, then `aida session end <lease-id> --skip-ci -y` (`--skip-ci` avoids the
+  BUG-422 hang; lease ids from `aida session leases`).
 
 ## Discipline for AIDA-using sessions
 
