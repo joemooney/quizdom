@@ -8,12 +8,12 @@ description: |-
   Requires quizdom to track per-session ACTIVE state (today sessions are just JSONL logs with no liveness marker — distinct from AIDA agent leases): write an active marker (lock + PID) on session start, clear it on clean end. A session is 'active' iff its marker exists AND the process is alive — a STALE marker from a dead process is treated as resumable. Bare resume = newest session with no live active marker. Also guard: explicitly resuming an already-active session should warn/refuse (no double-attach).
 
   Lane: session.rs (resume resolution + active-state tracking) — bundle with STORY-80/81 (same session.rs lifecycle area). ## Acceptance: with two live sessions + one ended, bare resume picks the ended one; a stale marker (dead PID) is treated as resumable; resuming a live session is refused/warned; tests cover multi-session selection + stale-marker handling.
-status: NeedsAttention
+status: Approved
 priority: High
 owner: ''
 feature: Uncategorized
 created_at: 2026-06-01T04:41:06.286294045Z
-modified_at: 2026-06-01T05:35:30.869589973Z
+modified_at: 2026-06-01T05:38:19.016121038Z
 req_type: Story
 tags:
 - concurrency
@@ -25,10 +25,3 @@ relationships:
 - rel_type: Child
   target_id: 019e7e5e-eaf4-7502-9f78-c38964bf8293
   created_at: 2026-06-01T04:41:09.349988976Z
-failure_reason:
-  phase: implementer
-  phase_index: 1
-  kind: failed
-  detail: the implementer session exited 1 — it was aborted or errored
-  recovery_hint: 'Continue the implementer session: `aida queue work STORY-82 --resume`'
-  shelved_at: 2026-06-01T05:35:30.869589973Z
