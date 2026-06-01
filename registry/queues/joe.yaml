@@ -53,3 +53,10 @@
   note: 'Lane B (claude-2) next — EPIC-10 STORY-68: derive quality signals from session logs. DISJOINT from codex-1 (session.rs for BUG-71): read the JSONL logs in a NEW analysis fn / bank.rs ONLY — do NOT touch session.rs. End your STORY-67 session, then ''aida session start --owns STORY-68 --base main''. Derive per-question signals from EXISTING log events (branch productivity, revise frequency, contradiction involvement) and feed the STORY-66 re-weighting engine. NOTE: punt-rate signal depends on STORY-53 (Punt) which isn''t built yet — scope to available signals now; add punt-rate later. Ship branch+PR base main; Completed on merge.'
   added_at: 2026-05-31T22:30:34.111623585Z
   for_role: implementer
+- user_id: joe
+  requirement_id: 019e80cc-916a-7ba3-b634-039f416f6fd5
+  position: 7000
+  added_by: joe
+  note: 'Lane B (claude-2) next — EPIC-10 STORY-72: wire bank curation. DISJOINT from codex-1 (session.rs/strategy.rs for Punt): you touch main.rs (new ''curate'' subcommand dispatch) + signals.rs ONLY. Do NOT touch session.rs. Add ''quizdom curate [--user] [--log path]'' that runs apply_log_signals over the logs and applies re-weighting (mirror the ''quizdom contradictions'' command from STORY-57); print a summary of weight changes. Ship branch+PR base main; Completed on merge.'
+  added_at: 2026-06-01T01:29:44.213886512Z
+  for_role: implementer
