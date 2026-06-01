@@ -1,0 +1,17 @@
+id: 019e816f-9983-7bc2-a26a-5cfc630030e2
+spec_id: STORY-78
+agreed_id: STORY-78
+title: In-session orientation breadcrumb (topic / depth / branch)
+description: 'Show a compact orientation line each turn: current topic, exploration depth, and branch (agree/disagree) so the user doesn''t feel lost in a long session. session.rs/input.rs. ## Acceptance: each turn shows topic+depth+branch; tests cover the breadcrumb.'
+status: Approved
+priority: Low
+owner: ''
+feature: Uncategorized
+created_at: 2026-06-01T04:27:15.203125348Z
+modified_at: 2026-06-01T04:27:15.203125348Z
+req_type: Story
+tags:
+- orientation
+- polish
+- story
+- tui
