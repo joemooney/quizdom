@@ -88,11 +88,22 @@ decision`); progress in the EPIC tree (`aida list --type epic`).
   -p`, no API charges, ADR-39) and `AnthropicClient` (opt-in, API key). The
   `LlmNextQuestionStrategy` selects bank questions or mints new ones that
   persist back to the bank. Live `claude -p` smoke verified.
-- EPIC-8 (semantic honing), EPIC-9 (contradiction detection), EPIC-10 (bank
-  evolution), EPIC-11 (CLI/TUI polish) — draft, awaiting their turn.
+- **EPIC-8 (semantic honing) — complete.** Surface competing definitions →
+  capture the user's meaning → LLM-map to a formal definition → steer to adopt
+  it → record & reuse the settled meaning.
+- **EPIC-9 (contradiction detection) — complete.** Detect (graph + LLM) →
+  surface in-session → resolve (confirm `contradicts` edge + decision record).
+  `quizdom contradictions` lists them standalone.
+- **EPIC-10 (bank evolution) — complete.** Answer-conditioned follow-ons,
+  re-weighting engine, weighted-probabilistic selection, log-derived quality
+  signals, and `quizdom curate` to run the loop.
+- **EPIC-50 (interaction model) — complete.** Single-key Y/N/X/P/B/F/Q,
+  eXplore-then-honing, Punt-to-new-topic, B/F review+revise, resume
+  discoverability + strategy restoration.
+- **EPIC-11 (CLI/TUI polish)** — draft, low priority.
 
-The core vision (graph model + session engine + LLM) is functional; EPICs 8–11
-are enhancements.
+**The vision is feature-complete** (~108 tests, CI green, runs on the Max plan
+by default). Remaining work is EPIC-11 polish and whatever real use surfaces.
 
 Substrate gaps surfaced by dogfooding (VIS-2) are filed as findings or upstream
 `~/ai/aida` issues (FR-282 custom-edge traversal, BUG-415/417).
