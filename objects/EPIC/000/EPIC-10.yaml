@@ -29,12 +29,12 @@ description: |-
   - (Later) signals derived from session logs feed re-weighting.
 
   Done: STORY-48 (answer-conditioned follow-ons).
-status: Completed
+status: InProgress
 priority: Medium
 owner: ''
 feature: Uncategorized
 created_at: 2026-05-31T14:10:07.544177402Z
-modified_at: 2026-06-01T01:28:00.558904325Z
+modified_at: 2026-06-01T01:29:09.187101908Z
 req_type: Epic
 tags:
 - curation
