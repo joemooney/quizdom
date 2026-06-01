@@ -1,0 +1,24 @@
+id: 019e810f-daef-7f82-9c91-acc191379d4a
+spec_id: Q-74
+agreed_id: Q-74
+prefix_override: Q
+title: In your metaphor, when you choose the next note, you presumably choose one that fits the song so far rather than just any note. But that 'sense of what fits' is either shaped by the music already played (a prior fact about you) or it's a fresh leap unanchored to anything (arbitrary). So when you say 'I choose what song I wish to compose,' what is the 'I' whose wish guides the next note — and how is its guidance not just the cause-or-chance fork wearing a composer's hat?
+description: |-
+  LLM-generated quizdom question.
+
+  answer: free-text
+  origin: Q-73
+
+  Generated from origin question: You say the soul changes its choice for emotional rather than rational reasons — but if an emotion tips the choice one way, either that emotion was already part of you (a prior fact about your soul) or it arose arbitrarily. Which is it, and how does that escape the very cause-or-chance dilemma you're trying to get past?
+status: Approved
+priority: Medium
+owner: ''
+feature: Uncategorized
+created_at: 2026-06-01T02:42:40.495590398Z
+modified_at: 2026-06-01T02:42:40.495590398Z
+req_type: Functional
+tags:
+- answer:free-text
+- seed
+- topic:free-will
+- weight:50
