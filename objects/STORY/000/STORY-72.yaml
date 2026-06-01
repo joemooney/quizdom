@@ -1,0 +1,18 @@
+id: 019e80cc-916a-7ba3-b634-039f416f6fd5
+spec_id: STORY-72
+agreed_id: STORY-72
+title: 'Wire bank curation: ''quizdom curate'' command runs the log-signal re-weighting'
+description: 'STORY-68 built signals.rs (analyze_session_log, apply_log_signals) but NOTHING calls it (verified: apply_log_signals has no call site outside signals.rs/tests/lib.rs). So the bank-evolution loop is built but never RUNS — the bank doesn''t actually evolve. Add a ''quizdom curate [--user] [--log path]'' CLI command (main.rs dispatch + thin wiring, mirroring ''quizdom contradictions'' from STORY-57) that runs apply_log_signals over the user''s session logs and applies re-weighting (persisted to AIDA), reporting what changed. claude-2''s lane: main.rs + signals.rs ONLY — disjoint from codex-1''s session.rs (Punt). Auto-run-at-session-end touches session.rs and is deferred. ## Acceptance: ''quizdom curate'' runs the analysis over the logs and re-weights questions (persisted); prints a summary of weight changes; tests cover the command wiring.'
+status: Approved
+priority: High
+owner: ''
+feature: Uncategorized
+created_at: 2026-06-01T01:29:10.762374435Z
+modified_at: 2026-06-01T01:29:10.762374435Z
+req_type: Story
+tags:
+- bank
+- cli
+- curation
+- story
+- wiring
