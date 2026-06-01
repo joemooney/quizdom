@@ -1,0 +1,33 @@
+id: 019e81a3-1ad9-7040-b7a7-7097bf456052
+spec_id: TASK-89
+agreed_id: TASK-89
+title: STORY-76 styling touched honing.rs + session.rs beyond the 'input.rs + helper' lane
+description: |
+  The spec scoped the lane as "input.rs + a small style helper". The
+  implementation also edits:
+    - crates/quizdom/src/honing.rs (render_term_definitions /
+      render_settled_term_definition headers) — the spec explicitly asked to
+      "set off surfaced TERM definitions", and that text is rendered in
+      honing.rs, not input.rs.
+    - crates/quizdom/src/session.rs (run_cli) — one line to call
+      style::init_from_env() at the session entry, where the real stdout sink
+      is known.
+    - crates/quizdom/src/lib.rs (mod style) + Cargo.toml (anstyle dep).
+
+  All edits are disjoint from main.rs, so the parallel-agent file-disjointness
+  constraint the lane note was protecting is intact. Flagging only because the
+  file set is wider than the spec's one-line lane description implied.
+
+  Raised by the implementer while working STORY-76.
+  Branch: epic-11  ·  Commit: 02a7845  (PR link added on merge)
+status: Draft
+priority: Medium
+owner: ''
+feature: Uncategorized
+created_at: 2026-06-01T05:23:30.649132230Z
+modified_at: 2026-06-01T05:23:30.649132230Z
+req_type: Task
+tags:
+- from-implementer:STORY-76
+- kind:deviation
+- severity:cosmetic
