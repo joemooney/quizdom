@@ -286,6 +286,8 @@ pub fn run_cli(
     input: impl Read,
     mut output: impl Write,
 ) -> Result<()> {
+    // trace:STORY-76 | ai:claude — gate styled output on a real TTY + NO_COLOR.
+    crate::style::init_from_env();
     let config = CliConfig::parse(args)?;
     let bank = AidaCliQuestionBank::default();
     let deterministic = DeterministicNextQuestionStrategy;

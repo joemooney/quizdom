@@ -1,5 +1,6 @@
 use crate::error::{QuizdomError, Result};
 use crate::model::{Answer, AnswerKind, Question};
+use crate::style;
 use crossterm::event::{self, Event, KeyCode, KeyEventKind};
 use crossterm::terminal::{disable_raw_mode, enable_raw_mode};
 use rustyline::{Config as RustylineConfig, DefaultEditor, EditMode};
@@ -23,17 +24,44 @@ pub(crate) fn render_question_for(
     context: InputContext,
     output: &mut impl Write,
 ) -> Result<()> {
-    writeln!(output, "\n{}", question.title)?;
+    // trace:STORY-76 | ai:claude — a surfaced contradiction reuses this
+    // renderer; style its prompt distinctly so the tension reads as a flag,
+    // not just another question.
+    let title_style = if question
+        .tags
+        .iter()
+        .any(|tag| tag == "runtime:contradiction")
+    {
+        style::contradiction()
+    } else {
+        style::question()
+    };
+    writeln!(output, "\n{}", style::paint(title_style, &question.title))?;
     match &question.answer_kind {
-        AnswerKind::YesNo => writeln!(output, "{}", control_prompt("[Y] Yes  [N] No", context))?,
+        AnswerKind::YesNo => writeln!(
+            output,
+            "{}",
+            style::paint(
+                style::control(),
+                &control_prompt("[Y] Yes  [N] No", context)
+            )
+        )?,
         AnswerKind::Choice(options) => {
             for (index, option) in options.iter().enumerate() {
-                writeln!(output, "{}. {}", index + 1, option)?;
+                writeln!(
+                    output,
+                    "{} {}",
+                    style::paint(style::option(), &format!("{}.", index + 1)),
+                    option
+                )?;
             }
             writeln!(
                 output,
                 "{}",
-                control_prompt(&format!("[1-{}] Choose", options.len()), context)
+                style::paint(
+                    style::control(),
+                    &control_prompt(&format!("[1-{}] Choose", options.len()), context)
+                )
             )?;
         }
         AnswerKind::FreeText => writeln!(

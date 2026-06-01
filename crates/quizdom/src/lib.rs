@@ -10,6 +10,8 @@ mod session;
 // trace:STORY-68 | ai:claude
 mod signals;
 mod strategy;
+// trace:STORY-76 | ai:claude
+mod style;
 
 pub use bank::{
     parse_begets_rel_list, parse_probes_rel_list, parse_question_show, parse_term_show,
