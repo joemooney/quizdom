@@ -8,12 +8,12 @@ description: |-
   Requires quizdom to track per-session ACTIVE state (today sessions are just JSONL logs with no liveness marker — distinct from AIDA agent leases): write an active marker (lock + PID) on session start, clear it on clean end. A session is 'active' iff its marker exists AND the process is alive — a STALE marker from a dead process is treated as resumable. Bare resume = newest session with no live active marker. Also guard: explicitly resuming an already-active session should warn/refuse (no double-attach).
 
   Lane: session.rs (resume resolution + active-state tracking) — bundle with STORY-80/81 (same session.rs lifecycle area). ## Acceptance: with two live sessions + one ended, bare resume picks the ended one; a stale marker (dead PID) is treated as resumable; resuming a live session is refused/warned; tests cover multi-session selection + stale-marker handling.
-status: InProgress
+status: Completed
 priority: High
 owner: ''
 feature: Uncategorized
 created_at: 2026-06-01T04:41:06.286294045Z
-modified_at: 2026-06-01T07:00:51.060392311Z
+modified_at: 2026-06-01T07:02:02.265798616Z
 req_type: Story
 tags:
 - concurrency
@@ -31,3 +31,7 @@ comments:
   content: Implemented per-session liveness markers for concurrency-safe resume. A '<session>.active' file (holding the owning PID) sits next to each JSONL log, written on session start via an RAII SessionActiveGuard and removed on clean end; a SIGKILL leaves a stale marker that session_is_active() recognizes as dead (PID not in /proc) and thus resumable. Bare 'session resume' now picks the newest session whose marker is absent/stale (skips live ones); explicit resume of a live session is refused (no double-attach). 6 new tests cover multi-session selection, stale-marker handling, and double-attach refusal. session.rs + tests.rs only.
   created_at: 2026-06-01T07:00:51.060392311Z
   modified_at: 2026-06-01T07:00:51.060392311Z
+implementation_info:
+  implemented: false
+  completed_at: 2026-06-01T07:02:02.265798616Z
+  completion_sha: 389969bda1b7c9ba1d24321f88205bd4dd48b826
