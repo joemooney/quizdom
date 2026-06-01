@@ -8,7 +8,7 @@ priority: Medium
 owner: ''
 feature: Uncategorized
 created_at: 2026-06-01T04:27:07.262010137Z
-modified_at: 2026-06-01T05:25:37.275847025Z
+modified_at: 2026-06-01T05:31:45.723530605Z
 req_type: Story
 tags:
 - cli
@@ -20,3 +20,9 @@ relationships:
 - rel_type: Child
   target_id: 019e7e5e-eaf4-7502-9f78-c38964bf8293
   created_at: 2026-06-01T04:27:08.789009157Z
+comments:
+- id: 019e81aa-a8bb-7520-b55d-ec32575e4b3e
+  author: joe
+  content: Commit 7c816d9 references this requirement
+  created_at: 2026-06-01T05:31:45.723530605Z
+  modified_at: 2026-06-01T05:31:45.723530605Z
