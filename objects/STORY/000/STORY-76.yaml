@@ -1,0 +1,18 @@
+id: 019e816f-6698-7cb0-b55e-93cadaa10235
+spec_id: STORY-76
+agreed_id: STORY-76
+title: Styled session output (color/structure; honor NO_COLOR + non-TTY)
+description: 'The session output is functional but flat plain text. Color/structure it: highlight the question, list options, set off surfaced TERM definitions and contradictions, and style the [Y/N/X/P/B/F/Q] control prompt. Use a lightweight styling crate (anstyle/owo-colors). MUST honor NO_COLOR and degrade to plain when stdout is not a TTY (tests + piped use stay clean). Lane: input.rs + a small style helper — disjoint from main.rs work. ## Acceptance: interactive output is styled; NO_COLOR / non-TTY -> plain; existing tests unaffected.'
+status: Approved
+priority: Medium
+owner: ''
+feature: Uncategorized
+created_at: 2026-06-01T04:27:02.168225974Z
+modified_at: 2026-06-01T04:27:02.168225974Z
+req_type: Story
+tags:
+- color
+- output
+- polish
+- story
+- tui
