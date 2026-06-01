@@ -8,12 +8,12 @@ description: |-
   Requires quizdom to track per-session ACTIVE state (today sessions are just JSONL logs with no liveness marker — distinct from AIDA agent leases): write an active marker (lock + PID) on session start, clear it on clean end. A session is 'active' iff its marker exists AND the process is alive — a STALE marker from a dead process is treated as resumable. Bare resume = newest session with no live active marker. Also guard: explicitly resuming an already-active session should warn/refuse (no double-attach).
 
   Lane: session.rs (resume resolution + active-state tracking) — bundle with STORY-80/81 (same session.rs lifecycle area). ## Acceptance: with two live sessions + one ended, bare resume picks the ended one; a stale marker (dead PID) is treated as resumable; resuming a live session is refused/warned; tests cover multi-session selection + stale-marker handling.
-status: Approved
+status: InProgress
 priority: High
 owner: ''
 feature: Uncategorized
 created_at: 2026-06-01T04:41:06.286294045Z
-modified_at: 2026-06-01T04:41:06.286294045Z
+modified_at: 2026-06-01T05:35:29.179325611Z
 req_type: Story
 tags:
 - concurrency
