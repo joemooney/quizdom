@@ -9,6 +9,8 @@ mod persist;
 mod session;
 // trace:STORY-68 | ai:claude
 mod signals;
+// trace:STORY-83 | ai:claude
+mod spinner;
 mod strategy;
 // trace:STORY-76 | ai:claude
 mod style;
