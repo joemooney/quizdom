@@ -19,6 +19,52 @@ pub(crate) fn render_question(question: &Question, output: &mut impl Write) -> R
     render_question_for(question, InputContext::Frontier, output)
 }
 
+// trace:STORY-78 | ai:claude
+/// Render the in-session orientation breadcrumb shown each frontier turn:
+/// the current topic, exploration depth, and active branch. Keeping it on one
+/// compact dimmed line keeps the user oriented in a long session without
+/// crowding the question itself. The breadcrumb funnels through the same
+/// styling gate as everything else, so non-TTY / `NO_COLOR` / test output stays
+/// plain text.
+pub(crate) fn render_breadcrumb(
+    question: &Question,
+    depth: usize,
+    branch_id: &str,
+    output: &mut impl Write,
+) -> Result<()> {
+    let line = breadcrumb_line(question, depth, branch_id);
+    writeln!(output, "{}", style::paint(style::breadcrumb(), &line))?;
+    Ok(())
+}
+
+// trace:STORY-78 | ai:claude
+/// Pure formatter behind [`render_breadcrumb`], split out so the breadcrumb's
+/// content is unit-testable without a buffer or the styling global.
+pub(crate) fn breadcrumb_line(question: &Question, depth: usize, branch_id: &str) -> String {
+    format!(
+        "[topic: {} | depth: {} | branch: {}]",
+        breadcrumb_topic(question),
+        depth,
+        branch_id
+    )
+}
+
+// trace:STORY-78 | ai:claude
+/// The human-facing topic for the breadcrumb, read from the question's
+/// `topic:<slug>` tag (dashes rendered as spaces). Untagged questions — e.g. a
+/// runtime-minted contradiction prompt — fall back to a stable placeholder so
+/// the breadcrumb never disappears mid-session.
+fn breadcrumb_topic(question: &Question) -> String {
+    question
+        .tags
+        .iter()
+        .find_map(|tag| tag.strip_prefix("topic:"))
+        .map(str::trim)
+        .filter(|topic| !topic.is_empty())
+        .map(|topic| topic.replace('-', " "))
+        .unwrap_or_else(|| "(general)".to_string())
+}
+
 pub(crate) fn render_question_for(
     question: &Question,
     context: InputContext,
