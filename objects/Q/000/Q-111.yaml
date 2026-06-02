@@ -1,0 +1,24 @@
+id: 019e86ba-e3c8-7e72-9df3-726a30d9bb4f
+spec_id: Q-111
+agreed_id: Q-111
+prefix_override: Q
+title: 'Good — you''ve now pinned ''pretence'' to one precise thing: asserting a duty without the freedom that would ground it. So the no-freedom person who claims no duty is fully consistent, and only the one who smuggles in obligation pretends. Now turn that rule on your own side. Does freedom *by itself* entail duty — or is ''belief in freedom carries an obligation'' a second thing you assert, which the freedom doesn''t deliver on its own? Earlier you granted the obligation binds only because you adopted the belief that issues it. If so, the entailment isn''t free-standing: you too claim a duty whose ground you''ve merely posited. What makes freedom actually *yield* the obligation — rather than just being paired with it by your election — such that your ''carrying'' passes the very test that convicts the other side?'
+description: |-
+  LLM-generated quizdom question.
+
+  answer: free-text
+  origin: Q-110
+
+  Generated from origin question: But hear what your biconditional just did: it made the two sides perfectly symmetric — adopt the axiom and the duty follows; decline it and it doesn't, each branch internally faultless. So on this telling neither side is a pretence; both are valid inferences from their chosen premise. Yet a moment ago you called meaning-without-freedom *the* pretence. That charge can't come from the logic, since the no-freedom branch is just as consistent as yours. So where does 'pretence' enter? It seems to attach not to any incoherence but solely to having chosen the axiom you'd rather not — the other person's premise. Then isn't 'pretence' simply the name you give the axiom you declined, and 'carrying' the name you give the one you elected — the same act, honored on your side and indicted on theirs? If so, what is left of the distinction once we strip away which premise happens to be yours?
+status: Approved
+priority: Medium
+owner: ''
+feature: Uncategorized
+created_at: 2026-06-02T05:07:35.496487903Z
+modified_at: 2026-06-02T05:07:35.496487903Z
+req_type: Functional
+tags:
+- answer:free-text
+- seed
+- topic:free-will
+- weight:50
