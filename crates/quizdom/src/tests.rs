@@ -2818,3 +2818,115 @@ fn run_contradictions_reports_when_no_beliefs_found() {
     let rendered = String::from_utf8(output).unwrap();
     assert!(rendered.contains("No adopted beliefs found to analyze."));
 }
+
+// trace:STORY-78 | ai:claude
+#[test]
+fn breadcrumb_line_shows_topic_depth_and_branch() {
+    let question = question_with_tags(
+        "Q-1",
+        70,
+        AnswerKind::YesNo,
+        ["topic:free-will", "answer:yes-no", "weight:70"],
+    );
+
+    assert_eq!(
+        breadcrumb_line(&question, 0, "main"),
+        "[topic: free will | depth: 0 | branch: main]"
+    );
+    assert_eq!(
+        breadcrumb_line(&question, 3, "agree"),
+        "[topic: free will | depth: 3 | branch: agree]"
+    );
+}
+
+// trace:STORY-78 | ai:claude
+#[test]
+fn breadcrumb_line_falls_back_when_topic_tag_is_missing() {
+    // A runtime-minted prompt (e.g. a surfaced contradiction) carries no
+    // `topic:` tag; the breadcrumb must still render a stable placeholder.
+    let untagged = question_with_tags(
+        "contradiction-1",
+        0,
+        AnswerKind::FreeText,
+        ["runtime:contradiction"],
+    );
+
+    assert_eq!(
+        breadcrumb_line(&untagged, 2, "main"),
+        "[topic: (general) | depth: 2 | branch: main]"
+    );
+}
+
+// trace:STORY-78 | ai:claude
+#[test]
+fn render_breadcrumb_is_plain_text_when_styling_disabled() {
+    let question = question_with_tags(
+        "Q-1",
+        70,
+        AnswerKind::YesNo,
+        ["topic:meaning-of-life", "answer:yes-no", "weight:70"],
+    );
+    crate::style::set_enabled(false);
+    let mut output = Vec::new();
+
+    render_breadcrumb(&question, 1, "disagree", &mut output).unwrap();
+
+    let rendered = String::from_utf8(output).unwrap();
+    assert_eq!(
+        rendered,
+        "[topic: meaning of life | depth: 1 | branch: disagree]\n"
+    );
+    assert!(!rendered.contains('\u{1b}'), "no SGR escapes when plain");
+}
+
+// trace:STORY-78 | ai:claude
+#[test]
+fn session_shows_orientation_breadcrumb_each_turn() {
+    let path = std::env::temp_dir().join(format!(
+        "quizdom-story-78-test-{}.jsonl",
+        std::process::id()
+    ));
+    let _ = fs::remove_file(&path);
+    let bank = FakeBank::new([
+        question_with_tags(
+            "Q-1",
+            70,
+            AnswerKind::YesNo,
+            ["topic:free-will", "answer:yes-no", "weight:70"],
+        ),
+        question_with_tags(
+            "Q-2",
+            60,
+            AnswerKind::YesNo,
+            ["topic:meaning", "answer:yes-no", "weight:60"],
+        ),
+    ])
+    .with_edges("Q-1", ["Q-2"]);
+    let mut config = test_config(&path, "Q-1");
+    config.branch_id = "agree".to_string();
+    let mut output = Vec::new();
+
+    // Answer the seed (depth 0), then the follow-up (depth 1), then quit.
+    run_session(
+        &config,
+        &bank,
+        &DeterministicNextQuestionStrategy,
+        "yes\nyes\n".as_bytes(),
+        &mut output,
+    )
+    .unwrap();
+
+    let rendered = String::from_utf8(output).unwrap();
+    // First turn: seed question, nothing answered yet -> depth 0.
+    assert!(
+        rendered.contains("[topic: free will | depth: 0 | branch: agree]"),
+        "seed turn breadcrumb missing in:\n{rendered}"
+    );
+    // Second turn: one answer recorded on the path -> depth 1, new topic.
+    assert!(
+        rendered.contains("[topic: meaning | depth: 1 | branch: agree]"),
+        "follow-up turn breadcrumb missing in:\n{rendered}"
+    );
+
+    let _ = fs::remove_file(path);
+}

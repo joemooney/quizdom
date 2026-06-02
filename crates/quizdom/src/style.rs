@@ -87,6 +87,13 @@ pub(crate) fn contradiction() -> Style {
         .fg_color(Some(AnsiColor::Magenta.into()))
 }
 
+// trace:STORY-78 | ai:claude
+/// The in-session orientation breadcrumb (topic / depth / branch) — present
+/// every turn but secondary to the question, so dimmed like the control prompt.
+pub(crate) fn breadcrumb() -> Style {
+    Style::new().fg_color(Some(AnsiColor::BrightBlack.into()))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

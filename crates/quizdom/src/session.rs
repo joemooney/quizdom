@@ -10,8 +10,8 @@ use crate::honing::{
     render_settled_term_definition, render_term_definitions, term_label, SettledTermDefinition,
 };
 use crate::input::{
-    read_answer_or_end, render_question, render_question_for, AnswerInput, FreeTextInput,
-    InputContext,
+    read_answer_or_end, render_breadcrumb, render_question, render_question_for, AnswerInput,
+    FreeTextInput, InputContext,
 };
 use crate::model::{Answer, AnswerKind, Question, TermDefinition};
 use crate::persist::{
@@ -789,6 +789,12 @@ fn run_session_from_current(
                     answered_turn,
                     &current,
                 )?;
+                // trace:STORY-78 | ai:claude
+                // Lead each frontier turn with the orientation breadcrumb so a
+                // user deep in a long session always sees current topic, how far
+                // they've explored (depth = answered questions so far on this
+                // path), and which branch they're on.
+                render_breadcrumb(&current, recent_path.len(), &config.branch_id, output)?;
                 let probed_terms = load_probed_terms(bank, &current);
                 if let Some(settled) = settled_definition_for(&probed_terms, &settled_terms) {
                     render_settled_term_definition(settled, output)?;
