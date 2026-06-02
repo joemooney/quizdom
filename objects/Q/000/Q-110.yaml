@@ -1,0 +1,24 @@
+id: 019e86b8-ead3-73e2-b8b6-b1e8966854aa
+spec_id: Q-110
+agreed_id: Q-110
+prefix_override: Q
+title: 'But hear what your biconditional just did: it made the two sides perfectly symmetric — adopt the axiom and the duty follows; decline it and it doesn''t, each branch internally faultless. So on this telling neither side is a pretence; both are valid inferences from their chosen premise. Yet a moment ago you called meaning-without-freedom *the* pretence. That charge can''t come from the logic, since the no-freedom branch is just as consistent as yours. So where does ''pretence'' enter? It seems to attach not to any incoherence but solely to having chosen the axiom you''d rather not — the other person''s premise. Then isn''t ''pretence'' simply the name you give the axiom you declined, and ''carrying'' the name you give the one you elected — the same act, honored on your side and indicted on theirs? If so, what is left of the distinction once we strip away which premise happens to be yours?'
+description: |-
+  LLM-generated quizdom question.
+
+  answer: free-text
+  origin: Q-109
+
+  Generated from origin question: Notice what your answer did: it named what each belief obliges you to, but not what was asked — the test that makes one side honest seeing and the other pretence. By your own account the obligation only binds because you adopted the belief that issues it; it is luggage you packed yourself. So 'I carry it with me' describes your fidelity to a premise you elected, not a fact you found. What, then, distinguishes carrying a self-issued obligation faithfully from dressing up a preference as a duty — other than that you'd rather call your own a 'carrying' and the other side's a 'pretence'?
+status: Approved
+priority: Medium
+owner: ''
+feature: Uncategorized
+created_at: 2026-06-02T05:05:26.227572414Z
+modified_at: 2026-06-02T05:05:26.227572414Z
+req_type: Functional
+tags:
+- answer:free-text
+- seed
+- topic:free-will
+- weight:50
