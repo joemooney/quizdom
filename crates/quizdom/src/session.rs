@@ -182,6 +182,28 @@ impl CliConfig {
     }
 }
 
+// trace:STORY-80 | ai:claude
+// Every session-end path prints the session id plus the exact command to get
+// back in, so a finished session is never a dead end. BUG-71 restores the
+// strategy/backend on resume, so the resume command needs no `--strategy` flag
+// — the bare `quizdom session resume <id>` suffices.
+//
+// `preface` is the optional path-specific reason that carries information the
+// id line does not (e.g. "No follow-up questions."); the plain user-quit paths
+// pass `None` because "Session <id> ended." already says everything.
+fn render_session_end(
+    preface: Option<&str>,
+    session_id: &str,
+    output: &mut impl Write,
+) -> Result<()> {
+    if let Some(preface) = preface {
+        writeln!(output, "{preface}")?;
+    }
+    writeln!(output, "Session {session_id} ended.")?;
+    writeln!(output, "Resume:  quizdom session resume {session_id}")?;
+    Ok(())
+}
+
 pub(crate) fn normalize_session_id(value: &str) -> String {
     // trace:BUG-70 | ai:codex
     if value.starts_with("sess-") {
@@ -719,6 +741,12 @@ fn run_session_from_current(
     let mut settled_terms = Vec::new();
     let mut surfaced_contradictions = BTreeSet::new();
     let mut pending_revision: Option<(usize, Question, Answer)> = None;
+    // trace:STORY-80 | ai:claude
+    // A user quit at the frontier defers its end message until after the loop:
+    // an empty fresh session is discarded (STORY-81), and pointing the user at
+    // a resume command for a log we are about to delete would be a lie. We print
+    // the id + resume footer once we know the session survives.
+    let mut ended_at_frontier = false;
 
     if write_start_event {
         logger.session_started(
@@ -794,7 +822,8 @@ fn run_session_from_current(
                                 continue;
                             }
                             ReviewOutcome::End => {
-                                writeln!(output, "Session ended.")?;
+                                // trace:STORY-80 | ai:claude
+                                ended_at_frontier = true;
                                 logger.session_ended(
                                     &config.session_id,
                                     &config.user_id,
@@ -808,7 +837,8 @@ fn run_session_from_current(
                     }
                     AnswerInput::Forward => continue,
                     AnswerInput::End => {
-                        writeln!(output, "Session ended.")?;
+                        // trace:STORY-80 | ai:claude
+                        ended_at_frontier = true;
                         logger.session_ended(
                             &config.session_id,
                             &config.user_id,
@@ -882,7 +912,12 @@ fn run_session_from_current(
                     continue;
                 }
                 None => {
-                    writeln!(output, "No different-topic questions. Session complete.")?;
+                    // trace:STORY-80 | ai:claude
+                    render_session_end(
+                        Some("No different-topic questions. Session complete."),
+                        &config.session_id,
+                        output,
+                    )?;
                     logger.session_ended(
                         &config.session_id,
                         &config.user_id,
@@ -950,7 +985,12 @@ fn run_session_from_current(
                 turn += 1;
             }
             None => {
-                writeln!(output, "No follow-up questions. Session complete.")?;
+                // trace:STORY-80 | ai:claude
+                render_session_end(
+                    Some("No follow-up questions. Session complete."),
+                    &config.session_id,
+                    output,
+                )?;
                 logger.session_ended(
                     &config.session_id,
                     &config.user_id,
@@ -968,10 +1008,24 @@ fn run_session_from_current(
     // single answer is meaningless to resume and only clutters `session list`.
     // Close our handles (drop logger, then the active guard so its marker is
     // gone) before removing the log + marker so nothing is left on disk.
-    if write_start_event && !answer_recorded {
+    let discarded = write_start_event && !answer_recorded;
+    if discarded {
         drop(logger);
         drop(active_guard);
         discard_empty_session(&config.log_path)?;
+    }
+
+    // trace:STORY-80 | ai:claude
+    // Emit the deferred end footer for a user quit at the frontier. A discarded
+    // empty session prints a plain "Session ended." with no resume hint (the log
+    // is gone, so resuming would fail); a surviving session gets the id + the
+    // exact resume command so the user always has a way back in.
+    if ended_at_frontier {
+        if discarded {
+            writeln!(output, "Session ended.")?;
+        } else {
+            render_session_end(None, &config.session_id, output)?;
+        }
     }
 
     Ok(())
@@ -1078,7 +1132,8 @@ fn ask_contradiction_follow_up(
             Ok(false)
         }
         AnswerInput::End => {
-            writeln!(output, "Session ended.")?;
+            // trace:STORY-80 | ai:claude
+            render_session_end(None, &config.session_id, output)?;
             logger.session_ended(
                 &config.session_id,
                 &config.user_id,
@@ -1232,7 +1287,12 @@ fn resume_session_with_term_persister(
     replay.render(output)?;
 
     let Some(next_question_ref) = replay.next_question_ref.as_ref() else {
-        writeln!(output, "No saved follow-up question. Session complete.")?;
+        // trace:STORY-80 | ai:claude
+        render_session_end(
+            Some("No saved follow-up question. Session complete."),
+            &config.session_id,
+            output,
+        )?;
         return Ok(());
     };
 
