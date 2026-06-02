@@ -1,8 +1,8 @@
-use crate::bank::QuestionBank;
+use crate::bank::{find_near_duplicate, NearDuplicate, QuestionBank, DEDUP_SIMILARITY_THRESHOLD};
 use crate::error::{QuizdomError, Result};
 use crate::model::{
-    answer_kind_from_tags, from_answer_tag, Answer, AnswerKind, Question, TermDefinition,
-    TermMappingProposal,
+    answer_kind_from_tags, from_answer_tag, Answer, AnswerKind, Question, RefinementProposal,
+    TermDefinition, TermMappingProposal,
 };
 use crate::persist::{GeneratedQuestionPersister, NoopGeneratedQuestionPersister};
 use llm::{LLMClient, Message};
@@ -30,6 +30,71 @@ pub trait NextQuestionStrategy {
         _definitions: &[TermDefinition],
     ) -> Result<Option<TermMappingProposal>> {
         Ok(None)
+    }
+
+    // trace:STORY-86 | ai:claude
+    /// REFINE step of the approve flow: critique and improve a user-authored
+    /// question before it is persisted.
+    ///
+    /// Returns a [`RefinementProposal`] the user can approve (adopt the refined
+    /// wording / answer shape) or reject (keep their own). The default returns
+    /// `None` — no refinement available — so non-LLM strategies and the offline
+    /// path add the question verbatim.
+    fn refine_user_question(
+        &self,
+        _title: &str,
+        _answer_kind: &AnswerKind,
+    ) -> Result<Option<RefinementProposal>> {
+        Ok(None)
+    }
+}
+
+// trace:STORY-86 | ai:claude
+/// The outcome of the LLM-assisted pre-persistence pass over a user-authored
+/// question: the two approve-flow steps (DEDUP then REFINE) collapsed into one
+/// decision for the caller to act on.
+///
+/// `Duplicate` short-circuits persistence — the user is offered the existing
+/// bank question to reuse / link. Otherwise `Refinement` carries the LLM's
+/// proposal for the user to approve, and `Verbatim` means no duplicate and no
+/// refinement (e.g. the offline path), so the question is added as written.
+#[derive(Debug, Clone, PartialEq)]
+pub enum UserQuestionAssist {
+    /// A near-duplicate exists in the bank; offer it for reuse / linking.
+    Duplicate(NearDuplicate),
+    /// The LLM proposed an improvement for the user to approve or reject.
+    Refinement(RefinementProposal),
+    /// No duplicate and no refinement — persist the question verbatim.
+    Verbatim,
+}
+
+// trace:STORY-86 | ai:claude
+/// Run the two-step LLM-assisted approve flow for a user-authored question.
+///
+/// 1. **DEDUP** — search `bank` for a near-duplicate; if one clears
+///    [`DEDUP_SIMILARITY_THRESHOLD`] the result short-circuits to
+///    [`UserQuestionAssist::Duplicate`], offering reuse over a rephrasing.
+/// 2. **REFINE** — otherwise ask `strategy` to critique the phrasing; a
+///    proposal becomes [`UserQuestionAssist::Refinement`] for the user to
+///    approve.
+///
+/// Degrades gracefully offline: the dedup search is pure (always runs), and a
+/// failing / absent LLM yields no refinement, so the flow falls through to
+/// [`UserQuestionAssist::Verbatim`] and the caller adds the question as
+/// written.
+pub fn assist_user_question(
+    strategy: &dyn NextQuestionStrategy,
+    title: &str,
+    answer_kind: &AnswerKind,
+    bank: &[Question],
+) -> UserQuestionAssist {
+    if let Some(duplicate) = find_near_duplicate(title, bank, DEDUP_SIMILARITY_THRESHOLD) {
+        return UserQuestionAssist::Duplicate(duplicate);
+    }
+    match strategy.refine_user_question(title, answer_kind) {
+        Ok(Some(proposal)) => UserQuestionAssist::Refinement(proposal),
+        // Offline / error / no-op strategy: add the question verbatim.
+        Ok(None) | Err(_) => UserQuestionAssist::Verbatim,
     }
 }
 
@@ -524,6 +589,19 @@ where
         self.llm_map_term_meaning(term_label, meaning, definitions)
             .or(Ok(None))
     }
+
+    // trace:STORY-86 | ai:claude
+    /// REFINE step: ask the model to improve the user's phrasing. A failing
+    /// call (offline, provider error) degrades to `None` so the caller adds the
+    /// question verbatim.
+    fn refine_user_question(
+        &self,
+        title: &str,
+        answer_kind: &AnswerKind,
+    ) -> Result<Option<RefinementProposal>> {
+        self.llm_refine_user_question(title, answer_kind)
+            .or(Ok(None))
+    }
 }
 
 impl<C, P> LlmNextQuestionStrategy<C, P>
@@ -612,6 +690,103 @@ where
             ))
             .map_err(|error| QuizdomError::Aida(error.to_string()))?;
         parse_term_mapping(&text, definitions)
+    }
+
+    // trace:STORY-86 | ai:claude
+    fn llm_refine_user_question(
+        &self,
+        title: &str,
+        answer_kind: &AnswerKind,
+    ) -> Result<Option<RefinementProposal>> {
+        let prompt = refine_question_prompt(title, answer_kind);
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_time()
+            .build()
+            .map_err(QuizdomError::Io)?;
+        let (text, _tool_calls) = {
+            let _spinner = crate::spinner::Spinner::start("refining");
+            runtime.block_on(
+                self.client
+                    .call(REFINE_SYSTEM_PROMPT, &[Message::user(prompt)], &[]),
+            )
+        }
+        .map_err(|error| QuizdomError::Aida(error.to_string()))?;
+        parse_refinement(&text, title, answer_kind)
+    }
+}
+
+// trace:STORY-86 | ai:claude
+const REFINE_SYSTEM_PROMPT: &str = "You are quizdom's Socratic question editor. Critique a user-authored belief-exploration question and improve its phrasing without changing its intent. Prefer open, non-leading wording that invites the user to examine a belief; flag questions that are leading, purely factual, or answerable with a single fact as weak-Socratic. Suggest the answer shape (yes-no, free-text, or choice) that best fits the refined question.";
+
+// trace:STORY-86 | ai:claude
+fn refine_question_prompt(title: &str, answer_kind: &AnswerKind) -> String {
+    format!(
+        "User-authored question: {title}\nProposed answer mode: {mode}\n\nReturn only JSON: {{\"refined\":\"improved phrasing\",\"answer_mode\":\"yes-no|free-text|choice[a,b]\",\"weak_socratic\":true|false,\"rationale\":\"short reason\"}}. Keep the user's intent; improve clarity and Socratic openness.",
+        mode = answer_kind.mode(),
+    )
+}
+
+// trace:STORY-86 | ai:claude
+/// Parse the REFINE step's JSON into a [`RefinementProposal`].
+///
+/// Missing fields fall back to the user's own values: an absent or blank
+/// `refined` keeps `title`, an unrecognized `answer_mode` keeps the proposed
+/// `answer_kind`. Returns `None` when the proposal is a no-op — same wording,
+/// same shape, and not flagged weak — so the caller adds the question verbatim
+/// rather than prompting the user to approve an identical rewrite.
+pub(crate) fn parse_refinement(
+    text: &str,
+    title: &str,
+    answer_kind: &AnswerKind,
+) -> Result<Option<RefinementProposal>> {
+    let value: Value = serde_json::from_str(text.trim())
+        .map_err(|error| QuizdomError::Parse(format!("invalid refinement JSON: {error}")))?;
+    let refined_title = value
+        .get("refined")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|refined| !refined.is_empty())
+        .unwrap_or(title)
+        .to_string();
+    let suggested_answer_kind = value
+        .get("answer_mode")
+        .and_then(Value::as_str)
+        .and_then(parse_answer_mode)
+        .unwrap_or_else(|| answer_kind.clone());
+    let weak_socratic = value
+        .get("weak_socratic")
+        .and_then(Value::as_bool)
+        .unwrap_or(false);
+    let rationale = value
+        .get("rationale")
+        .and_then(Value::as_str)
+        .unwrap_or("")
+        .trim()
+        .to_string();
+
+    // A no-op proposal (nothing changed, no warning) is not worth surfacing.
+    if refined_title == title && &suggested_answer_kind == answer_kind && !weak_socratic {
+        return Ok(None);
+    }
+    Ok(Some(RefinementProposal {
+        refined_title,
+        suggested_answer_kind,
+        weak_socratic,
+        rationale,
+    }))
+}
+
+// trace:STORY-86 | ai:claude
+/// Parse an `answer_mode` string (`yes-no`, `free-text`, or `choice[a,b]`) into
+/// an [`AnswerKind`], reusing the tag parser for the bracketed choice form.
+fn parse_answer_mode(mode: &str) -> Option<AnswerKind> {
+    match mode.trim() {
+        "yes-no" => Some(AnswerKind::YesNo),
+        "free-text" => Some(AnswerKind::FreeText),
+        other if other.starts_with("choice[") => {
+            answer_kind_from_tags(&[format!("answer:{other}")])
+        }
+        _ => None,
     }
 }
 
