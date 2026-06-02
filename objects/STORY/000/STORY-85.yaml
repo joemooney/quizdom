@@ -3,12 +3,12 @@ spec_id: STORY-85
 agreed_id: STORY-85
 title: 'Core: persist a user-authored question (Q-object + tags + graph link)'
 description: 'Given a question (text, answer shape, optional link target), create the Q-object via aida (--prefix Q --type functional) tagged source:user-authored + answer:<shape> + topic:<t> + a neutral weight:N, and link it (begets from an origin question, probes a term, or standalone seed). Reuse STORY-38''s persister patterns. Lane: persist.rs/bank.rs. Foundational. ## Acceptance: a user-authored question becomes a real Q-object with the right tags + link, reachable via aida and selectable later; tests cover create + each link kind.'
-status: Approved
+status: InProgress
 priority: High
 owner: ''
 feature: Uncategorized
 created_at: 2026-06-01T04:51:43.283278305Z
-modified_at: 2026-06-01T04:51:43.283278305Z
+modified_at: 2026-06-02T02:32:15.263949068Z
 req_type: Story
 tags:
 - bank
