@@ -34,7 +34,8 @@ pub use model::{
 };
 pub use persist::{
     GeneratedQuestionPersister, NoopGeneratedQuestionPersister, NoopQuestionReweighter,
-    QuestionReweighter,
+    NoopUserAuthoredQuestionPersister, QuestionLink, QuestionReweighter,
+    UserAuthoredQuestionPersister,
 };
 pub use session::run_cli;
 // trace:STORY-68 | ai:claude
