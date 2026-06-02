@@ -1,0 +1,24 @@
+id: 019e870c-3654-7520-b692-ea12b6fb09fd
+spec_id: Q-116
+agreed_id: Q-116
+prefix_override: Q
+title: 'Fair — let me answer it, then hand it back. The common denominator across your weighty labels looks like this: each names a way the new state *traces back to you* — it is yours to own, not merely something that befell you. Call it answerability. But test that denominator against your own set. Novelty and power were supposed to ''carry weight'' too — yet a storm has power and a mutation is novel without anyone being answerable for either. So either (a) answerability really is the shared root, in which case it is just Duty under an earlier name, and novelty/power were never truly in the set — which unsays your ''they all carry weight''; or (b) the genuine common denominator is something thinner that storms and mutations also have — mere difference-from-otherwise — and that gets you back exactly to Q-113''s ''difference matters,'' not to duty. So which common denominator did you mean: answerability, which is Duty smuggled in as the criterion for set-membership, or difference, which every label including the un-Freedom ones can claim? Name the denominator, and tell me whether it picks out Duty without already being it.'
+description: |-
+  LLM-generated quizdom question.
+
+  answer: free-text
+  origin: Q-115
+
+  Generated from origin question: Watch what you just traded away. For a dozen turns your whole edifice stood on *one* label and no other: not 'something different' but *Duty* — responsibility, good and evil, your being answerable for evil. That was the keystone that flipped meaning's asymmetry in your favor. Now you say the particular label doesn't matter, only that Freedom's set of fitting labels differs from un-Freedom's. But 'the difference is what matters' is exactly Q-113's point I already granted you — that freedom isn't idle. It buys *otherness*, nothing more. So you face a fork you can't have both ways: if the particular label is dispensable, then 'Duty' was dispensable too, and the responsibility-grounds-meaning argument loses the one beam holding it up. If instead Duty was load-bearing — if meaning needed *that* label and not 'novelty' or 'power' — then the particular label does matter and you still owe the tie-breaker you've spent two turns avoiding. Which beam do you keep: the indifference to labels that saves you from naming a tie-breaker, or the Duty that your account of meaning cannot stand without?
+status: Approved
+priority: Medium
+owner: ''
+feature: Uncategorized
+created_at: 2026-06-02T06:36:25.044368918Z
+modified_at: 2026-06-02T06:36:25.044368918Z
+req_type: Functional
+tags:
+- answer:free-text
+- seed
+- topic:free-will
+- weight:50
