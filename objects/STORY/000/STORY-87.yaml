@@ -3,12 +3,12 @@ spec_id: STORY-87
 agreed_id: STORY-87
 title: 'Standalone command: ''quizdom question add'''
 description: 'A ''quizdom question add [--user] [--seed Q] [--probes TERM]'' command (mirror ''quizdom curate''/''contradictions'' dispatch in main.rs) that prompts for the question text + answer shape, runs the dedup/refine/approve flow, and persists. Lane: main.rs + the prompt flow. ## Acceptance: the command authors a question end to end (with the LLM-assist + offline paths); tests cover the command wiring.'
-status: InProgress
+status: Completed
 priority: Medium
 owner: ''
 feature: Uncategorized
 created_at: 2026-06-01T04:51:53.027775642Z
-modified_at: 2026-06-02T02:49:48.148508864Z
+modified_at: 2026-06-02T02:50:59.322823018Z
 req_type: Story
 tags:
 - cli
