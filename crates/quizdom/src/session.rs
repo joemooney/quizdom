@@ -706,8 +706,15 @@ fn run_session_from_current(
     // trace:STORY-82 | ai:claude
     // Mark this session active for its whole lifetime; the guard clears the
     // marker on clean end so concurrent bare-resume never picks a live session.
-    let _active_guard = SessionActiveGuard::acquire(&config.log_path)?;
+    let active_guard = SessionActiveGuard::acquire(&config.log_path)?;
     let mut logger = SessionLogger::open(&config.log_path)?;
+    // trace:STORY-81 | ai:claude
+    // Track whether THIS run recorded any answer. A fresh start that quits
+    // before answering anything leaves an empty, un-resumable log; we discard
+    // it below so it never clutters `session list`. Resumed sessions
+    // (`write_start_event == false`) already carry prior answers, so they are
+    // meaningful even when the resumed run adds nothing.
+    let mut answer_recorded = false;
     let mut current = bank.load_question(&config.seed)?;
     let mut settled_terms = Vec::new();
     let mut surfaced_contradictions = BTreeSet::new();
@@ -847,6 +854,8 @@ fn run_session_from_current(
             &current,
             &answer,
         )?;
+        // trace:STORY-81 | ai:claude
+        answer_recorded = true;
         if answer.normalized == "punt" {
             // trace:STORY-53 | ai:codex
             let _updated =
@@ -954,7 +963,36 @@ fn run_session_from_current(
         }
     }
 
+    // trace:STORY-81 | ai:claude
+    // Discard an empty session: a fresh start that ended without recording a
+    // single answer is meaningless to resume and only clutters `session list`.
+    // Close our handles (drop logger, then the active guard so its marker is
+    // gone) before removing the log + marker so nothing is left on disk.
+    if write_start_event && !answer_recorded {
+        drop(logger);
+        drop(active_guard);
+        discard_empty_session(&config.log_path)?;
+    }
+
     Ok(())
+}
+
+// trace:STORY-81 | ai:claude
+// Remove an empty session's log plus any liveness marker left next to it.
+// Missing files are not an error (the active guard may have already cleared
+// its marker on drop), so absent paths are ignored.
+fn discard_empty_session(log_path: &Path) -> Result<()> {
+    remove_if_present(log_path)?;
+    remove_if_present(&session_active_marker_path(log_path))?;
+    Ok(())
+}
+
+fn remove_if_present(path: &Path) -> Result<()> {
+    match fs::remove_file(path) {
+        Ok(()) => Ok(()),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        Err(error) => Err(error.into()),
+    }
 }
 
 fn next_live_contradiction(
