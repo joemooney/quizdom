@@ -14,7 +14,7 @@ priority: High
 owner: ''
 feature: Uncategorized
 created_at: 2026-06-01T04:38:58.107523007Z
-modified_at: 2026-06-02T02:20:45.212987277Z
+modified_at: 2026-06-02T02:20:47.087730571Z
 req_type: Story
 tags:
 - polish
@@ -26,3 +26,9 @@ relationships:
 - rel_type: Child
   target_id: 019e7e5e-eaf4-7502-9f78-c38964bf8293
   created_at: 2026-06-01T04:38:59.359268382Z
+comments:
+- id: 019e8622-2c6f-7323-9112-cdac6811eb43
+  author: joe
+  content: 'Implemented render_session_end footer in crates/quizdom/src/session.rs: every session-end path (frontier /end & back-review End, no-follow-up completion, punt dead-end, contradiction End, resume dead-end) now prints ''Session <id> ended.'' + ''Resume:  quizdom session resume <id>'' (no --strategy flag per BUG-71). Discarded empty sessions (STORY-81) print a plain ''Session ended.'' with no resume hint since the log is removed. 5 unit tests cover the end paths.'
+  created_at: 2026-06-02T02:20:47.087730571Z
+  modified_at: 2026-06-02T02:20:47.087730571Z
