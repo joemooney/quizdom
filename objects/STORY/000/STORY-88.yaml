@@ -3,12 +3,12 @@ spec_id: STORY-88
 agreed_id: STORY-88
 title: In-session quick-add (a control key -> draft -> approve -> add + link)
 description: 'Add an in-session control (e.g. ''A'' for Add) that lets the user type a new question mid-exploration, runs the dedup/refine/approve flow, persists it tagged source:user-authored, and links it as a begets follow-on from the CURRENT question. Lane: session.rs/input.rs (coordinate with the session.rs lifecycle bundle STORY-80/81/82 + STORY-76 input.rs — same lane, sequence to avoid collision). ## Acceptance: pressing the add key mid-session authors + links a question from the current node; it appears as a begets successor in later sessions; tests cover the flow.'
-status: Approved
+status: Completed
 priority: Medium
 owner: ''
 feature: Uncategorized
 created_at: 2026-06-01T04:51:59.459884547Z
-modified_at: 2026-06-01T04:51:59.459884547Z
+modified_at: 2026-06-02T02:59:16.791904726Z
 req_type: Story
 tags:
 - input
