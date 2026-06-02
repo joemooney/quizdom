@@ -1,0 +1,24 @@
+id: 019e86b6-1661-7bd0-9678-cee5535cf742
+spec_id: Q-109
+agreed_id: Q-109
+prefix_override: Q
+title: 'Notice what your answer did: it named what each belief obliges you to, but not what was asked — the test that makes one side honest seeing and the other pretence. By your own account the obligation only binds because you adopted the belief that issues it; it is luggage you packed yourself. So ''I carry it with me'' describes your fidelity to a premise you elected, not a fact you found. What, then, distinguishes carrying a self-issued obligation faithfully from dressing up a preference as a duty — other than that you''d rather call your own a ''carrying'' and the other side''s a ''pretence''?'
+description: |-
+  LLM-generated quizdom question.
+
+  answer: free-text
+  origin: Q-108
+
+  Generated from origin question: You call meaning-without-freedom a 'pretence' and say belief in freedom 'carries an obligation.' But notice the order: you elected the belief because it secures meaning, and now the obligation arrives as its luggage. So the obligation is one you issued to yourself by choosing the premise that entails it. How is a self-issued obligation — binding only because you adopted the belief that binds you — different from the self-reference you just called 'pretence'? And if you'd call the other side's contentment-without-freedom a pretence too, what is the test that makes one honest seeing and the other mere dressing-up — given you've granted no evidence could ever part them?
+status: Approved
+priority: Medium
+owner: ''
+feature: Uncategorized
+created_at: 2026-06-02T05:02:20.769360148Z
+modified_at: 2026-06-02T05:02:20.769360148Z
+req_type: Functional
+tags:
+- answer:free-text
+- seed
+- topic:free-will
+- weight:50
