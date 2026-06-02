@@ -1,0 +1,24 @@
+id: 019e8716-62f8-7de1-ba33-d5c3fdb2b2b9
+spec_id: Q-117
+agreed_id: Q-117
+prefix_override: Q
+title: 'You''ve now named the denominator openly — answerability — and you exclude the storm''s power and the mutation''s novelty because no one is answerable for them. But watch how you drew the set: a power or a novelty earns a place among your ''weighty'' labels only once answerability is already in it; the agent-less instances you simply rule out as ''not what we mean.'' So answerability was never one common denominator among several independently weighty labels — it was the *sole* weight, and power and novelty were only ever answerability wearing other coats. That dissolves the very paradox you rested on at Q-113 (''they all carry weight''): there was one weight all along, and you''ve just named it Duty. Grant that. But it hands straight back the question this whole climb was meant to settle. A storm differs-from-otherwise too, yet isn''t answerable — so answerability is difference *plus* ''it traces back to you.'' What in freedom supplies that ''back to you'' — the ownership Q-46 first demanded — rather than your having merely stipulated that only agent-differences count as freedom''s? If it''s stipulation, ''answerability'' is the label you pin, not the thing freedom delivers; if it''s not, name what in freedom does the delivering.'
+description: |-
+  LLM-generated quizdom question.
+
+  answer: free-text
+  origin: Q-116
+
+  Generated from origin question: Fair — let me answer it, then hand it back. The common denominator across your weighty labels looks like this: each names a way the new state *traces back to you* — it is yours to own, not merely something that befell you. Call it answerability. But test that denominator against your own set. Novelty and power were supposed to 'carry weight' too — yet a storm has power and a mutation is novel without anyone being answerable for either. So either (a) answerability really is the shared root, in which case it is just Duty under an earlier name, and novelty/power were never truly in the set — which unsays your 'they all carry weight'; or (b) the genuine common denominator is something thinner that storms and mutations also have — mere difference-from-otherwise — and that gets you back exactly to Q-113's 'difference matters,' not to duty. So which common denominator did you mean: answerability, which is Duty smuggled in as the criterion for set-membership, or difference, which every label including the un-Freedom ones can claim? Name the denominator, and tell me whether it picks out Duty without already being it.
+status: Approved
+priority: Medium
+owner: ''
+feature: Uncategorized
+created_at: 2026-06-02T06:47:31.832186567Z
+modified_at: 2026-06-02T06:47:31.832186567Z
+req_type: Functional
+tags:
+- answer:free-text
+- seed
+- topic:free-will
+- weight:50
