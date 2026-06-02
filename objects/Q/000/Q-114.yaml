@@ -1,0 +1,24 @@
+id: 019e86c6-25b9-7c82-b319-60cccef6449f
+spec_id: Q-114
+agreed_id: Q-114
+prefix_override: Q
+title: 'You concede it: every candidate label — novelty, power, otherness — ''carries weight'' too. But look what that admission costs you. If all of them are weighty, then weight cannot be what singles out ''Duty''; the very feature you offer to justify the name is shared by every rival name equally. So either you have a tie-breaker that picks Duty over the others — name it, and tell me whether it comes from *freedom itself* or from you — or you don''t, and ''they all carry weight'' is just the confession that freedom yields a weighty blank you elect to sign ''Duty.'' Which is it: is the paradox a reason Duty is the *right* name, or the moment you admit no name was ever owed?'
+description: |-
+  LLM-generated quizdom question.
+
+  answer: free-text
+  origin: Q-113
+
+  Generated from origin question: Grant it: freedom must yield a Something unlike what un-freedom yields, or it makes no difference and is idle. But notice what that argument actually buys — only *difference*: that freedom changes something. It does not show the change is *obligation* rather than novelty, or power, or sheer otherness. So you've shown freedom is not idle; you have not shown its content is Duty. What in freedom narrows 'something different' down to *duty in particular* — rather than 'Duty' remaining merely the one name, among the many that difference could bear, which you still elect to pin on it?
+status: Approved
+priority: Medium
+owner: ''
+feature: Uncategorized
+created_at: 2026-06-02T05:19:53.273564740Z
+modified_at: 2026-06-02T05:19:53.273564740Z
+req_type: Functional
+tags:
+- answer:free-text
+- seed
+- topic:free-will
+- weight:50
