@@ -56,6 +56,26 @@ pub struct TermMappingProposal {
     pub rationale: String,
 }
 
+// trace:STORY-86 | ai:claude
+/// An LLM-proposed improvement to a user-authored question, presented for the
+/// user to approve before the question is persisted.
+///
+/// The user either approves the proposal (the refined wording / answer shape
+/// is adopted) or keeps their own phrasing verbatim. `weak_socratic` flags a
+/// question the LLM judged a poor Socratic prompt (e.g. leading, factual, or
+/// answerable with a single fact) so the UI can warn before persisting.
+#[derive(Debug, Clone, Eq, PartialEq)]
+pub struct RefinementProposal {
+    /// The LLM's improved phrasing of the question.
+    pub refined_title: String,
+    /// The answer shape the LLM suggests for the refined question.
+    pub suggested_answer_kind: AnswerKind,
+    /// True when the LLM judged the question a weak Socratic prompt.
+    pub weak_socratic: bool,
+    /// Short reason for the refinement / weak-Socratic flag.
+    pub rationale: String,
+}
+
 // trace:STORY-48 | ai:claude
 /// The triggering answer recorded on an answer-conditioned `begets` follow-on,
 /// read from a `from-answer:<value>` tag. `None` for unconditional follow-ons.

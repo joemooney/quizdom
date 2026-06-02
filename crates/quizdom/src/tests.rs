@@ -661,6 +661,172 @@ fn llm_strategy_flags_loaded_terms_from_free_text_answer() {
     assert_eq!(terms, vec!["free will".to_string()]);
 }
 
+// trace:STORY-86 | ai:claude
+/// A bank question with a real title (the shared `question` helper sets
+/// title == id, which is useless for dedup similarity).
+fn titled_question(id: &str, title: &str, weight: u32) -> Question {
+    Question {
+        id: id.to_string(),
+        title: title.to_string(),
+        tags: vec!["answer:yes-no".to_string(), format!("weight:{weight}")],
+        answer_kind: AnswerKind::YesNo,
+        weight,
+    }
+}
+
+// trace:STORY-86 | ai:claude
+#[test]
+fn llm_refine_proposes_improved_phrasing_for_approval() {
+    let strategy = LlmNextQuestionStrategy::new(MockLlm::ok(
+        r#"{"refined":"What makes a choice genuinely free?","answer_mode":"free-text","weak_socratic":false,"rationale":"opens the question up"}"#,
+    ));
+
+    let proposal = strategy
+        .refine_user_question("Is a choice free?", &AnswerKind::YesNo)
+        .unwrap()
+        .expect("LLM returned a refinement to approve");
+
+    assert_eq!(
+        proposal.refined_title,
+        "What makes a choice genuinely free?"
+    );
+    assert_eq!(proposal.suggested_answer_kind, AnswerKind::FreeText);
+    assert!(!proposal.weak_socratic);
+    assert_eq!(proposal.rationale, "opens the question up");
+}
+
+// trace:STORY-86 | ai:claude
+#[test]
+fn llm_refine_flags_weak_socratic_question() {
+    let strategy = LlmNextQuestionStrategy::new(MockLlm::ok(
+        r#"{"refined":"Is Paris the capital of France?","answer_mode":"yes-no","weak_socratic":true,"rationale":"purely factual, not a belief prompt"}"#,
+    ));
+
+    let proposal = strategy
+        .refine_user_question("Is Paris the capital of France?", &AnswerKind::YesNo)
+        .unwrap()
+        .expect("a weak-Socratic flag is surfaced even when wording is unchanged");
+
+    assert!(proposal.weak_socratic);
+    assert_eq!(proposal.suggested_answer_kind, AnswerKind::YesNo);
+}
+
+// trace:STORY-86 | ai:claude
+#[test]
+fn llm_refine_no_op_returns_none() {
+    // Same wording, same shape, not flagged -> nothing to approve.
+    let strategy = LlmNextQuestionStrategy::new(MockLlm::ok(
+        r#"{"refined":"Is the self continuous?","answer_mode":"yes-no","weak_socratic":false,"rationale":""}"#,
+    ));
+    let proposal = strategy
+        .refine_user_question("Is the self continuous?", &AnswerKind::YesNo)
+        .unwrap();
+    assert!(proposal.is_none());
+}
+
+// trace:STORY-86 | ai:claude
+#[test]
+fn llm_refine_degrades_to_none_when_offline() {
+    let strategy = LlmNextQuestionStrategy::new(MockLlm::err(LLMError::Provider(
+        "network unreachable".to_string(),
+    )));
+    let proposal = strategy
+        .refine_user_question("Is the self continuous?", &AnswerKind::YesNo)
+        .unwrap();
+    assert!(proposal.is_none());
+}
+
+// trace:STORY-86 | ai:claude
+#[test]
+fn assist_offers_existing_bank_question_for_reuse() {
+    let bank = vec![
+        titled_question("Q-1", "Is the self continuous over time?", 50),
+        titled_question("Q-2", "Does morality depend on consequences?", 50),
+    ];
+    // A near-duplicate short-circuits before the LLM is ever consulted, so a
+    // failing client must not change the outcome.
+    let strategy = LlmNextQuestionStrategy::new(MockLlm::err(LLMError::Provider(
+        "should not be called".to_string(),
+    )));
+
+    let outcome = assist_user_question(
+        &strategy,
+        "Over time, is the self continuous?",
+        &AnswerKind::YesNo,
+        &bank,
+    );
+
+    match outcome {
+        UserQuestionAssist::Duplicate(found) => {
+            assert_eq!(found.question.id, "Q-1");
+            assert!(found.similarity >= DEDUP_SIMILARITY_THRESHOLD);
+        }
+        other => panic!("expected a duplicate offer, got {other:?}"),
+    }
+}
+
+// trace:STORY-86 | ai:claude
+#[test]
+fn assist_returns_refinement_when_no_duplicate() {
+    let bank = vec![titled_question(
+        "Q-1",
+        "Does morality depend on outcomes?",
+        50,
+    )];
+    let strategy = LlmNextQuestionStrategy::new(MockLlm::ok(
+        r#"{"refined":"What makes a choice genuinely free?","answer_mode":"free-text","weak_socratic":false,"rationale":"opens it up"}"#,
+    ));
+
+    let outcome = assist_user_question(&strategy, "Is a choice free?", &AnswerKind::YesNo, &bank);
+
+    match outcome {
+        UserQuestionAssist::Refinement(proposal) => {
+            assert_eq!(
+                proposal.refined_title,
+                "What makes a choice genuinely free?"
+            );
+            assert_eq!(proposal.suggested_answer_kind, AnswerKind::FreeText);
+        }
+        other => panic!("expected a refinement proposal, got {other:?}"),
+    }
+}
+
+// trace:STORY-86 | ai:claude
+#[test]
+fn assist_adds_verbatim_when_offline_and_no_duplicate() {
+    let bank = vec![titled_question(
+        "Q-1",
+        "Does morality depend on outcomes?",
+        50,
+    )];
+    // No duplicate + a failing LLM (offline) -> add the question as written.
+    let strategy = LlmNextQuestionStrategy::new(MockLlm::err(LLMError::Provider(
+        "network unreachable".to_string(),
+    )));
+
+    let outcome = assist_user_question(&strategy, "Is a choice free?", &AnswerKind::YesNo, &bank);
+
+    assert_eq!(outcome, UserQuestionAssist::Verbatim);
+}
+
+// trace:STORY-86 | ai:claude
+#[test]
+fn assist_with_deterministic_strategy_adds_verbatim() {
+    // The deterministic (non-LLM) strategy never refines: no duplicate -> verbatim.
+    let bank = vec![titled_question(
+        "Q-1",
+        "Does morality depend on outcomes?",
+        50,
+    )];
+    let outcome = assist_user_question(
+        &DeterministicNextQuestionStrategy,
+        "Is a choice free?",
+        &AnswerKind::YesNo,
+        &bank,
+    );
+    assert_eq!(outcome, UserQuestionAssist::Verbatim);
+}
+
 #[test]
 fn session_surfaces_probed_competing_definitions() {
     let path = std::env::temp_dir().join(format!(
