@@ -1,0 +1,24 @@
+id: 019e86c3-3dc4-7f83-8e70-2bd04958e6ee
+spec_id: Q-113
+agreed_id: Q-113
+prefix_override: Q
+title: 'Grant it: freedom must yield a Something unlike what un-freedom yields, or it makes no difference and is idle. But notice what that argument actually buys — only *difference*: that freedom changes something. It does not show the change is *obligation* rather than novelty, or power, or sheer otherness. So you''ve shown freedom is not idle; you have not shown its content is Duty. What in freedom narrows ''something different'' down to *duty in particular* — rather than ''Duty'' remaining merely the one name, among the many that difference could bear, which you still elect to pin on it?'
+description: |-
+  LLM-generated quizdom question.
+
+  answer: free-text
+  origin: Q-112
+
+  Generated from origin question: You grant that freedom entails 'Something' — but in the same breath you concede you *choose* to call that Something 'Duty.' So the entailment delivers a blank, and 'Duty' is the name you elect to fill it. Then which is it? Either the Something already carries obligation's content — in which case tell me what *in freedom* puts it there, before any naming — or it is contentless until you stipulate 'Duty,' making the duty your label rather than freedom's gift. And if it's the latter, isn't that precisely the move you convicted in the other side: an obligation smuggled in by election, not grounded by the freedom — the very pretence, now wearing your own colors?
+status: Approved
+priority: Medium
+owner: ''
+feature: Uncategorized
+created_at: 2026-06-02T05:16:42.820528243Z
+modified_at: 2026-06-02T05:16:42.820528243Z
+req_type: Functional
+tags:
+- answer:free-text
+- seed
+- topic:free-will
+- weight:50
