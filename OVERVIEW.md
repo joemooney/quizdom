@@ -100,10 +100,16 @@ decision`); progress in the EPIC tree (`aida list --type epic`).
 - **EPIC-50 (interaction model) — complete.** Single-key Y/N/X/P/B/F/Q,
   eXplore-then-honing, Punt-to-new-topic, B/F review+revise, resume
   discoverability + strategy restoration.
-- **EPIC-11 (CLI/TUI polish)** — draft, low priority.
+- **EPIC-11 (CLI/TUI polish) — complete.** Styled output, thinking spinner,
+  orientation breadcrumb, session-end resume hints, empty-session discard,
+  concurrent-session-safe resume.
+- **EPIC-84 (user-authored questions) — complete.** Author questions into the
+  bank standalone (`quizdom question add`) or mid-session (the `A` key), with
+  LLM dedup + refinement.
 
-**The vision is feature-complete** (~108 tests, CI green, runs on the Max plan
-by default). Remaining work is EPIC-11 polish and whatever real use surfaces.
+**Every epic is complete** (~188 tests, CI green, runs on the Max plan by
+default). The product is the full vision plus the use-driven extensions; further
+work is driven entirely by real use.
 
 Substrate gaps surfaced by dogfooding (VIS-2) are filed as findings or upstream
 `~/ai/aida` issues (FR-282 custom-edge traversal, BUG-415/417).
