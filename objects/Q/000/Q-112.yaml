@@ -1,0 +1,24 @@
+id: 019e86bf-5453-7f40-9ce6-4a212f293325
+spec_id: Q-112
+agreed_id: Q-112
+prefix_override: Q
+title: 'You grant that freedom entails ''Something'' — but in the same breath you concede you *choose* to call that Something ''Duty.'' So the entailment delivers a blank, and ''Duty'' is the name you elect to fill it. Then which is it? Either the Something already carries obligation''s content — in which case tell me what *in freedom* puts it there, before any naming — or it is contentless until you stipulate ''Duty,'' making the duty your label rather than freedom''s gift. And if it''s the latter, isn''t that precisely the move you convicted in the other side: an obligation smuggled in by election, not grounded by the freedom — the very pretence, now wearing your own colors?'
+description: |-
+  LLM-generated quizdom question.
+
+  answer: free-text
+  origin: Q-111
+
+  Generated from origin question: Good — you've now pinned 'pretence' to one precise thing: asserting a duty without the freedom that would ground it. So the no-freedom person who claims no duty is fully consistent, and only the one who smuggles in obligation pretends. Now turn that rule on your own side. Does freedom *by itself* entail duty — or is 'belief in freedom carries an obligation' a second thing you assert, which the freedom doesn't deliver on its own? Earlier you granted the obligation binds only because you adopted the belief that issues it. If so, the entailment isn't free-standing: you too claim a duty whose ground you've merely posited. What makes freedom actually *yield* the obligation — rather than just being paired with it by your election — such that your 'carrying' passes the very test that convicts the other side?
+status: Approved
+priority: Medium
+owner: ''
+feature: Uncategorized
+created_at: 2026-06-02T05:12:26.451850810Z
+modified_at: 2026-06-02T05:12:26.451850810Z
+req_type: Functional
+tags:
+- answer:free-text
+- seed
+- topic:free-will
+- weight:50
