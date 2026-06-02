@@ -1,0 +1,24 @@
+id: 019e8692-3957-7710-ba9f-4945b73b1646
+spec_id: Q-102
+agreed_id: Q-102
+prefix_override: Q
+title: You say the choice leaves no trace but the new position itself. Yet that position is the very same state a determinist points to as 'B followed A' — identical down to the last atom whether you 'freely chose' it or it was forced. So if everything left behind is exhausted by the position, and the position is shared by both stories, where does the *freedom* reside? Is 'I did make the choice' a further fact about the world, or a stance you take toward a state that, in itself, says nothing about whether it could have been otherwise?
+description: |-
+  LLM-generated quizdom question.
+
+  answer: free-text
+  origin: Q-101
+
+  Generated from origin question: You now locate choice in the 'distance between two adjacent states' — something that 'exists and does not exist' and that the materialist will never find by looking at the states themselves. But a distance between two points is fully fixed once you fix the two points; it adds no third thing. So is your 'choice' anything more than a name we give to the gap between state A and state B after the fact — and if it leaves no trace the materialist could ever find, what distinguishes 'I freely chose B' from simply 'B followed A'? What work is the word 'free' still doing here?
+status: Approved
+priority: Medium
+owner: ''
+feature: Uncategorized
+created_at: 2026-06-02T04:23:10.423686290Z
+modified_at: 2026-06-02T04:23:10.423686290Z
+req_type: Functional
+tags:
+- answer:free-text
+- seed
+- topic:free-will
+- weight:50
