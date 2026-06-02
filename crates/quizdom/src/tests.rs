@@ -6,7 +6,7 @@ use crate::input::*;
 use crate::model::*;
 use crate::persist::{
     AidaCliGeneratedQuestionPersister, AidaCliUserSpecificTermPersister, CommandRunner,
-    QuestionReweighter, UserSpecificTermPersister,
+    QuestionLink, QuestionReweighter, UserAuthoredQuestionPersister, UserSpecificTermPersister,
 };
 use crate::session::*;
 use crate::strategy::*;
@@ -1285,6 +1285,19 @@ fn accepts_quit_end_commands() {
     assert!(is_end_command("quit"));
 }
 
+// trace:STORY-88 | ai:claude
+#[test]
+fn accepts_quick_add_commands() {
+    assert!(is_add_command("a"));
+    assert!(is_add_command("A"));
+    assert!(is_add_command("/a"));
+    assert!(is_add_command("/add"));
+    assert!(is_add_command(" add "));
+    // Not an add command.
+    assert!(!is_add_command("answer"));
+    assert!(!is_add_command("yes"));
+}
+
 #[test]
 fn editor_mode_uses_vi_for_vi_family_editors() {
     assert_eq!(edit_mode_from_editor("nvim"), EditMode::Vi);
@@ -1302,11 +1315,11 @@ fn renders_all_question_kinds() {
     let cases = [
         (
             AnswerKind::YesNo,
-            "[Y] Yes  [N] No  [X] eXplore  [P] Punt  [B] Back  [Q] Quit",
+            "[Y] Yes  [N] No  [X] eXplore  [A] Add  [P] Punt  [B] Back  [Q] Quit",
         ),
         (
             AnswerKind::Choice(vec!["libertarian".to_string(), "compatibilist".to_string()]),
-            "[1-2] Choose  [X] eXplore  [P] Punt  [B] Back  [Q] Quit",
+            "[1-2] Choose  [X] eXplore  [A] Add  [P] Punt  [B] Back  [Q] Quit",
         ),
         (AnswerKind::FreeText, "Answer in your own words, or Q/Quit"),
     ];
@@ -2775,6 +2788,236 @@ impl ContradictsEdges for FakeEdges {
     fn contradicts(&self, belief_id: &str) -> Result<Vec<String>> {
         Ok(self.edges.get(belief_id).cloned().unwrap_or_default())
     }
+}
+
+// trace:STORY-88 | ai:claude
+/// Records every user-authored question the in-session quick-add control drives
+/// through it (question + topic + link), so a test can assert the new question
+/// was authored and linked as a `begets` follow-on from the current node. The
+/// persisted question gets a stable fake id so callers can recognise it later.
+#[derive(Default)]
+struct RecordingUserAuthoredPersister {
+    calls: RefCell<Vec<(Question, String, QuestionLink)>>,
+}
+
+impl UserAuthoredQuestionPersister for RecordingUserAuthoredPersister {
+    fn persist_user_authored_question(
+        &self,
+        question: &Question,
+        topic: &str,
+        link: &QuestionLink,
+    ) -> Result<Question> {
+        self.calls
+            .borrow_mut()
+            .push((question.clone(), topic.to_string(), link.clone()));
+        let mut persisted = question.clone();
+        persisted.id = "Q-added".to_string();
+        Ok(persisted)
+    }
+}
+
+// trace:STORY-88 | ai:claude
+fn story_88_temp_log(slug: &str) -> std::path::PathBuf {
+    let path = std::env::temp_dir().join(format!(
+        "quizdom-story-88-{slug}-{}.jsonl",
+        std::process::id()
+    ));
+    let _ = fs::remove_file(&path);
+    path
+}
+
+// trace:STORY-88 | ai:claude
+// Pressing the in-session quick-add control authors a new question and links it
+// as a `begets` follow-on from the CURRENT node, then re-presents the current
+// question so the user resumes where they paused.
+#[test]
+fn quick_add_authors_and_links_question_from_current_node() {
+    let path = story_88_temp_log("links");
+    let bank = FakeBank::new([question_with_tags(
+        "Q-23",
+        70,
+        AnswerKind::YesNo,
+        ["topic:free-will", "answer:yes-no", "weight:70"],
+    )]);
+    let config = test_config(&path, "Q-23");
+    let persister = RecordingUserAuthoredPersister::default();
+    let mut output = Vec::new();
+
+    // `a` opens quick-add -> author a yes/no question -> back at Q-23 -> answer
+    // yes -> no begets successor -> session ends.
+    run_session_with_user_authored_persister(
+        &config,
+        &bank,
+        &DeterministicNextQuestionStrategy,
+        &persister,
+        "a\nDoes the self persist through change?\n1\nyes\n".as_bytes(),
+        &mut output,
+    )
+    .unwrap();
+
+    let calls = persister.calls.borrow();
+    assert_eq!(calls.len(), 1, "exactly one question authored");
+    let (question, topic, link) = &calls[0];
+    assert_eq!(question.title, "Does the self persist through change?");
+    assert_eq!(question.answer_kind, AnswerKind::YesNo);
+    // Linked as a begets follow-on from the CURRENT node.
+    assert_eq!(
+        *link,
+        QuestionLink::Begets {
+            origin_id: "Q-23".to_string()
+        }
+    );
+    // Topic inherited from the current node's topic tag.
+    assert_eq!(topic, "free-will");
+
+    let output = String::from_utf8(output).unwrap();
+    assert!(output.contains("Quick-add: authoring a new question linked from Q-23."));
+    assert!(output.contains("Added Q-added"));
+    // The current question is re-presented after the quick-add (seen twice:
+    // once before the add, once after).
+    assert_eq!(output.matches("\nQ-23\n").count(), 2);
+
+    let _ = fs::remove_file(path);
+}
+
+// trace:STORY-88 | ai:claude
+// The quick-add persists through the real AIDA-CLI persister, which issues an
+// `aida rel add --type begets --from <current> --to <new>` — the edge that
+// makes the question a begets successor of the current node in later sessions.
+#[test]
+fn quick_add_issues_begets_edge_for_later_sessions() {
+    let path = story_88_temp_log("begets-edge");
+    let bank = FakeBank::new([question_with_tags(
+        "Q-23",
+        70,
+        AnswerKind::YesNo,
+        ["topic:free-will", "answer:yes-no", "weight:70"],
+    )]);
+    let config = test_config(&path, "Q-23");
+    // The persister runs two aida commands: `add` (returns the new id) then
+    // `rel add` (the begets edge).
+    let runner = RecordingCommandRunner::new([
+        command_output(true, "Added Q-77", ""),
+        command_output(true, "", ""),
+    ]);
+    let persister =
+        crate::persist::AidaCliUserAuthoredQuestionPersister::new("aida", runner.clone());
+    let mut output = Vec::new();
+
+    run_session_with_user_authored_persister(
+        &config,
+        &bank,
+        &DeterministicNextQuestionStrategy,
+        &persister,
+        "a\nWhat would change your mind here?\n1\nyes\n".as_bytes(),
+        &mut output,
+    )
+    .unwrap();
+
+    let calls = runner.calls();
+    assert_eq!(calls.len(), 2, "add then rel add");
+    let add = &calls[0];
+    assert_eq!(add[1], "add");
+    assert!(add
+        .iter()
+        .any(|arg| arg == "source:user-authored,topic:free-will,answer:yes-no,weight:50,seed"));
+    let rel = &calls[1];
+    assert_eq!(rel[1], "rel");
+    assert_eq!(rel[2], "add");
+    let from_index = rel.iter().position(|arg| arg == "--from").unwrap();
+    let to_index = rel.iter().position(|arg| arg == "--to").unwrap();
+    let type_index = rel.iter().position(|arg| arg == "--type").unwrap();
+    // begets is current -> new.
+    assert_eq!(rel[from_index + 1], "Q-23");
+    assert_eq!(rel[to_index + 1], "Q-77");
+    assert_eq!(rel[type_index + 1], "begets");
+
+    let _ = fs::remove_file(path);
+}
+
+// trace:STORY-88 | ai:claude
+// Reusing a near-duplicate from the quick-add flow persists nothing new (no
+// begets edge), and the session continues from the current node.
+#[test]
+fn quick_add_reusing_duplicate_persists_nothing() {
+    let path = story_88_temp_log("dup");
+    let bank = FakeBank::new([
+        question_with_tags(
+            "Q-23",
+            70,
+            AnswerKind::YesNo,
+            ["topic:free-will", "answer:yes-no", "weight:70"],
+        ),
+        question_with_tags(
+            "Q-existing",
+            50,
+            AnswerKind::YesNo,
+            ["topic:free-will", "answer:yes-no", "weight:50"],
+        ),
+    ]);
+    // Make Q-existing a real near-duplicate of what the user is about to type.
+    let bank = {
+        let mut bank = bank;
+        if let Some(q) = bank.questions.get_mut("Q-existing") {
+            q.title = "Is the self continuous over time?".to_string();
+        }
+        bank
+    };
+    let config = test_config(&path, "Q-23");
+    let persister = RecordingUserAuthoredPersister::default();
+    let mut output = Vec::new();
+
+    // Author a near-duplicate, then decline to add it anyway (blank -> No), then
+    // answer the current question to end the session.
+    run_session_with_user_authored_persister(
+        &config,
+        &bank,
+        &DeterministicNextQuestionStrategy,
+        &persister,
+        "a\nOver time, is the self continuous?\n1\n\nyes\n".as_bytes(),
+        &mut output,
+    )
+    .unwrap();
+
+    assert!(persister.calls.borrow().is_empty(), "nothing persisted");
+    let output = String::from_utf8(output).unwrap();
+    assert!(output.contains("near-duplicate already exists (Q-existing"));
+    assert!(output.contains("Reusing Q-existing"));
+
+    let _ = fs::remove_file(path);
+}
+
+// trace:STORY-88 | ai:claude
+// A quick-add on a question with no `topic:` tag (e.g. a runtime prompt) falls
+// back to a stable placeholder topic rather than vanishing.
+#[test]
+fn quick_add_topic_falls_back_when_current_has_no_topic() {
+    let path = story_88_temp_log("no-topic");
+    let bank = FakeBank::new([question_with_tags(
+        "Q-23",
+        70,
+        AnswerKind::YesNo,
+        ["answer:yes-no", "weight:70"],
+    )]);
+    let config = test_config(&path, "Q-23");
+    let persister = RecordingUserAuthoredPersister::default();
+    let mut output = Vec::new();
+
+    run_session_with_user_authored_persister(
+        &config,
+        &bank,
+        &DeterministicNextQuestionStrategy,
+        &persister,
+        "a\nWhat anchors identity?\n1\nyes\n".as_bytes(),
+        &mut output,
+    )
+    .unwrap();
+
+    let calls = persister.calls.borrow();
+    assert_eq!(calls.len(), 1);
+    assert_eq!(calls[0].1, "user-authored");
+
+    let _ = fs::remove_file(path);
 }
 
 fn adopted(id: Option<&str>, statement: &str) -> AdoptedBelief {

@@ -224,6 +224,43 @@ fn question_add(
     input: &mut impl BufRead,
     output: &mut impl Write,
 ) -> Result<()> {
+    let link = config.link();
+    author_question(
+        existing,
+        strategy,
+        persister,
+        &config.topic(),
+        &link,
+        input,
+        output,
+    )?;
+    Ok(())
+}
+
+// trace:STORY-88 | ai:claude
+/// Author one user question end to end and persist it, returning the persisted
+/// [`Question`] (or `None` when the user reused a near-duplicate / aborted).
+///
+/// This is the shared core of both the standalone `quizdom question add`
+/// command (STORY-87) and the in-session quick-add control (STORY-88): prompt
+/// for the question text + answer shape, run the STORY-86 DEDUP/REFINE approve
+/// flow over `existing`, and persist via `persister` with the supplied `topic`
+/// and `link`. Takes its collaborators by trait object / slice so callers and
+/// tests drive it with fakes (no AIDA, no terminal, no network).
+///
+/// Degrades gracefully offline / non-TTY exactly as STORY-87 does: the dedup
+/// search is pure, a no-op / failing strategy yields no refinement (the
+/// question is added verbatim), and all prompting reads from `input` so a
+/// piped / redirected stdin works without a terminal.
+pub(crate) fn author_question(
+    existing: &[Question],
+    strategy: &dyn NextQuestionStrategy,
+    persister: &dyn UserAuthoredQuestionPersister,
+    topic: &str,
+    link: &QuestionLink,
+    input: &mut impl BufRead,
+    output: &mut impl Write,
+) -> Result<Option<Question>> {
     let title = prompt_question_text(input, output)?;
     let answer_kind = prompt_answer_shape(input, output)?;
 
@@ -235,11 +272,10 @@ fn question_add(
         None => {
             // The user reused an existing duplicate instead of authoring a new
             // question, or aborted; nothing to persist.
-            return Ok(());
+            return Ok(None);
         }
     };
 
-    let link = config.link();
     // The persister derives the canonical tag set + neutral weight + real id
     // itself (STORY-85), so the in-memory question only needs its title and
     // answer shape; id / tags / weight are placeholders it overwrites.
@@ -250,8 +286,9 @@ fn question_add(
         answer_kind: candidate.answer_kind,
         weight: 0,
     };
-    let persisted = persister.persist_user_authored_question(&draft, &config.topic(), &link)?;
-    render_persisted(&persisted, &link, output)
+    let persisted = persister.persist_user_authored_question(&draft, topic, link)?;
+    render_persisted(&persisted, link, output)?;
+    Ok(Some(persisted))
 }
 
 /// A drafted question the user has approved for persistence.

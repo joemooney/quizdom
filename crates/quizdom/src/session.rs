@@ -15,11 +15,14 @@ use crate::input::{
 };
 use crate::model::{Answer, AnswerKind, Question, TermDefinition};
 use crate::persist::{
-    AidaCliGeneratedQuestionPersister, AidaCliQuestionReweighter, AidaCliUserSpecificTermPersister,
-    QuestionReweighter, UserSpecificTermPersister,
+    AidaCliGeneratedQuestionPersister, AidaCliQuestionReweighter,
+    AidaCliUserAuthoredQuestionPersister, AidaCliUserSpecificTermPersister, QuestionLink,
+    QuestionReweighter, UserAuthoredQuestionPersister, UserSpecificTermPersister,
 };
 #[cfg(test)]
-use crate::persist::{NoopQuestionReweighter, NoopUserSpecificTermPersister};
+use crate::persist::{
+    NoopQuestionReweighter, NoopUserAuthoredQuestionPersister, NoopUserSpecificTermPersister,
+};
 use crate::strategy::{
     different_topic_punt_question, AnsweredQuestion, QualitySignal, StrategyContext,
 };
@@ -622,6 +625,8 @@ pub(crate) fn run_session_with_term_persister(
     let contradiction_edges = AidaCliContradictsEdges::default();
     let contradiction_resolution_persister = AidaCliContradictionResolutionPersister::default();
     let question_reweighter = AidaCliQuestionReweighter::default();
+    // trace:STORY-88 | ai:claude — real persister for the in-session quick-add.
+    let user_authored_persister = AidaCliUserAuthoredQuestionPersister::default();
     run_session_from_current(
         config,
         bank,
@@ -630,6 +635,7 @@ pub(crate) fn run_session_with_term_persister(
         &contradiction_edges,
         &contradiction_resolution_persister,
         &question_reweighter,
+        &user_authored_persister,
         input,
         output,
         0,
@@ -676,6 +682,34 @@ pub(crate) fn run_session_with_contradiction_edges_and_resolution_persister(
         edges,
         resolution_persister,
         &NoopQuestionReweighter,
+        &NoopUserAuthoredQuestionPersister,
+        input,
+        output,
+        0,
+        true,
+        Vec::new(),
+    )
+}
+
+// trace:STORY-88 | ai:claude
+#[cfg(test)]
+pub(crate) fn run_session_with_user_authored_persister(
+    config: &CliConfig,
+    bank: &dyn QuestionBank,
+    strategy: &dyn NextQuestionStrategy,
+    user_authored_persister: &dyn UserAuthoredQuestionPersister,
+    input: impl Read,
+    output: &mut impl Write,
+) -> Result<()> {
+    run_session_from_current(
+        config,
+        bank,
+        strategy,
+        &NoopUserSpecificTermPersister,
+        &AidaCliContradictsEdges::default(),
+        &crate::contradiction::NoopContradictionResolutionPersister,
+        &NoopQuestionReweighter,
+        user_authored_persister,
         input,
         output,
         0,
@@ -701,6 +735,7 @@ pub(crate) fn run_session_with_question_reweighter(
         &AidaCliContradictsEdges::default(),
         &crate::contradiction::NoopContradictionResolutionPersister,
         question_reweighter,
+        &NoopUserAuthoredQuestionPersister,
         input,
         output,
         0,
@@ -709,6 +744,7 @@ pub(crate) fn run_session_with_question_reweighter(
     )
 }
 
+#[allow(clippy::too_many_arguments)]
 fn run_session_from_current(
     config: &CliConfig,
     bank: &dyn QuestionBank,
@@ -717,6 +753,7 @@ fn run_session_from_current(
     contradiction_edges: &dyn ContradictsEdges,
     contradiction_resolution_persister: &dyn ContradictionResolutionPersister,
     question_reweighter: &dyn QuestionReweighter,
+    user_authored_persister: &dyn UserAuthoredQuestionPersister,
     input: impl Read,
     output: &mut impl Write,
     mut turn: u64,
@@ -840,6 +877,24 @@ fn run_session_from_current(
                                 break;
                             }
                         }
+                    }
+                    AnswerInput::Add => {
+                        // trace:STORY-88 | ai:claude
+                        // Quick-add: author a new question mid-exploration and
+                        // link it as a `begets` follow-on from the CURRENT node,
+                        // then re-present the current question so the user
+                        // resumes exactly where they paused. The persisted
+                        // Q-object is tagged `source:user-authored` (STORY-85)
+                        // and shows up as a begets successor in later sessions.
+                        quick_add_from_current(
+                            bank,
+                            strategy,
+                            user_authored_persister,
+                            &current,
+                            &mut input,
+                            output,
+                        )?;
+                        continue;
                     }
                     AnswerInput::Forward => continue,
                     AnswerInput::End => {
@@ -1149,8 +1204,72 @@ fn ask_contradiction_follow_up(
             )?;
             Ok(true)
         }
-        AnswerInput::Back | AnswerInput::Forward => Ok(false),
+        // trace:STORY-88 | ai:claude — quick-add is offered only at the plain
+        // frontier prompt, not on the contradiction follow-up; treat any stray
+        // Add/Back/Forward here as a no-op that re-presents nothing.
+        AnswerInput::Add | AnswerInput::Back | AnswerInput::Forward => Ok(false),
     }
+}
+
+// trace:STORY-88 | ai:claude
+/// In-session quick-add: author a new question mid-exploration and link it as a
+/// `begets` follow-on from `current`.
+///
+/// Runs the shared STORY-87 authoring core ([`crate::question_add::author_question`]):
+/// prompt for the text + answer shape, run the DEDUP/REFINE approve flow over
+/// the current bank snapshot, and persist the result tagged
+/// `source:user-authored` (STORY-85) with a `begets` edge from `current`. The
+/// new Q-object therefore surfaces as a begets successor in later sessions.
+///
+/// Degrades gracefully: a bank read failure simply yields an empty dedup
+/// snapshot (no duplicate), and the offline / non-TTY paths are inherited from
+/// the authoring core, which reads every prompt from `input`.
+fn quick_add_from_current(
+    bank: &dyn QuestionBank,
+    strategy: &dyn NextQuestionStrategy,
+    user_authored_persister: &dyn UserAuthoredQuestionPersister,
+    current: &Question,
+    input: &mut impl BufRead,
+    output: &mut impl Write,
+) -> Result<()> {
+    writeln!(
+        output,
+        "Quick-add: authoring a new question linked from {}.",
+        current.id
+    )?;
+    // The dedup search is pure over the in-memory snapshot; an AIDA hiccup just
+    // yields no duplicate rather than aborting the session.
+    let existing = bank.all_questions().unwrap_or_default();
+    let topic = quick_add_topic(current);
+    let link = QuestionLink::Begets {
+        origin_id: current.id.clone(),
+    };
+    crate::question_add::author_question(
+        &existing,
+        strategy,
+        user_authored_persister,
+        &topic,
+        &link,
+        input,
+        output,
+    )?;
+    Ok(())
+}
+
+// trace:STORY-88 | ai:claude
+/// Topic for a quick-added question: inherit the current node's `topic:<slug>`
+/// tag so the follow-on lands in the same cluster, falling back to a stable
+/// placeholder when the current question carries no topic (e.g. a runtime
+/// contradiction prompt).
+fn quick_add_topic(current: &Question) -> String {
+    current
+        .tags
+        .iter()
+        .find_map(|tag| tag.strip_prefix("topic:"))
+        .map(str::trim)
+        .filter(|topic| !topic.is_empty())
+        .unwrap_or("user-authored")
+        .to_string()
 }
 
 enum ReviewOutcome {
@@ -1211,6 +1330,10 @@ fn browse_answered_path(
                     answer,
                 });
             }
+            // trace:STORY-88 | ai:claude — the review pane does not offer the
+            // quick-add control (it is frontier-only), so Add never reaches
+            // here; stay on the saved path if it somehow does.
+            AnswerInput::Add => continue,
             AnswerInput::End => return Ok(ReviewOutcome::End),
         }
     }
@@ -1306,6 +1429,8 @@ fn resume_session_with_term_persister(
     resumed_config.seed = next_question_ref.clone();
     let recent_path = replay.recent_path();
     let question_reweighter = AidaCliQuestionReweighter::default();
+    // trace:STORY-88 | ai:claude — resumed sessions get the same quick-add path.
+    let user_authored_persister = AidaCliUserAuthoredQuestionPersister::default();
     run_session_from_current(
         &resumed_config,
         bank,
@@ -1314,6 +1439,7 @@ fn resume_session_with_term_persister(
         &AidaCliContradictsEdges::default(),
         &AidaCliContradictionResolutionPersister::default(),
         &question_reweighter,
+        &user_authored_persister,
         input,
         output,
         replay.next_turn,

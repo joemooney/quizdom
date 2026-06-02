@@ -122,7 +122,12 @@ pub(crate) fn render_question_for(
 
 fn control_prompt(prefix: &str, context: InputContext) -> String {
     match context {
-        InputContext::Frontier => format!("{prefix}  [X] eXplore  [P] Punt  [B] Back  [Q] Quit"),
+        // trace:STORY-88 | ai:claude — the quick-add control is offered only at
+        // the frontier, where "add a question from here" is meaningful; the
+        // review pane is for revising the saved path, not authoring.
+        InputContext::Frontier => {
+            format!("{prefix}  [X] eXplore  [A] Add  [P] Punt  [B] Back  [Q] Quit")
+        }
         InputContext::Review => {
             format!("{prefix}  [X] eXplore  [P] Punt  [B] Back  [F] Forward  [Q] Quit")
         }
@@ -133,6 +138,10 @@ pub(crate) enum AnswerInput {
     Answer(Answer),
     Back,
     Forward,
+    // trace:STORY-88 | ai:claude
+    // The user pressed the in-session quick-add control to author + link a new
+    // question from the current node mid-exploration.
+    Add,
     End,
 }
 
@@ -250,6 +259,10 @@ pub(crate) fn read_answer_or_end(
         if is_back_command(&raw) {
             return Ok(AnswerInput::Back);
         }
+        // trace:STORY-88 | ai:claude — quick-add is a frontier-only control.
+        if context == InputContext::Frontier && is_add_command(&raw) {
+            return Ok(AnswerInput::Add);
+        }
         if context == InputContext::Review && is_forward_command(&raw) {
             return Ok(AnswerInput::Forward);
         }
@@ -301,6 +314,8 @@ fn read_single_key_answer(
             KeyCode::Char('y') | KeyCode::Char('Y') if matches!(kind, AnswerKind::YesNo) => "y",
             KeyCode::Char('n') | KeyCode::Char('N') if matches!(kind, AnswerKind::YesNo) => "n",
             KeyCode::Char('x') | KeyCode::Char('X') => "x",
+            // trace:STORY-88 | ai:claude — frontier-only quick-add key.
+            KeyCode::Char('a') | KeyCode::Char('A') if context == InputContext::Frontier => "/add",
             KeyCode::Char('p') | KeyCode::Char('P') => "p",
             KeyCode::Char('b') | KeyCode::Char('B') => "b",
             KeyCode::Char('f') | KeyCode::Char('F') if context == InputContext::Review => "f",
@@ -340,6 +355,16 @@ pub(crate) fn is_forward_command(raw: &str) -> bool {
     matches!(
         raw.trim().to_ascii_lowercase().as_str(),
         "f" | "/f" | "forward"
+    )
+}
+
+// trace:STORY-88 | ai:claude
+/// The in-session quick-add control: author + link a new question from the
+/// current node. Recognised as a bare `a`, `/a`, `/add`, or the word `add`.
+pub(crate) fn is_add_command(raw: &str) -> bool {
+    matches!(
+        raw.trim().to_ascii_lowercase().as_str(),
+        "a" | "/a" | "/add" | "add"
     )
 }
 
