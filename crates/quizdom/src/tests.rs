@@ -1295,6 +1295,75 @@ fn resume_without_session_uses_latest_session_log() {
     let _ = fs::remove_dir_all(Path::new("data").join("users").join(user));
 }
 
+// trace:STORY-81 | ai:claude
+// Quitting a fresh session before answering ANY question must leave nothing on
+// disk: no log to clutter `session list`, and no liveness marker either.
+#[test]
+fn quitting_before_answering_discards_the_empty_session() {
+    let dir = std::env::temp_dir().join(format!("quizdom-story-81-discard-{}", std::process::id()));
+    let _ = fs::remove_dir_all(&dir);
+    fs::create_dir_all(&dir).unwrap();
+    let path = dir.join("sess-empty.jsonl");
+    let bank = FakeBank::new([question("Q-1", 0, AnswerKind::YesNo)]);
+    let config = test_config(&path, "Q-1");
+    let mut output = Vec::new();
+
+    run_session(
+        &config,
+        &bank,
+        &DeterministicNextQuestionStrategy,
+        "/end\n".as_bytes(),
+        &mut output,
+    )
+    .unwrap();
+
+    let output = String::from_utf8(output).unwrap();
+    assert!(output.contains("Session ended."));
+    // The empty log is discarded outright...
+    assert!(!path.exists(), "empty session log should be discarded");
+    // ...and its liveness marker goes with it.
+    assert!(
+        !path.with_extension("active").exists(),
+        "active marker should be removed for a discarded session"
+    );
+    // Nothing the session would surface in `session list`.
+    assert!(session_summaries(&dir).unwrap().is_empty());
+
+    let _ = fs::remove_dir_all(dir);
+}
+
+// trace:STORY-81 | ai:claude
+// One answer is enough to keep the session: its log survives and stays
+// resumable / listable.
+#[test]
+fn answering_then_quitting_keeps_the_session() {
+    let dir = std::env::temp_dir().join(format!("quizdom-story-81-keep-{}", std::process::id()));
+    let _ = fs::remove_dir_all(&dir);
+    fs::create_dir_all(&dir).unwrap();
+    let path = dir.join("sess-kept.jsonl");
+    let bank = FakeBank::new([question("Q-1", 0, AnswerKind::YesNo)]);
+    let config = test_config(&path, "Q-1");
+    let mut output = Vec::new();
+
+    run_session(
+        &config,
+        &bank,
+        &DeterministicNextQuestionStrategy,
+        "yes\n/end\n".as_bytes(),
+        &mut output,
+    )
+    .unwrap();
+
+    assert!(path.exists(), "answered session log must be kept");
+    let log = fs::read_to_string(&path).unwrap();
+    assert!(log.contains(r#""event_type":"answer_recorded""#));
+    let summaries = session_summaries(&dir).unwrap();
+    assert_eq!(summaries.len(), 1);
+    assert_eq!(summaries[0].path, path);
+
+    let _ = fs::remove_dir_all(dir);
+}
+
 // trace:STORY-82 | ai:claude
 // A PID that no live process owns: marker files naming it are stale and so the
 // session they guard is resumable. u32::MAX is never a valid Linux PID.
@@ -1576,7 +1645,16 @@ fn session_start_records_strategy_and_llm_backend() {
     config.llm_backend = LlmBackendKind::ClaudeCli;
     let mut output = Vec::new();
 
-    run_session(&config, &bank, &strategy, "/end\n".as_bytes(), &mut output).unwrap();
+    // trace:STORY-81 | ai:claude — answer once so the session is kept (an empty
+    // session is now discarded on quit); the start event still carries metadata.
+    run_session(
+        &config,
+        &bank,
+        &strategy,
+        "yes\n/end\n".as_bytes(),
+        &mut output,
+    )
+    .unwrap();
 
     let log = fs::read_to_string(&path).unwrap();
     assert!(log.contains(r#""event_type":"session_started""#));
