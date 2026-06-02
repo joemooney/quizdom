@@ -31,12 +31,12 @@ description: |
   - The question persists to AIDA as a Q-object tagged `source:user-authored`,
     linked into the graph, and is selectable in later sessions.
   - Degrades gracefully offline (verbatim add + tagging; no LLM dedup/refine).
-status: Approved
+status: Completed
 priority: Medium
 owner: ''
 feature: Uncategorized
 created_at: 2026-06-01T04:51:37.197656111Z
-modified_at: 2026-06-01T04:51:42.342746020Z
+modified_at: 2026-06-02T03:02:29.748709539Z
 req_type: Epic
 tags:
 - bank
