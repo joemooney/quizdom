@@ -1364,6 +1364,217 @@ fn answering_then_quitting_keeps_the_session() {
     let _ = fs::remove_dir_all(dir);
 }
 
+// trace:STORY-80 | ai:claude
+// Quitting (/end) after at least one answer must surface the session id AND the
+// exact bare resume command (no --strategy flag, per BUG-71) so the session is
+// never a dead end.
+#[test]
+fn quitting_prints_session_id_and_resume_command() {
+    let path = std::env::temp_dir().join(format!(
+        "quizdom-story-80-quit-{}.jsonl",
+        std::process::id()
+    ));
+    let _ = fs::remove_file(&path);
+    let bank = FakeBank::new([question("Q-1", 0, AnswerKind::YesNo)]);
+    let config = test_config(&path, "Q-1");
+    let mut output = Vec::new();
+
+    run_session(
+        &config,
+        &bank,
+        &DeterministicNextQuestionStrategy,
+        "yes\n/end\n".as_bytes(),
+        &mut output,
+    )
+    .unwrap();
+
+    let output = String::from_utf8(output).unwrap();
+    assert!(
+        output.contains("Session sess-test ended."),
+        "quit should name the session id: {output}"
+    );
+    assert!(
+        output.contains("Resume:  quizdom session resume sess-test"),
+        "quit should print the exact resume command: {output}"
+    );
+    assert!(
+        !output.contains("--strategy"),
+        "resume command must not carry a --strategy flag: {output}"
+    );
+
+    let _ = fs::remove_file(path);
+}
+
+// trace:STORY-80 | ai:claude
+// A discarded empty session (STORY-81) ends plainly with no resume hint: the
+// log is gone, so pointing at a resume command would only mislead.
+#[test]
+fn discarded_empty_session_ends_without_a_resume_hint() {
+    let path = std::env::temp_dir().join(format!(
+        "quizdom-story-80-empty-{}.jsonl",
+        std::process::id()
+    ));
+    let _ = fs::remove_file(&path);
+    let bank = FakeBank::new([question("Q-1", 0, AnswerKind::YesNo)]);
+    let config = test_config(&path, "Q-1");
+    let mut output = Vec::new();
+
+    run_session(
+        &config,
+        &bank,
+        &DeterministicNextQuestionStrategy,
+        "/end\n".as_bytes(),
+        &mut output,
+    )
+    .unwrap();
+
+    let output = String::from_utf8(output).unwrap();
+    assert!(output.contains("Session ended."), "{output}");
+    assert!(
+        !output.contains("Resume:"),
+        "a discarded session must not suggest resume: {output}"
+    );
+    assert!(!path.exists(), "empty session log should be discarded");
+
+    let _ = fs::remove_file(path);
+}
+
+// trace:STORY-80 | ai:claude
+// The natural-completion dead end (strategy yields no follow-up) keeps its
+// descriptive message AND gains the id + resume command.
+#[test]
+fn no_follow_up_completion_prints_session_id_and_resume_command() {
+    let path = std::env::temp_dir().join(format!(
+        "quizdom-story-80-complete-{}.jsonl",
+        std::process::id()
+    ));
+    let _ = fs::remove_file(&path);
+    // A seed with no outgoing begets edge: answering it completes the session.
+    let bank = FakeBank::new([question("Q-1", 0, AnswerKind::YesNo)]);
+    let config = test_config(&path, "Q-1");
+    let mut output = Vec::new();
+
+    run_session(
+        &config,
+        &bank,
+        &DeterministicNextQuestionStrategy,
+        "yes\n".as_bytes(),
+        &mut output,
+    )
+    .unwrap();
+
+    let output = String::from_utf8(output).unwrap();
+    assert!(
+        output.contains("No follow-up questions. Session complete."),
+        "{output}"
+    );
+    assert!(output.contains("Session sess-test ended."), "{output}");
+    assert!(
+        output.contains("Resume:  quizdom session resume sess-test"),
+        "{output}"
+    );
+
+    let _ = fs::remove_file(path);
+}
+
+// trace:STORY-80 | ai:claude
+// The punt dead end (no different-topic target) keeps its message AND gains the
+// id + resume command.
+#[test]
+fn punt_dead_end_prints_session_id_and_resume_command() {
+    let path = std::env::temp_dir().join(format!(
+        "quizdom-story-80-punt-{}.jsonl",
+        std::process::id()
+    ));
+    let _ = fs::remove_file(&path);
+    let bank = FakeBank::new([question_with_tags(
+        "Q-1",
+        70,
+        AnswerKind::YesNo,
+        ["topic:free-will", "answer:yes-no", "weight:70"],
+    )]);
+    let config = test_config(&path, "Q-1");
+    let reweighter = RecordingQuestionReweighter::default();
+    let mut output = Vec::new();
+
+    run_session_with_question_reweighter(
+        &config,
+        &bank,
+        &DeterministicNextQuestionStrategy,
+        &reweighter,
+        "punt\n".as_bytes(),
+        &mut output,
+    )
+    .unwrap();
+
+    let output = String::from_utf8(output).unwrap();
+    assert!(
+        output.contains("No different-topic questions. Session complete."),
+        "{output}"
+    );
+    assert!(output.contains("Session sess-test ended."), "{output}");
+    assert!(
+        output.contains("Resume:  quizdom session resume sess-test"),
+        "{output}"
+    );
+
+    let _ = fs::remove_file(path);
+}
+
+// trace:STORY-80 | ai:claude
+// Resuming a session whose saved path has no follow-up is itself an end path:
+// it must print the id + resume command too.
+#[test]
+fn resume_dead_end_prints_session_id_and_resume_command() {
+    let path = std::env::temp_dir().join(format!(
+        "quizdom-story-80-resume-{}.jsonl",
+        std::process::id()
+    ));
+    let _ = fs::remove_file(&path);
+    let bank = FakeBank::new([question("Q-1", 10, AnswerKind::YesNo)]);
+    let strategy = DeterministicNextQuestionStrategy;
+    let config = test_config(&path, "Q-1");
+
+    // Start + answer the only question so the saved path has no follow-up.
+    let mut start_output = Vec::new();
+    run_session(
+        &config,
+        &bank,
+        &strategy,
+        "yes\n".as_bytes(),
+        &mut start_output,
+    )
+    .unwrap();
+
+    let mut resume_config = config.clone();
+    resume_config.command = SessionCommand::Resume;
+    let mut resume_output = Vec::new();
+    resume_session(
+        &resume_config,
+        &bank,
+        &strategy,
+        "".as_bytes(),
+        &mut resume_output,
+    )
+    .unwrap();
+
+    let resume_output = String::from_utf8(resume_output).unwrap();
+    assert!(
+        resume_output.contains("No saved follow-up question. Session complete."),
+        "{resume_output}"
+    );
+    assert!(
+        resume_output.contains("Session sess-test ended."),
+        "{resume_output}"
+    );
+    assert!(
+        resume_output.contains("Resume:  quizdom session resume sess-test"),
+        "{resume_output}"
+    );
+
+    let _ = fs::remove_file(path);
+}
+
 // trace:STORY-82 | ai:claude
 // A PID that no live process owns: marker files naming it are stale and so the
 // session they guard is resumable. u32::MAX is never a valid Linux PID.
