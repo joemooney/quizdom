@@ -3,12 +3,12 @@ spec_id: STORY-81
 agreed_id: STORY-81
 title: Discard an empty session on quit (no questions answered)
 description: 'Starting a session writes a log immediately; quitting (Q / /end) before answering ANY question leaves an EMPTY session that clutters ''session list'' (and is meaningless to resume). Discard it: on end, if zero questions were answered, delete the session log (and any lease/metadata) so nothing is persisted or listed. ''Empty'' = no answer events recorded. Pairs with STORY-80 — both are session.rs end-of-session handling, so route them to the SAME lane together (disjoint from STORY-76 input.rs / STORY-77 main.rs). ## Acceptance: start -> quit without answering -> no log remains, absent from ''session list''; a session with >=1 answer is kept; STORY-80''s resume hint is NOT shown for a discarded empty session; tests cover both paths.'
-status: InProgress
+status: Completed
 priority: High
 owner: ''
 feature: Uncategorized
 created_at: 2026-06-01T04:39:32.350452783Z
-modified_at: 2026-06-02T02:13:37.219926983Z
+modified_at: 2026-06-02T02:14:55.879659835Z
 req_type: Story
 tags:
 - cleanup
