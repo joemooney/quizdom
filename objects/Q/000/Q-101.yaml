@@ -1,0 +1,24 @@
+id: 019e868c-675d-70b2-9b73-b95da3b3cdba
+spec_id: Q-101
+agreed_id: Q-101
+prefix_override: Q
+title: You now locate choice in the 'distance between two adjacent states' — something that 'exists and does not exist' and that the materialist will never find by looking at the states themselves. But a distance between two points is fully fixed once you fix the two points; it adds no third thing. So is your 'choice' anything more than a name we give to the gap between state A and state B after the fact — and if it leaves no trace the materialist could ever find, what distinguishes 'I freely chose B' from simply 'B followed A'? What work is the word 'free' still doing here?
+description: |-
+  LLM-generated quizdom question.
+
+  answer: free-text
+  origin: Q-99
+
+  Generated from origin question: You've collapsed the premise: not 'choice produces a new state' but 'the choice *is* the state.' Grant that identity. Then 'could I have chosen otherwise in the same prior conditions?' becomes 'could this state have been a different state while being the same state?' — which is either incoherent or trivially no. So does identifying choice with state actually secure freedom, or does it dissolve the question by making 'otherwise' unsayable — leaving 'free' as a word that no longer marks any difference between your view and pure determinism?
+status: Approved
+priority: Medium
+owner: ''
+feature: Uncategorized
+created_at: 2026-06-02T04:16:48.989833880Z
+modified_at: 2026-06-02T04:16:48.989833880Z
+req_type: Functional
+tags:
+- answer:free-text
+- seed
+- topic:free-will
+- weight:50
