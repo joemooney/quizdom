@@ -317,16 +317,15 @@ where
 const USER_AUTHORED_NEUTRAL_WEIGHT: u32 = 50;
 
 // trace:STORY-85 | ai:claude
-// Foundational persister (per the spec): the type + edge wiring land here so
-// later stories can call it from the session loop. Until then it is
-// constructed only in tests, mirroring `AidaCliQuestionReweighter` (STORY-66).
-#[allow(dead_code)]
+// trace:STORY-88 | ai:claude
+// Foundational persister (per the spec): the type + edge wiring land here. The
+// standalone `quizdom question add` command (STORY-87) and the in-session
+// quick-add control (STORY-88) both drive it via the shared authoring core.
 pub(crate) struct AidaCliUserAuthoredQuestionPersister<R = SystemCommandRunner> {
     command: String,
     runner: R,
 }
 
-#[allow(dead_code)]
 impl Default for AidaCliUserAuthoredQuestionPersister<SystemCommandRunner> {
     fn default() -> Self {
         Self {
