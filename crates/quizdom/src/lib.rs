@@ -6,6 +6,8 @@ mod honing;
 mod input;
 mod model;
 mod persist;
+// trace:STORY-87 | ai:claude
+mod question_add;
 mod session;
 // trace:STORY-68 | ai:claude
 mod signals;
@@ -39,6 +41,8 @@ pub use persist::{
     NoopUserAuthoredQuestionPersister, QuestionLink, QuestionReweighter,
     UserAuthoredQuestionPersister,
 };
+// trace:STORY-87 | ai:claude
+pub use question_add::run_question_add;
 pub use session::run_cli;
 // trace:STORY-68 | ai:claude
 pub use signals::{
