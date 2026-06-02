@@ -3,12 +3,12 @@ spec_id: EPIC-11
 agreed_id: EPIC-11
 title: CLI/TUI interface
 description: 'Terminal front-end per ADR-4: Claude-Code-style prompt for yes/no, multiple-choice, and free-text input; drives the session engine. Kept thin so a web surface can be added later.'
-status: InProgress
+status: Completed
 priority: Low
 owner: ''
 feature: Uncategorized
 created_at: 2026-05-31T14:10:10.292859760Z
-modified_at: 2026-06-01T04:27:01.182116185Z
+modified_at: 2026-06-02T03:02:22.399333315Z
 req_type: Epic
 tags:
 - cli
