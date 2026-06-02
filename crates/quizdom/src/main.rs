@@ -5,6 +5,10 @@ fn main() {
         Some("contradictions") => quizdom::run_contradictions(args, &mut std::io::stdout()),
         // trace:STORY-72 | ai:claude
         Some("curate") => quizdom::run_curate(args, &mut std::io::stdout()),
+        // trace:STORY-87 | ai:claude
+        Some("question") if args.get(1).map(String::as_str) == Some("add") => {
+            quizdom::run_question_add(args, std::io::stdin(), std::io::stdout())
+        }
         // trace:STORY-77 | ai:claude
         Some("session") if args.get(1).map(String::as_str) == Some("show") => {
             quizdom::run_session_show(args, &mut std::io::stdout())
