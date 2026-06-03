@@ -18,6 +18,8 @@ mod spinner;
 mod strategy;
 // trace:STORY-76 | ai:claude
 mod style;
+// trace:STORY-128 | ai:claude
+mod synopsis;
 // trace:STORY-77 | ai:claude
 mod transcript;
 
@@ -60,6 +62,11 @@ pub use strategy::{
 pub use strategy::{
     DeterministicNextQuestionStrategy, LlmNextQuestionStrategy, NextQuestionStrategy,
     WeightSampler, WeightedNextQuestionStrategy, XorShiftWeightSampler,
+};
+// trace:STORY-128 | ai:claude
+pub use synopsis::{
+    arc_from_session_log, parse_synopsis, render_synopsis, run_session_synopsis,
+    structural_synopsis, synopsize, SessionArc, SessionSynopsis, SessionTurn,
 };
 // trace:STORY-77 | ai:claude
 pub use transcript::{render_transcript, run_session_show};

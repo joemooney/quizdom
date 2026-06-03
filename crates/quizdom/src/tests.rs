@@ -1462,20 +1462,22 @@ fn editor_mode_defaults_to_emacs_for_other_editors() {
 #[test]
 fn renders_all_question_kinds() {
     let cases = [
+        // trace:STORY-128 | ai:claude — `[S] Synopsis` joins the advertised set.
         (
             AnswerKind::YesNo,
-            "[Y] Yes  [N] No  [?] Observe  [X] eXplore  [A] Add  [P] Punt  [B] Back  [Q] Quit",
+            "[Y] Yes  [N] No  [?] Observe  [S] Synopsis  [X] eXplore  [A] Add  [P] Punt  [B] Back  [Q] Quit",
         ),
         (
             AnswerKind::Choice(vec!["libertarian".to_string(), "compatibilist".to_string()]),
-            "[1-2] Choose  [?] Observe  [X] eXplore  [A] Add  [P] Punt  [B] Back  [Q] Quit",
+            "[1-2] Choose  [?] Observe  [S] Synopsis  [X] eXplore  [A] Add  [P] Punt  [B] Back  [Q] Quit",
         ),
         // trace:BUG-98 | ai:claude — free-text (frontier) now advertises the
         // same control set as the single-key prompt, expressed as slash-commands.
         // trace:STORY-127 | ai:claude — `/observe` joins the advertised set.
+        // trace:STORY-128 | ai:claude — `/synopsis` joins the advertised set.
         (
             AnswerKind::FreeText,
-            "Answer in your own words, or /observe /explore /add /punt /back /quit",
+            "Answer in your own words, or /observe /synopsis /explore /add /punt /back /quit",
         ),
     ];
 
@@ -2498,8 +2500,9 @@ fn back_and_forward_browse_answered_path_without_truncating() {
     assert!(output.contains("Reviewing answer 2/2:"));
     assert!(output.contains("saved answer: yes"));
     assert!(output.contains("Reviewing answer 1/2:"));
+    // trace:STORY-128 | ai:claude — `[S] Synopsis` joins the review controls.
     assert!(output.contains(
-        "[Y] Yes  [N] No  [?] Observe  [X] eXplore  [P] Punt  [B] Back  [F] Forward  [Q] Quit"
+        "[Y] Yes  [N] No  [?] Observe  [S] Synopsis  [X] eXplore  [P] Punt  [B] Back  [F] Forward  [Q] Quit"
     ));
 
     let log = fs::read_to_string(&path).unwrap();
