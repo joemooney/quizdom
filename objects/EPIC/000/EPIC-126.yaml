@@ -1,0 +1,66 @@
+id: 019e8c0e-e9f6-74f1-9eaa-913868627751
+spec_id: EPIC-126
+agreed_id: EPIC-126
+title: 'The Observer: a belief-neutral meta sense-making layer (clarify + consistency coach)'
+description: |
+  A META sense-making layer — a SECOND, clearly-labeled voice that steps OUTSIDE
+  the Socratic exchange to help the user understand what's being asked and answer
+  precisely, breaking the circular dialogue that happens when answers don't meet
+  questions. Makes explicit VIS-1's stated-but-implicit dual purpose (educate the
+  user on semantic nuance). LLM-driven (default claude-cli / Max plan), READ-ONLY
+  on the belief graph, BELIEF-NEUTRAL.
+
+  ## Stance (decided)
+
+  - **Clarifier + consistency coach.** Translate the rebuttal into plainer terms,
+    name the precise tension, diagnose the answer-vs-question MISMATCH (what you
+    were asked vs what you answered), and list the dimensions a precise answer must
+    address — PLUS a belief-neutral read of engagement (clarity, internal
+    consistency, did you meet the question, definitional precision).
+  - **Clarify only.** Explains what's being asked; does NOT supply the answer or
+    scaffold belief-framings ("a compatibilist would say..."). Never judges which
+    belief is right; never steers toward a conclusion (VIS-1 non-goal).
+
+  ## Two modes
+
+  1. **Exchange-reading (local)** — analyze the most recent question -> answer ->
+     rebuttal. The on-demand circuit-breaker for "I don't get what it's asking."
+  2. **Session synopsis (global)** — summarize the arc: your positions, how they've
+     evolved, internal consistency, where you stand, what's unresolved — with the
+     belief-neutral engagement read (clarity/consistency/precision), NOT belief
+     grading.
+
+  ## Interaction
+
+  - A distinct, clearly-labeled META voice, visually set apart from the questioner
+    (it's the coach, not another question).
+  - Reachable by a key at any prompt (e.g. `?` = clarify this exchange),
+    NON-DESTRUCTIVE: analyze -> return to the SAME question (like eXplore).
+  - Synopsis also standalone: `quizdom session synopsis <id>`.
+  - Degrades offline (no LLM -> a minimal structural summary from the log, or a
+    "needs an LLM backend" notice).
+
+  ## Acceptance
+
+  - A key mid-session produces a belief-neutral reading of the current exchange:
+    what's being asked, the answer-vs-question mismatch, and what a precise answer
+    must address — without supplying the answer.
+  - A synopsis (key + `quizdom session synopsis`) summarizes positions +
+    consistency + open threads, assessed on engagement clarity/consistency only.
+  - The observer is visually distinct, non-destructive (returns to the same
+    question), read-only on the graph, and never advocates a belief.
+  - Mocked-LLM tests cover both modes + the offline degrade.
+status: Approved
+priority: High
+owner: ''
+feature: Uncategorized
+created_at: 2026-06-03T05:57:28.182258355Z
+modified_at: 2026-06-03T05:57:28.182258355Z
+req_type: Epic
+tags:
+- clarity
+- coaching
+- epic
+- llm
+- meta
+- observer
