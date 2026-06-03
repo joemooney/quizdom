@@ -3,12 +3,12 @@ spec_id: STORY-127
 agreed_id: STORY-127
 title: Observer engine + exchange-reading mode (in-session '?'; non-destructive; belief-neutral)
 description: 'The shared observer LLM step + the LOCAL mode. Given the current question -> user''s answer -> rebuttal, produce a BELIEF-NEUTRAL reading: translate the rebuttal into plainer terms, name the precise tension, diagnose the answer-vs-question mismatch (what was asked vs what you answered), and list the dimensions a precise answer must address — WITHOUT supplying the answer or scaffolding belief-framings. Plus a short engagement read (clarity/consistency/did-you-meet-it). Wire an in-session key (e.g. ''?'') that is NON-DESTRUCTIVE: show the reading as a clearly-labeled META voice (style.rs, visually distinct), then re-present the SAME question (like eXplore). Default claude-cli backend; degrade offline to a minimal structural note. Lane: a new observer.rs (or strategy.rs) for the LLM call + session.rs/input.rs/style.rs for the key + rendering. ## Acceptance: ''?'' mid-session yields the belief-neutral exchange reading + returns to the same question; offline degrades; mocked-LLM tests cover the clarify+coach output and the no-answer-supplied guarantee.'
-status: Approved
+status: Completed
 priority: High
 owner: ''
 feature: Uncategorized
 created_at: 2026-06-03T05:57:39.108492570Z
-modified_at: 2026-06-03T05:57:39.108492570Z
+modified_at: 2026-06-03T06:21:14.861935400Z
 req_type: Story
 tags:
 - exchange
