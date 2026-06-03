@@ -8,7 +8,7 @@ priority: Medium
 owner: ''
 feature: Uncategorized
 created_at: 2026-06-03T05:57:43.828410673Z
-modified_at: 2026-06-03T06:35:19.708058125Z
+modified_at: 2026-06-03T06:35:20.964456951Z
 req_type: Story
 tags:
 - cli
@@ -21,3 +21,9 @@ relationships:
 - rel_type: Child
   target_id: 019e8c0e-e9f6-74f1-9eaa-913868627751
   created_at: 2026-06-03T05:57:45.230265128Z
+comments:
+- id: 019e8c31-9804-7111-9869-d96b7b2fc140
+  author: joe
+  content: 'Shipped in PR #47 (squash-merged to main as 8c628d7). Added global session synopsis: standalone ''quizdom session synopsis <id>'' command + in-session [S] key, belief-neutral engagement-only assessment, offline structural-summary fallback. 18 unit tests; CI green.'
+  created_at: 2026-06-03T06:35:20.964456951Z
+  modified_at: 2026-06-03T06:35:20.964456951Z
