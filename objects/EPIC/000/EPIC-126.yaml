@@ -50,12 +50,12 @@ description: |
   - The observer is visually distinct, non-destructive (returns to the same
     question), read-only on the graph, and never advocates a belief.
   - Mocked-LLM tests cover both modes + the offline degrade.
-status: Approved
+status: Completed
 priority: High
 owner: ''
 feature: Uncategorized
 created_at: 2026-06-03T05:57:28.182258355Z
-modified_at: 2026-06-03T05:57:38.145891026Z
+modified_at: 2026-06-03T06:36:11.501375192Z
 req_type: Epic
 tags:
 - clarity
