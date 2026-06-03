@@ -1,0 +1,24 @@
+id: 019e8b42-b516-7ab1-96f2-522be815b3cf
+spec_id: Q-120
+agreed_id: Q-120
+prefix_override: Q
+title: 'Hear what your answer did: asked what *makes* the outcome yours, you replied that it *is* yours — three times. But the storm owns its gust in just that thin sense too: the gust issues from the storm, is ''the storm''s,'' shapes the world as the storm''s doing — yet no one holds the storm to it. So ''mine'' as mere issued-from-me is a sense the storm already satisfies. You needed the *other* ''mine'' — the answerable one, where the result can be held to you as its author. So point, finally, at the difference: what is present when your act is yours that is absent when the gust is the storm''s — some feature *in* your freedom — beyond your having declared ''it''s mine''? And if, looking, you find only the declaring, say that: that ''mine'' is a word you lay on the outcome, not a thing you find in it.'
+description: |-
+  LLM-generated quizdom question.
+
+  answer: free-text
+  origin: Q-119
+
+  Generated from origin question: Fair — let me say it plainly. You define freedom as 'the power and agency to act.' But a storm has power too, and no one owns the storm; it is not *answerable* for what it does. So here is all I'm asking: when you act freely, what makes the result *yours* — something you can be held to, that traces back to you as its author — rather than just an event that happened through you, the way the storm happens through the wind? Point to the one feature *in* your freedom that does that owning. (And if, when you look, you find no such feature — only that you've decided to call free acts 'yours' — say that too.)
+status: Approved
+priority: Medium
+owner: ''
+feature: Uncategorized
+created_at: 2026-06-03T02:14:25.302167563Z
+modified_at: 2026-06-03T02:14:25.302167563Z
+req_type: Functional
+tags:
+- answer:free-text
+- seed
+- topic:free-will
+- weight:50
