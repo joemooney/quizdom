@@ -6,12 +6,12 @@ description: |-
   Found in real use (post-EPIC-11). Yes/no & choice prompts show the full control set ('[X] eXplore [A] Add [P] Punt [B] Back [Q] Quit'; input.rs:129/132), but the FREE-TEXT prompt (input.rs:113) only says 'Answer in your own words, or Q/Quit to end this session.' — omitting X/A/P/B/F. The free-text parser only recognizes /end (input.rs:343), so eXplore/Punt/Back/Forward/Add aren't available at all while typing.
 
   Free-text is rustyline line-mode (STORY-55), so the controls must be SLASH-COMMANDS, not single keys. Fix (input.rs): (1) free-text prompt DISPLAYS its context's controls as slash-commands, consistent with the single-key prompt — frontier: 'or /explore /add /punt /back /quit'; review: 'or /explore /punt /back /forward /quit'; (2) parser RECOGNIZES those leading slash-commands and maps to the same AnswerInput actions (Explore/Add/Punt/Back/Forward/Quit) + existing /end; any non-command line is the free-text answer; keep rustyline editing. ## Acceptance: free-text prompts list the same controls as the matching single-key prompt (as /commands); typing /back /punt /explore /quit performs the action; a normal answer still works; tests cover command-vs-answer parsing for frontier + review free-text.
-status: Approved
+status: InProgress
 priority: Medium
 owner: ''
 feature: Uncategorized
 created_at: 2026-06-02T04:01:00.089882Z
-modified_at: 2026-06-02T04:01:00.089882Z
+modified_at: 2026-06-03T06:06:31.183169352Z
 req_type: Bug
 tags:
 - bug
