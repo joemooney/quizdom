@@ -6,12 +6,12 @@ description: |-
   Found in use (post-STORY-83). The spinner wraps ONLY the LLM block_on call (strategy.rs). But the slow 'frozen' periods are the AIDA CLI shell-outs AROUND the LLM call: BEFORE — gathering begets candidates (bank.rs 'aida rel list' / 'aida show') + building the prompt; AFTER — persisting the generated question ('aida add' + 'aida rel add'). Each shells out a process + reads the store, so there's a visible gap before the spinner appears and another after it stops, before the next question prints.
 
   Fix: widen the spinner to cover the WHOLE next-question computation, not just the LLM call — wrap strategy.next_question(...) (including the persist) at the session-loop level (session.rs), or hoist the spinner guard to span candidate-gathering + LLM + persist. Reuse STORY-83's spinner util (TTY-only, stderr). Optionally start the spinner the instant an answer is submitted. ## Acceptance: the spinner is visible for the ENTIRE delay between submitting an answer and the next question appearing — no leading or trailing frozen gap; non-TTY/piped output unchanged; tests unaffected.
-status: Approved
+status: Completed
 priority: Medium
 owner: ''
 feature: Uncategorized
 created_at: 2026-06-02T04:12:52.272072488Z
-modified_at: 2026-06-02T04:12:52.272072488Z
+modified_at: 2026-06-03T06:11:38.394503220Z
 req_type: Bug
 tags:
 - bug
