@@ -1298,6 +1298,155 @@ fn accepts_quick_add_commands() {
     assert!(!is_add_command("yes"));
 }
 
+// trace:BUG-98 | ai:claude
+#[test]
+fn free_text_prompt_lists_frontier_controls_as_slash_commands() {
+    let mut output = Vec::new();
+    render_question_for(
+        &question("Q-free", 0, AnswerKind::FreeText),
+        InputContext::Frontier,
+        &mut output,
+    )
+    .unwrap();
+    let output = String::from_utf8(output).unwrap();
+    // Same control set as the frontier single-key prompt, as slash-commands.
+    assert!(output.contains("/explore"), "{output}");
+    assert!(output.contains("/add"), "{output}");
+    assert!(output.contains("/punt"), "{output}");
+    assert!(output.contains("/back"), "{output}");
+    assert!(output.contains("/quit"), "{output}");
+    // Frontier free-text never offers /forward.
+    assert!(!output.contains("/forward"), "{output}");
+}
+
+// trace:BUG-98 | ai:claude
+#[test]
+fn free_text_prompt_lists_review_controls_as_slash_commands() {
+    let mut output = Vec::new();
+    render_question_for(
+        &question("Q-free", 0, AnswerKind::FreeText),
+        InputContext::Review,
+        &mut output,
+    )
+    .unwrap();
+    let output = String::from_utf8(output).unwrap();
+    // Same control set as the review single-key prompt, as slash-commands.
+    assert!(output.contains("/explore"), "{output}");
+    assert!(output.contains("/punt"), "{output}");
+    assert!(output.contains("/back"), "{output}");
+    assert!(output.contains("/forward"), "{output}");
+    assert!(output.contains("/quit"), "{output}");
+    // Review is for revising the saved path, not authoring: no /add.
+    assert!(!output.contains("/add"), "{output}");
+}
+
+// trace:BUG-98 | ai:claude
+#[test]
+fn free_text_slash_commands_map_to_navigation_actions() {
+    // Back / Forward / Quit short-circuit before normalize_answer.
+    assert!(is_back_command("/back"));
+    assert!(is_forward_command("/forward"));
+    assert!(is_end_command("/quit"));
+    assert!(is_add_command("/add"));
+    // Explore / Punt route through normalize_answer's free-text branch.
+    assert_eq!(
+        normalize_answer(&AnswerKind::FreeText, "/explore"),
+        Some("explore".to_string())
+    );
+    assert_eq!(
+        normalize_answer(&AnswerKind::FreeText, "/punt"),
+        Some("punt".to_string())
+    );
+}
+
+// trace:BUG-98 | ai:claude
+#[test]
+fn free_text_normal_answer_is_not_a_command() {
+    // A plain answer that merely contains a control word stays an answer.
+    assert!(!is_back_command("back to basics"));
+    assert!(!is_end_command("quitting smoking matters"));
+    assert_eq!(
+        normalize_answer(&AnswerKind::FreeText, "explore my options"),
+        Some("explore my options".to_string())
+    );
+    assert_eq!(
+        normalize_answer(&AnswerKind::FreeText, "because freedom"),
+        Some("because freedom".to_string())
+    );
+}
+
+// trace:BUG-98 | ai:claude
+#[test]
+fn free_text_command_vs_answer_parsing_round_trip() {
+    // Reading a slash-command line returns the matching navigation action,
+    // while a normal line returns it as the free-text answer — frontier.
+    let mut free_text = FreeTextInput::Plain;
+    let mut out = Vec::new();
+    let action = read_answer_or_end(
+        &AnswerKind::FreeText,
+        InputContext::Frontier,
+        &mut "/back\n".as_bytes(),
+        &mut free_text,
+        &mut out,
+    )
+    .unwrap();
+    assert!(matches!(action, AnswerInput::Back));
+
+    let mut out = Vec::new();
+    let action = read_answer_or_end(
+        &AnswerKind::FreeText,
+        InputContext::Frontier,
+        &mut "/add\n".as_bytes(),
+        &mut free_text,
+        &mut out,
+    )
+    .unwrap();
+    assert!(matches!(action, AnswerInput::Add));
+
+    let mut out = Vec::new();
+    let action = read_answer_or_end(
+        &AnswerKind::FreeText,
+        InputContext::Frontier,
+        &mut "/explore\n".as_bytes(),
+        &mut free_text,
+        &mut out,
+    )
+    .unwrap();
+    match action {
+        AnswerInput::Answer(answer) => assert_eq!(answer.normalized, "explore"),
+        _ => panic!("expected explore answer"),
+    }
+
+    let mut out = Vec::new();
+    let action = read_answer_or_end(
+        &AnswerKind::FreeText,
+        InputContext::Frontier,
+        &mut "because freedom\n".as_bytes(),
+        &mut free_text,
+        &mut out,
+    )
+    .unwrap();
+    match action {
+        AnswerInput::Answer(answer) => {
+            assert_eq!(answer.normalized, "because freedom");
+            assert_eq!(answer.raw, "because freedom");
+        }
+        _ => panic!("expected free-text answer"),
+    }
+
+    // Review context: /forward maps to Forward.
+    let mut out = Vec::new();
+    let action = read_answer_or_end(
+        &AnswerKind::FreeText,
+        InputContext::Review,
+        &mut "/forward\n".as_bytes(),
+        &mut free_text,
+        &mut out,
+    )
+    .unwrap();
+    assert!(matches!(action, AnswerInput::Forward));
+}
+
 #[test]
 fn editor_mode_uses_vi_for_vi_family_editors() {
     assert_eq!(edit_mode_from_editor("nvim"), EditMode::Vi);
@@ -1321,7 +1470,12 @@ fn renders_all_question_kinds() {
             AnswerKind::Choice(vec!["libertarian".to_string(), "compatibilist".to_string()]),
             "[1-2] Choose  [X] eXplore  [A] Add  [P] Punt  [B] Back  [Q] Quit",
         ),
-        (AnswerKind::FreeText, "Answer in your own words, or Q/Quit"),
+        // trace:BUG-98 | ai:claude — free-text (frontier) now advertises the
+        // same control set as the single-key prompt, expressed as slash-commands.
+        (
+            AnswerKind::FreeText,
+            "Answer in your own words, or /explore /add /punt /back /quit",
+        ),
     ];
 
     for (answer_kind, expected) in cases {

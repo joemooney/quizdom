@@ -110,9 +110,14 @@ pub(crate) fn render_question_for(
                 )
             )?;
         }
+        // trace:BUG-98 | ai:claude — free-text is rustyline line-mode
+        // (STORY-55), so single keys can't be intercepted mid-edit. Display the
+        // same control set as the single-key prompt, but as slash-commands the
+        // line parser recognizes, so navigation is consistent across all kinds.
         AnswerKind::FreeText => writeln!(
             output,
-            "Answer in your own words, or Q/Quit to end this session."
+            "Answer in your own words, or {}",
+            free_text_controls(context)
         )?,
     }
     write!(output, "> ")?;
@@ -131,6 +136,18 @@ fn control_prompt(prefix: &str, context: InputContext) -> String {
         InputContext::Review => {
             format!("{prefix}  [X] eXplore  [P] Punt  [B] Back  [F] Forward  [Q] Quit")
         }
+    }
+}
+
+// trace:BUG-98 | ai:claude
+/// The free-text prompt's control suffix, expressed as slash-commands so a
+/// user editing a line can still navigate. Mirrors the single-key
+/// [`control_prompt`] set for each context: the frontier offers `/add` (author
+/// a question), review offers `/forward` (re-walk the saved path) instead.
+fn free_text_controls(context: InputContext) -> String {
+    match context {
+        InputContext::Frontier => "/explore /add /punt /back /quit to navigate.".to_string(),
+        InputContext::Review => "/explore /punt /back /forward /quit to navigate.".to_string(),
     }
 }
 
@@ -337,24 +354,30 @@ fn read_single_key_answer(
     }
 }
 
+// trace:BUG-98 | ai:claude — `/quit` joins the recognized end aliases so the
+// free-text slash-command form matches the prompt the user is shown.
 pub(crate) fn is_end_command(raw: &str) -> bool {
     matches!(
         raw.trim().to_ascii_lowercase().as_str(),
-        "/end" | "q" | "quit"
+        "/end" | "/quit" | "q" | "quit"
     )
 }
 
+// trace:BUG-98 | ai:claude — `/back` joins the recognized aliases so the
+// free-text slash-command form maps to the same Back action.
 pub(crate) fn is_back_command(raw: &str) -> bool {
     matches!(
         raw.trim().to_ascii_lowercase().as_str(),
-        "b" | "/b" | "back"
+        "b" | "/b" | "/back" | "back"
     )
 }
 
+// trace:BUG-98 | ai:claude — `/forward` joins the recognized aliases so the
+// free-text slash-command form maps to the same Forward action.
 pub(crate) fn is_forward_command(raw: &str) -> bool {
     matches!(
         raw.trim().to_ascii_lowercase().as_str(),
-        "f" | "/f" | "forward"
+        "f" | "/f" | "/forward" | "forward"
     )
 }
 
@@ -392,10 +415,17 @@ pub(crate) fn normalize_answer(kind: &AnswerKind, raw: &str) -> Option<String> {
                 .find(|option| option.eq_ignore_ascii_case(trimmed))
                 .cloned()
         }
-        AnswerKind::FreeText => match raw.trim() {
-            "x" | "/x" => Some("explore".to_string()),
-            "p" | "/p" => Some("punt".to_string()),
-            other => (!other.is_empty()).then(|| other.to_string()),
+        // trace:BUG-98 | ai:claude — recognize the full `/explore` / `/punt`
+        // slash-commands (the form the free-text prompt advertises) alongside
+        // the short `/x` / `/p` aliases. Bare words like `explore` stay a
+        // legitimate free-text answer; only the leading-slash form is a command.
+        AnswerKind::FreeText => match raw.trim().to_ascii_lowercase().as_str() {
+            "x" | "/x" | "/explore" => Some("explore".to_string()),
+            "p" | "/p" | "/punt" => Some("punt".to_string()),
+            _ => {
+                let other = raw.trim();
+                (!other.is_empty()).then(|| other.to_string())
+            }
         },
     }
 }
