@@ -106,8 +106,12 @@ decision`); progress in the EPIC tree (`aida list --type epic`).
 - **EPIC-84 (user-authored questions) — complete.** Author questions into the
   bank standalone (`quizdom question add`) or mid-session (the `A` key), with
   LLM dedup + refinement.
+- **EPIC-126 (the Observer) — complete.** A belief-neutral meta layer: `?`
+  reads the current exchange (what's asked, where you went off-track, what a
+  precise answer must address); `S` / `quizdom session synopsis` summarizes
+  the arc + your engagement. Clarifies and coaches, never advocates a belief.
 
-**Every epic is complete** (~188 tests, CI green, runs on the Max plan by
+**Every epic is complete** (~227 tests, CI green, runs on the Max plan by
 default). The product is the full vision plus the use-driven extensions; further
 work is driven entirely by real use.
 
