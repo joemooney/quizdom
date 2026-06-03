@@ -621,18 +621,19 @@ where
             .enable_time()
             .build()
             .map_err(QuizdomError::Io)?;
-        // trace:STORY-83 | ai:claude
-        // Show a 'thinking' spinner on stderr for the blocking call; the guard
-        // clears the line when it drops, before the answer is printed.
-        let call = {
-            let _spinner = crate::spinner::Spinner::start("thinking");
-            runtime.block_on(self.client.call(
-                SOCRATIC_SYSTEM_PROMPT,
-                &[Message::user(prompt)],
-                &[],
-            ))
-        };
-        let (text, _tool_calls) = call.map_err(|error| QuizdomError::Aida(error.to_string()))?;
+        // trace:BUG-100 | ai:claude
+        // The 'thinking' spinner is no longer started here. STORY-83 scoped it
+        // to just this LLM `block_on`, which left visible frozen gaps for the
+        // surrounding AIDA shell-outs: candidate gathering (above) before the
+        // call, and persistence (below) after it. The session loop now holds a
+        // single spinner across the whole `next_question` computation so the
+        // indicator spans the entire delay between answer and next question.
+        let (text, _tool_calls) = runtime
+            .block_on(
+                self.client
+                    .call(SOCRATIC_SYSTEM_PROMPT, &[Message::user(prompt)], &[]),
+            )
+            .map_err(|error| QuizdomError::Aida(error.to_string()))?;
         let next = apply_llm_decision(&text, &candidates)?;
         match next {
             Some(question) if question.id == "generated:llm" => self

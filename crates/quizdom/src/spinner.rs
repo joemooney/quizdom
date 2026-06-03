@@ -145,4 +145,24 @@ mod tests {
         assert!(spinner.handle.is_some(), "active spinner holds a thread");
         drop(spinner); // joins the thread; should return promptly
     }
+
+    // trace:BUG-100 | ai:claude
+    #[test]
+    fn inert_spinner_held_across_a_multi_step_region_emits_nothing() {
+        // BUG-100 widens the guarded region from just the LLM call to the whole
+        // next-question computation (candidate gather + LLM + persist). When
+        // stderr is not a TTY the spinner must stay inert no matter how many
+        // sub-steps it spans, so piped / redirected output is byte-for-byte
+        // unchanged. The guard owns no thread across the entire region.
+        let spinner = Spinner::start_if(false, "thinking");
+        assert!(spinner.handle.is_none(), "inert across the whole region");
+        // Simulate the wider scope's sub-steps; the guard outlives all of them.
+        for _step in 0..3 {
+            assert!(
+                spinner.stop.load(Ordering::Relaxed),
+                "inert guard never animates between sub-steps",
+            );
+        }
+        drop(spinner); // dropping after a long region must not panic or block
+    }
 }
