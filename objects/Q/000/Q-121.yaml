@@ -1,0 +1,24 @@
+id: 019e8b46-c9c9-7c81-b7eb-f2ad5a0d21ab
+spec_id: Q-121
+agreed_id: Q-121
+prefix_override: Q
+title: 'Two words in your answer carry the weight: the timeless being ''owns and causes'' each action — and the whole thing is ''axiomatic.'' Take them apart. ''Causes'' is exactly the storm''s thin sense: the gust issues from the storm, is caused by it, shapes the world as the storm''s doing — yet that never made it the storm''s to answer for. So causing cannot be what supplies ownership; it is the very sense Q-120 set aside. That leaves ''owns,'' held as an axiom. But to make ''this being owns each action'' axiomatic is just to define the being as the owner — to write ownership into it by stipulation rather than find it there. Notice that is the declaring again, only moved one step back: instead of laying ''mine'' on the outcome, you now lay it on the being, and call the laying an axiom. So, once more, and answer either way: setting aside that you have *defined* this being as the owner, what does it *possess* — some feature present in it — that the storm lacks, in virtue of which the action is answerable to it and not merely issued from it? Or do you grant that ''owns'' here is not a feature you find in the being but a title you confer — the same ''mine,'' relocated from the deed to its doer?'
+description: |-
+  LLM-generated quizdom question.
+
+  answer: free-text
+  origin: Q-120
+
+  Generated from origin question: Hear what your answer did: asked what *makes* the outcome yours, you replied that it *is* yours — three times. But the storm owns its gust in just that thin sense too: the gust issues from the storm, is 'the storm's,' shapes the world as the storm's doing — yet no one holds the storm to it. So 'mine' as mere issued-from-me is a sense the storm already satisfies. You needed the *other* 'mine' — the answerable one, where the result can be held to you as its author. So point, finally, at the difference: what is present when your act is yours that is absent when the gust is the storm's — some feature *in* your freedom — beyond your having declared 'it's mine'? And if, looking, you find only the declaring, say that: that 'mine' is a word you lay on the outcome, not a thing you find in it.
+status: Approved
+priority: Medium
+owner: ''
+feature: Uncategorized
+created_at: 2026-06-03T02:18:52.745677943Z
+modified_at: 2026-06-03T02:18:52.745677943Z
+req_type: Functional
+tags:
+- answer:free-text
+- seed
+- topic:free-will
+- weight:50
