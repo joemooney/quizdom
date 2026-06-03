@@ -13,6 +13,10 @@ fn main() {
         Some("session") if args.get(1).map(String::as_str) == Some("show") => {
             quizdom::run_session_show(args, &mut std::io::stdout())
         }
+        // trace:STORY-128 | ai:claude
+        Some("session") if args.get(1).map(String::as_str) == Some("synopsis") => {
+            quizdom::run_session_synopsis(args, &mut std::io::stdout())
+        }
         _ => quizdom::run_cli(args, std::io::stdin(), std::io::stdout()),
     };
     if let Err(error) = result {

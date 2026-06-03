@@ -133,11 +133,14 @@ fn control_prompt(prefix: &str, context: InputContext) -> String {
         // trace:STORY-127 | ai:claude — the observer control ('?') is offered in
         // both contexts: it is non-destructive, so reading the exchange and
         // returning to the same prompt is always safe.
+        // trace:STORY-128 | ai:claude — `[S] Synopsis` joins the observer
+        // controls in both contexts: it is non-destructive, so a whole-session
+        // reading and a return to the same prompt is always safe.
         InputContext::Frontier => {
-            format!("{prefix}  [?] Observe  [X] eXplore  [A] Add  [P] Punt  [B] Back  [Q] Quit")
+            format!("{prefix}  [?] Observe  [S] Synopsis  [X] eXplore  [A] Add  [P] Punt  [B] Back  [Q] Quit")
         }
         InputContext::Review => {
-            format!("{prefix}  [?] Observe  [X] eXplore  [P] Punt  [B] Back  [F] Forward  [Q] Quit")
+            format!("{prefix}  [?] Observe  [S] Synopsis  [X] eXplore  [P] Punt  [B] Back  [F] Forward  [Q] Quit")
         }
     }
 }
@@ -151,11 +154,13 @@ fn free_text_controls(context: InputContext) -> String {
     // trace:STORY-127 | ai:claude — `/observe` (or `?`) mirrors the single-key
     // observer control for the free-text line-mode prompt.
     match context {
+        // trace:STORY-128 | ai:claude — `/synopsis` mirrors the single-key
+        // synopsis control for the free-text line-mode prompt.
         InputContext::Frontier => {
-            "/observe /explore /add /punt /back /quit to navigate.".to_string()
+            "/observe /synopsis /explore /add /punt /back /quit to navigate.".to_string()
         }
         InputContext::Review => {
-            "/observe /explore /punt /back /forward /quit to navigate.".to_string()
+            "/observe /synopsis /explore /punt /back /forward /quit to navigate.".to_string()
         }
     }
 }
@@ -173,6 +178,11 @@ pub(crate) enum AnswerInput {
     // belief-neutral reading of the current exchange. Non-destructive: the
     // session shows the reading, then re-presents the SAME question.
     Observe,
+    // trace:STORY-128 | ai:claude
+    // The user pressed the in-session synopsis control ('S') to get a
+    // belief-neutral reading of the WHOLE session so far. Non-destructive: the
+    // session shows the synopsis, then re-presents the SAME question.
+    Synopsis,
     End,
 }
 
@@ -295,6 +305,11 @@ pub(crate) fn read_answer_or_end(
         if is_observe_command(&raw) {
             return Ok(AnswerInput::Observe);
         }
+        // trace:STORY-128 | ai:claude — the synopsis control is non-destructive
+        // (a whole-session reading), so it too is recognized in every context.
+        if is_synopsis_command(&raw) {
+            return Ok(AnswerInput::Synopsis);
+        }
         // trace:STORY-88 | ai:claude — quick-add is a frontier-only control.
         if context == InputContext::Frontier && is_add_command(&raw) {
             return Ok(AnswerInput::Add);
@@ -353,6 +368,9 @@ fn read_single_key_answer(
             // trace:STORY-127 | ai:claude — the observer key. Non-destructive in
             // every context, so it is accepted regardless of answer kind.
             KeyCode::Char('?') => "?",
+            // trace:STORY-128 | ai:claude — the synopsis key. Non-destructive in
+            // every context, so it is accepted regardless of answer kind.
+            KeyCode::Char('s') | KeyCode::Char('S') => "/synopsis",
             // trace:STORY-88 | ai:claude — frontier-only quick-add key.
             KeyCode::Char('a') | KeyCode::Char('A') if context == InputContext::Frontier => "/add",
             KeyCode::Char('p') | KeyCode::Char('P') => "p",
@@ -411,6 +429,17 @@ pub(crate) fn is_observe_command(raw: &str) -> bool {
     matches!(
         raw.trim().to_ascii_lowercase().as_str(),
         "?" | "/?" | "/observe" | "observe"
+    )
+}
+
+// trace:STORY-128 | ai:claude
+/// The in-session synopsis control: surface a belief-neutral reading of the
+/// WHOLE session so far without disturbing the current question. Recognised as a
+/// bare `s`, `/s`, `/synopsis`, or the word `synopsis`.
+pub(crate) fn is_synopsis_command(raw: &str) -> bool {
+    matches!(
+        raw.trim().to_ascii_lowercase().as_str(),
+        "s" | "/s" | "/synopsis" | "synopsis"
     )
 }
 

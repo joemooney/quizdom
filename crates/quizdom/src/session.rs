@@ -16,6 +16,7 @@ use crate::input::{
 use crate::model::{Answer, AnswerKind, Question, TermDefinition};
 // trace:STORY-127 | ai:claude
 use crate::observer::{read_exchange, structural_reading, Exchange, ExchangeReading};
+// trace:STORY-128 | ai:claude
 use crate::persist::{
     AidaCliGeneratedQuestionPersister, AidaCliQuestionReweighter,
     AidaCliUserAuthoredQuestionPersister, AidaCliUserSpecificTermPersister, QuestionLink,
@@ -31,6 +32,10 @@ use crate::strategy::{
 use crate::strategy::{
     DeterministicNextQuestionStrategy, LlmNextQuestionStrategy, NextQuestionStrategy,
     WeightedNextQuestionStrategy,
+};
+use crate::synopsis::{
+    arc_from_session_log, render_synopsis, structural_synopsis, synopsize, SessionArc,
+    SessionSynopsis,
 };
 use chrono::Utc;
 use llm::{AnthropicClient, ClaudeCliClient};
@@ -634,6 +639,55 @@ impl ObserverEngine {
             Self::Offline => structural_reading(exchange),
         }
     }
+
+    // trace:STORY-128 | ai:claude
+    /// Read a whole-session arc, using the LLM when present and falling back to
+    /// the structural summary when offline. The GLOBAL counterpart to [`read`].
+    fn synopsize(&self, arc: &SessionArc) -> SessionSynopsis {
+        match self {
+            Self::ClaudeCli(client) => synopsize(client, arc),
+            Self::Anthropic(client) => synopsize(client, arc),
+            Self::Offline => structural_synopsis(arc),
+        }
+    }
+}
+
+// trace:STORY-128 | ai:claude
+/// Build and render a belief-neutral synopsis of the WHOLE session so far when
+/// the `S` key is pressed in-session. Reads the live JSONL log the session is
+/// writing to (the logger flushes after every event, so it is current),
+/// summarizes the arc through the observer engine, and renders it as the same
+/// META voice the per-exchange observer uses. Non-destructive: the caller
+/// re-presents the SAME question afterwards, so this only reads + writes.
+///
+/// A log that cannot be read yet (e.g. the first turn, before anything is
+/// flushed) degrades to a short note rather than failing the keypress.
+fn render_session_synopsis(
+    observer: &ObserverEngine,
+    log_path: &Path,
+    branch: Option<&str>,
+    output: &mut impl Write,
+) -> Result<()> {
+    let arc = match File::open(log_path) {
+        Ok(file) => arc_from_session_log(file, branch).unwrap_or_default(),
+        Err(_) => SessionArc::default(),
+    };
+    if arc.is_empty() {
+        writeln!(
+            output,
+            "{}",
+            crate::style::paint(
+                crate::style::meta(),
+                "\nMETA (synopsis) — nothing recorded yet to summarize."
+            )
+        )?;
+        return Ok(());
+    }
+    let synopsis = {
+        let _spinner = crate::spinner::Spinner::start("synopsizing");
+        observer.synopsize(&arc)
+    };
+    render_synopsis(&synopsis, output)
 }
 
 // trace:STORY-127 | ai:claude
@@ -969,7 +1023,12 @@ fn run_session_from_current(
                         match browse_answered_path(
                             bank,
                             &recent_path,
-                            &observer,
+                            // trace:STORY-128 | ai:claude
+                            &ReviewContext {
+                                observer: &observer,
+                                log_path: &config.log_path,
+                                branch: &config.branch_id,
+                            },
                             &mut input,
                             &mut free_text_input,
                             output,
@@ -1026,6 +1085,20 @@ fn run_session_from_current(
                             observer.read(&exchange)
                         };
                         render_exchange_reading(&reading, output)?;
+                        continue;
+                    }
+                    AnswerInput::Synopsis => {
+                        // trace:STORY-128 | ai:claude
+                        // Non-destructive GLOBAL synopsis: read the whole session
+                        // log so far as a belief-neutral META voice, then
+                        // re-present the SAME question (like Observe). Nothing is
+                        // logged or mutated.
+                        render_session_synopsis(
+                            &observer,
+                            &config.log_path,
+                            Some(&config.branch_id),
+                            output,
+                        )?;
                         continue;
                     }
                     AnswerInput::Forward => continue,
@@ -1355,9 +1428,14 @@ fn ask_contradiction_follow_up(
         // trace:STORY-127 | ai:claude — likewise the observer control: the
         // contradiction prompt is a transient runtime question, so a stray `?`
         // here is a no-op rather than a reading of a synthetic exchange.
-        AnswerInput::Add | AnswerInput::Back | AnswerInput::Forward | AnswerInput::Observe => {
-            Ok(false)
-        }
+        // trace:STORY-128 | ai:claude — and the synopsis control: this transient
+        // runtime prompt has no observer engine in scope, so a stray `S` here is
+        // a no-op rather than a whole-session reading.
+        AnswerInput::Add
+        | AnswerInput::Back
+        | AnswerInput::Forward
+        | AnswerInput::Observe
+        | AnswerInput::Synopsis => Ok(false),
     }
 }
 
@@ -1432,11 +1510,23 @@ enum ReviewOutcome {
     End,
 }
 
+// trace:STORY-128 | ai:claude
+/// The session-level context the review pane's observer controls need: the
+/// Observer engine (for the per-exchange `?` reading) plus where to find the
+/// live session log (for the whole-session `S` synopsis). Bundled so the review
+/// helper keeps a tidy argument list.
+struct ReviewContext<'a> {
+    observer: &'a ObserverEngine,
+    log_path: &'a Path,
+    branch: &'a str,
+}
+
 fn browse_answered_path(
     bank: &dyn QuestionBank,
     recent_path: &[AnsweredQuestion],
-    // trace:STORY-127 | ai:claude — the review pane offers the same `?` observer.
-    observer: &ObserverEngine,
+    // trace:STORY-127 | ai:claude — the `?` observer and (STORY-128) the `S`
+    // synopsis both live in this session-level context.
+    review: &ReviewContext<'_>,
     input: &mut impl BufRead,
     free_text_input: &mut FreeTextInput,
     output: &mut impl Write,
@@ -1501,9 +1591,21 @@ fn browse_answered_path(
                 };
                 let reading = {
                     let _spinner = crate::spinner::Spinner::start("observing");
-                    observer.read(&exchange)
+                    review.observer.read(&exchange)
                 };
                 render_exchange_reading(&reading, output)?;
+                continue;
+            }
+            // trace:STORY-128 | ai:claude — non-destructive GLOBAL synopsis in
+            // review: read the whole session log so far and stay on the same
+            // reviewed answer.
+            AnswerInput::Synopsis => {
+                render_session_synopsis(
+                    review.observer,
+                    review.log_path,
+                    Some(review.branch),
+                    output,
+                )?;
                 continue;
             }
             AnswerInput::End => return Ok(ReviewOutcome::End),
