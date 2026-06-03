@@ -17,3 +17,7 @@ tags:
 - observer
 - story
 - synopsis
+relationships:
+- rel_type: Child
+  target_id: 019e8c0e-e9f6-74f1-9eaa-913868627751
+  created_at: 2026-06-03T05:57:45.230265128Z
