@@ -55,7 +55,7 @@ priority: High
 owner: ''
 feature: Uncategorized
 created_at: 2026-06-03T05:57:28.182258355Z
-modified_at: 2026-06-03T06:36:11.501375192Z
+modified_at: 2026-06-03T06:36:18.767554680Z
 req_type: Epic
 tags:
 - clarity
@@ -75,3 +75,9 @@ relationships:
 - rel_type: Parent
   target_id: 019e8c0f-2714-74a1-92ae-b1540e3e8b2a
   created_at: 2026-06-03T05:57:45.230265128Z
+comments:
+- id: 019e8c32-79cf-7b20-ae54-ff96085d620b
+  author: joe
+  content: 'COMPLETE. STORY-127 (observer.rs engine + ''?'' exchange-reading) + STORY-128 (synopsis.rs + ''S'' key + ''quizdom session synopsis'' command). Belief-neutral clarify/coach meta layer: ''?'' reads the current exchange, ''S'' synopsizes the arc. 220 tests.'
+  created_at: 2026-06-03T06:36:18.767554680Z
+  modified_at: 2026-06-03T06:36:18.767554680Z
