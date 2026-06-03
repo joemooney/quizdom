@@ -8,7 +8,7 @@ priority: High
 owner: ''
 feature: Uncategorized
 created_at: 2026-06-03T05:57:39.108492570Z
-modified_at: 2026-06-03T06:21:16.095987576Z
+modified_at: 2026-06-03T06:21:40.793933816Z
 req_type: Story
 tags:
 - exchange
@@ -27,3 +27,8 @@ comments:
   content: 'Implemented Observer engine in crates/quizdom/src/observer.rs: belief-neutral, clarify-only ExchangeReading (plain rebuttal, tension, asked-vs-answered mismatch, dimensions, engagement). Wired ''?'' key (input.rs AnswerInput::Observe + is_observe_command) as a non-destructive control in both Frontier and Review; renders a labeled META voice (style::meta) and re-presents the SAME question. Default claude-cli backend via ObserverEngine; degrades offline to a structural note. scrub_supplied_answer enforces the no-answer-supplied guarantee. Mocked-LLM unit tests + offline integration test cover acceptance.'
   created_at: 2026-06-03T06:21:16.095987576Z
   modified_at: 2026-06-03T06:21:16.095987576Z
+- id: 019e8c25-1439-72f1-947c-b0914cdb4a85
+  author: joe
+  content: Commit 6600148 references this requirement
+  created_at: 2026-06-03T06:21:40.793933816Z
+  modified_at: 2026-06-03T06:21:40.793933816Z
