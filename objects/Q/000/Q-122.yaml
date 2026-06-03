@@ -1,0 +1,24 @@
+id: 019e8b4d-52b0-7eb1-985c-9549fd16e9df
+spec_id: Q-122
+agreed_id: Q-122
+prefix_override: Q
+title: 'You''ve named the missing feature at last: it is *mind* — the storm''s causing isn''t a mind''s, and ''this agency implies ownership.'' But test it the way we''ve tested every prior candidate. A mind causes the way a storm causes: the thought issues from the mind as the gust issues from the storm — both events with antecedents, neither yet answerable. So renaming the causer ''mind'' instead of ''storm'' tells me *where* the causing happens, not *what* in it converts mere issued-from into answerable-to. And ''agency implies ownership'' is the very implication I keep asking you to ground — agency was your word at Q-119 for ''the power to act,'' which the storm has too. So point at it once more, inside the mind this time: what feature of mind''s causing makes the act answerable to you — held to you as author — that is absent when the same causal issuing runs through a storm? Or do you now grant that ''mind'' is the third name, after ''soul'' and ''outside time,'' for the place you relocate the ownership you keep declaring rather than the feature that finally supplies it?'
+description: |-
+  LLM-generated quizdom question.
+
+  answer: free-text
+  origin: Q-121
+
+  Generated from origin question: Two words in your answer carry the weight: the timeless being 'owns and causes' each action — and the whole thing is 'axiomatic.' Take them apart. 'Causes' is exactly the storm's thin sense: the gust issues from the storm, is caused by it, shapes the world as the storm's doing — yet that never made it the storm's to answer for. So causing cannot be what supplies ownership; it is the very sense Q-120 set aside. That leaves 'owns,' held as an axiom. But to make 'this being owns each action' axiomatic is just to define the being as the owner — to write ownership into it by stipulation rather than find it there. Notice that is the declaring again, only moved one step back: instead of laying 'mine' on the outcome, you now lay it on the being, and call the laying an axiom. So, once more, and answer either way: setting aside that you have *defined* this being as the owner, what does it *possess* — some feature present in it — that the storm lacks, in virtue of which the action is answerable to it and not merely issued from it? Or do you grant that 'owns' here is not a feature you find in the being but a title you confer — the same 'mine,' relocated from the deed to its doer?
+status: Approved
+priority: Medium
+owner: ''
+feature: Uncategorized
+created_at: 2026-06-03T02:26:01.008221137Z
+modified_at: 2026-06-03T02:26:01.008221137Z
+req_type: Functional
+tags:
+- answer:free-text
+- seed
+- topic:free-will
+- weight:50
