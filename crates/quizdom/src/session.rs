@@ -14,6 +14,8 @@ use crate::input::{
     FreeTextInput, InputContext,
 };
 use crate::model::{Answer, AnswerKind, Question, TermDefinition};
+// trace:STORY-127 | ai:claude
+use crate::observer::{read_exchange, structural_reading, Exchange, ExchangeReading};
 use crate::persist::{
     AidaCliGeneratedQuestionPersister, AidaCliQuestionReweighter,
     AidaCliUserAuthoredQuestionPersister, AidaCliUserSpecificTermPersister, QuestionLink,
@@ -595,6 +597,118 @@ fn build_strategy(config: &CliConfig) -> Option<Box<dyn NextQuestionStrategy>> {
     }
 }
 
+// trace:STORY-127 | ai:claude
+/// The in-session Observer: produces a belief-neutral reading of an exchange
+/// when the `?` key is pressed. Holds the LLM backend (default claude-cli) when
+/// one is available, and degrades to a pure structural note otherwise — so the
+/// `?` key always does something, online or off.
+enum ObserverEngine {
+    ClaudeCli(ClaudeCliClient),
+    Anthropic(AnthropicClient),
+    /// No backend configured / available — structural-only readings.
+    Offline,
+}
+
+impl ObserverEngine {
+    /// Build the observer for a session from its configured LLM backend.
+    ///
+    /// The default backend is claude-cli (always constructible); the Anthropic
+    /// backend degrades to `Offline` when its API key is absent, so an offline
+    /// machine still gets the structural note rather than a failure.
+    fn for_config(config: &CliConfig) -> Self {
+        match config.llm_backend {
+            LlmBackendKind::ClaudeCli => Self::ClaudeCli(ClaudeCliClient::from_env()),
+            LlmBackendKind::Anthropic => match AnthropicClient::from_env() {
+                Ok(client) => Self::Anthropic(client),
+                Err(_) => Self::Offline,
+            },
+        }
+    }
+
+    /// Read an exchange, using the LLM when present and falling back to the
+    /// structural note when offline.
+    fn read(&self, exchange: &Exchange) -> ExchangeReading {
+        match self {
+            Self::ClaudeCli(client) => read_exchange(client, exchange),
+            Self::Anthropic(client) => read_exchange(client, exchange),
+            Self::Offline => structural_reading(exchange),
+        }
+    }
+}
+
+// trace:STORY-127 | ai:claude
+/// Assemble the [`Exchange`] the observer reads when `?` is pressed at the
+/// frontier on `current`.
+///
+/// The rebuttal is `current` (the question now challenging the user); the prior
+/// question + answer is the most recent step on the path that led here. At the
+/// seed (an empty path) there is no prior turn, so the current question stands
+/// as its own framing with no answer — the structural note handles that.
+fn exchange_for_frontier(current: &Question, recent_path: &[AnsweredQuestion]) -> Exchange {
+    match recent_path.last() {
+        Some(prior) => Exchange {
+            question: prior.question_text.clone(),
+            answer: prior.raw_answer.clone(),
+            rebuttal: current.title.clone(),
+        },
+        None => Exchange {
+            question: current.title.clone(),
+            answer: String::new(),
+            rebuttal: current.title.clone(),
+        },
+    }
+}
+
+// trace:STORY-127 | ai:claude
+/// Render an [`ExchangeReading`] as a clearly-labeled META voice, visually
+/// distinct from the question (style::meta). Belief-neutral and clarify-only:
+/// it restates the rebuttal, names the tension, diagnoses the mismatch, and
+/// lists the dimensions a precise answer must address — it never supplies an
+/// answer. Pure over the buffer + reading, so it is unit-testable without a
+/// live LLM. The caller re-presents the SAME question afterwards (non-
+/// destructive), so this only writes; it never consumes input or mutates state.
+fn render_exchange_reading(reading: &ExchangeReading, output: &mut impl Write) -> Result<()> {
+    let header = if reading.degraded {
+        "META (observer, offline) — a belief-neutral reading of this exchange:"
+    } else {
+        "META (observer) — a belief-neutral reading of this exchange:"
+    };
+    writeln!(
+        output,
+        "\n{}",
+        crate::style::paint(crate::style::meta(), header)
+    )?;
+    let line = |label: &str, body: &str, output: &mut dyn Write| -> Result<()> {
+        if !body.trim().is_empty() {
+            writeln!(
+                output,
+                "{}",
+                crate::style::paint(crate::style::meta(), &format!("  {label}: {body}"))
+            )?;
+        }
+        Ok(())
+    };
+    line("In plainer terms", &reading.plain_rebuttal, output)?;
+    line("The tension", &reading.tension, output)?;
+    line("Asked vs answered", &reading.mismatch, output)?;
+    if !reading.dimensions.is_empty() {
+        writeln!(
+            output,
+            "{}",
+            crate::style::paint(crate::style::meta(), "  A precise answer would address:")
+        )?;
+        for dimension in &reading.dimensions {
+            writeln!(
+                output,
+                "{}",
+                crate::style::paint(crate::style::meta(), &format!("    - {dimension}"))
+            )?;
+        }
+    }
+    line("Engagement", &reading.engagement, output)?;
+    Ok(())
+}
+
 #[cfg(test)]
 pub(crate) fn run_session(
     config: &CliConfig,
@@ -766,6 +880,10 @@ fn run_session_from_current(
     // Mark this session active for its whole lifetime; the guard clears the
     // marker on clean end so concurrent bare-resume never picks a live session.
     let active_guard = SessionActiveGuard::acquire(&config.log_path)?;
+    // trace:STORY-127 | ai:claude
+    // Build the observer once for the session; its `?` reading is independent of
+    // the question-selection strategy and degrades to a structural note offline.
+    let observer = ObserverEngine::for_config(config);
     let mut logger = SessionLogger::open(&config.log_path)?;
     // trace:STORY-81 | ai:claude
     // Track whether THIS run recorded any answer. A fresh start that quits
@@ -851,6 +969,7 @@ fn run_session_from_current(
                         match browse_answered_path(
                             bank,
                             &recent_path,
+                            &observer,
                             &mut input,
                             &mut free_text_input,
                             output,
@@ -894,6 +1013,19 @@ fn run_session_from_current(
                             &mut input,
                             output,
                         )?;
+                        continue;
+                    }
+                    AnswerInput::Observe => {
+                        // trace:STORY-127 | ai:claude
+                        // Non-destructive observer: read the current exchange as
+                        // a belief-neutral META voice, then re-present the SAME
+                        // question (like eXplore). Nothing is logged or mutated.
+                        let exchange = exchange_for_frontier(&current, &recent_path);
+                        let reading = {
+                            let _spinner = crate::spinner::Spinner::start("observing");
+                            observer.read(&exchange)
+                        };
+                        render_exchange_reading(&reading, output)?;
                         continue;
                     }
                     AnswerInput::Forward => continue,
@@ -1220,7 +1352,12 @@ fn ask_contradiction_follow_up(
         // trace:STORY-88 | ai:claude — quick-add is offered only at the plain
         // frontier prompt, not on the contradiction follow-up; treat any stray
         // Add/Back/Forward here as a no-op that re-presents nothing.
-        AnswerInput::Add | AnswerInput::Back | AnswerInput::Forward => Ok(false),
+        // trace:STORY-127 | ai:claude — likewise the observer control: the
+        // contradiction prompt is a transient runtime question, so a stray `?`
+        // here is a no-op rather than a reading of a synthetic exchange.
+        AnswerInput::Add | AnswerInput::Back | AnswerInput::Forward | AnswerInput::Observe => {
+            Ok(false)
+        }
     }
 }
 
@@ -1298,6 +1435,8 @@ enum ReviewOutcome {
 fn browse_answered_path(
     bank: &dyn QuestionBank,
     recent_path: &[AnsweredQuestion],
+    // trace:STORY-127 | ai:claude — the review pane offers the same `?` observer.
+    observer: &ObserverEngine,
     input: &mut impl BufRead,
     free_text_input: &mut FreeTextInput,
     output: &mut impl Write,
@@ -1347,6 +1486,26 @@ fn browse_answered_path(
             // quick-add control (it is frontier-only), so Add never reaches
             // here; stay on the saved path if it somehow does.
             AnswerInput::Add => continue,
+            // trace:STORY-127 | ai:claude — non-destructive observer in review:
+            // read the reviewed exchange (this question -> the saved answer ->
+            // the step it led to) and stay on the same reviewed answer.
+            AnswerInput::Observe => {
+                let rebuttal = recent_path
+                    .get(cursor + 1)
+                    .map(|next| next.question_text.clone())
+                    .unwrap_or_else(|| question.title.clone());
+                let exchange = Exchange {
+                    question: question.title.clone(),
+                    answer: reviewed.raw_answer.clone(),
+                    rebuttal,
+                };
+                let reading = {
+                    let _spinner = crate::spinner::Spinner::start("observing");
+                    observer.read(&exchange)
+                };
+                render_exchange_reading(&reading, output)?;
+                continue;
+            }
             AnswerInput::End => return Ok(ReviewOutcome::End),
         }
     }

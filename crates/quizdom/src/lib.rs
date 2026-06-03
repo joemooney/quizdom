@@ -5,6 +5,8 @@ mod error;
 mod honing;
 mod input;
 mod model;
+// trace:STORY-127 | ai:claude
+mod observer;
 mod persist;
 // trace:STORY-87 | ai:claude
 mod question_add;
@@ -36,6 +38,8 @@ pub use model::{
     Answer, AnswerKind, Question, QuestionRef, RefinementProposal, TermDefinition,
     TermMappingProposal, TermRef,
 };
+// trace:STORY-127 | ai:claude
+pub use observer::{parse_reading, read_exchange, structural_reading, Exchange, ExchangeReading};
 pub use persist::{
     GeneratedQuestionPersister, NoopGeneratedQuestionPersister, NoopQuestionReweighter,
     NoopUserAuthoredQuestionPersister, QuestionLink, QuestionReweighter,

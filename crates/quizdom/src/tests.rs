@@ -1464,17 +1464,18 @@ fn renders_all_question_kinds() {
     let cases = [
         (
             AnswerKind::YesNo,
-            "[Y] Yes  [N] No  [X] eXplore  [A] Add  [P] Punt  [B] Back  [Q] Quit",
+            "[Y] Yes  [N] No  [?] Observe  [X] eXplore  [A] Add  [P] Punt  [B] Back  [Q] Quit",
         ),
         (
             AnswerKind::Choice(vec!["libertarian".to_string(), "compatibilist".to_string()]),
-            "[1-2] Choose  [X] eXplore  [A] Add  [P] Punt  [B] Back  [Q] Quit",
+            "[1-2] Choose  [?] Observe  [X] eXplore  [A] Add  [P] Punt  [B] Back  [Q] Quit",
         ),
         // trace:BUG-98 | ai:claude — free-text (frontier) now advertises the
         // same control set as the single-key prompt, expressed as slash-commands.
+        // trace:STORY-127 | ai:claude — `/observe` joins the advertised set.
         (
             AnswerKind::FreeText,
-            "Answer in your own words, or /explore /add /punt /back /quit",
+            "Answer in your own words, or /observe /explore /add /punt /back /quit",
         ),
     ];
 
@@ -2497,9 +2498,9 @@ fn back_and_forward_browse_answered_path_without_truncating() {
     assert!(output.contains("Reviewing answer 2/2:"));
     assert!(output.contains("saved answer: yes"));
     assert!(output.contains("Reviewing answer 1/2:"));
-    assert!(
-        output.contains("[Y] Yes  [N] No  [X] eXplore  [P] Punt  [B] Back  [F] Forward  [Q] Quit")
-    );
+    assert!(output.contains(
+        "[Y] Yes  [N] No  [?] Observe  [X] eXplore  [P] Punt  [B] Back  [F] Forward  [Q] Quit"
+    ));
 
     let log = fs::read_to_string(&path).unwrap();
     assert!(!log.contains(r#""event_type":"path_truncated""#));
@@ -2710,6 +2711,80 @@ fn story_69_branching_bank() -> FakeBank {
     ])
     .with_edges("Q-1", ["Q-yes", "Q-no"])
     .with_edges("Q-yes", ["Q-3"])
+}
+
+// trace:STORY-127 | ai:claude
+// '?' mid-session yields the belief-neutral exchange reading as a labeled META
+// voice, then returns to the SAME question (non-destructive) — and degrades to
+// the structural note when no LLM backend is reachable. The session's observer
+// uses the claude-cli backend; pointing it at a nonexistent command forces the
+// spawn to fail, exercising the offline degradation path deterministically.
+#[test]
+fn observer_key_reads_exchange_then_re_presents_same_question_offline() {
+    let path = std::env::temp_dir().join(format!(
+        "quizdom-story-127-observer-{}.jsonl",
+        std::process::id()
+    ));
+    let _ = fs::remove_file(&path);
+    std::env::set_var(
+        "QUIZDOM_CLAUDE_COMMAND",
+        "quizdom-no-such-observer-binary-xyz",
+    );
+    let bank = story_69_branching_bank();
+    let strategy = DeterministicNextQuestionStrategy;
+    let config = test_config(&path, "Q-1");
+    let mut output = Vec::new();
+
+    // Answer Q-1 yes (-> Q-yes), press '?' at Q-yes, then end. The observer reads
+    // the Q-1 -> "yes" -> Q-yes exchange and re-presents Q-yes unchanged.
+    run_session(
+        &config,
+        &bank,
+        &strategy,
+        "yes\n?\n/end\n".as_bytes(),
+        &mut output,
+    )
+    .unwrap();
+    std::env::remove_var("QUIZDOM_CLAUDE_COMMAND");
+
+    let output = String::from_utf8(output).unwrap();
+    // A clearly-labeled, belief-neutral META reading was surfaced.
+    assert!(
+        output.contains("META (observer"),
+        "expected a labeled META reading, got: {output}"
+    );
+    assert!(
+        output.contains("belief-neutral reading of this exchange"),
+        "the reading must announce itself belief-neutral: {output}"
+    );
+    // Offline degradation: the structural note's mismatch line is present, and it
+    // never supplies the user's answer back to them.
+    assert!(
+        output.contains("Asked:") && output.contains("Answered:"),
+        "structural note should diagnose asked-vs-answered: {output}"
+    );
+    // Non-destructive: Q-yes is presented before AND after the reading (twice),
+    // and no answer for it was recorded to the log.
+    assert!(
+        output.matches("Q-yes").count() >= 2,
+        "the same question must be re-presented after the reading: {output}"
+    );
+    let log = fs::read_to_string(&path).unwrap();
+    // Q-yes is presented twice (before + after the reading) but never answered:
+    // the observer keypress records no answer_recorded event for it.
+    assert!(
+        !log.lines()
+            .any(|line| line.contains(r#""event_type":"answer_recorded""#)
+                && line.contains(r#""question_ref":"Q-yes""#)),
+        "the observer keypress must not record an answer for Q-yes: {log}"
+    );
+    // The observer leaves no trace in the persisted session log.
+    assert!(
+        !log.contains("META (observer"),
+        "the META reading must not be written to the session log"
+    );
+
+    let _ = fs::remove_file(&path);
 }
 
 fn test_config(path: &Path, seed: &str) -> CliConfig {
