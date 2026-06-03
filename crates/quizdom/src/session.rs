@@ -1025,7 +1025,20 @@ fn run_session_from_current(
             recent_path: recent_path.clone(),
         };
 
-        match strategy.next_question(&current, &context, bank)? {
+        // trace:BUG-100 | ai:claude
+        // Hold one 'thinking' spinner across the ENTIRE next-question
+        // computation — candidate gathering (`aida rel list` / `aida show`),
+        // the blocking LLM call, and persistence (`aida add` / `aida rel add`).
+        // STORY-83 scoped the spinner to just the LLM call, leaving frozen gaps
+        // for the surrounding AIDA shell-outs before and after it. The guard is
+        // dropped before any output for the next question is printed, so the
+        // spinner line is cleared cleanly. TTY-only / stderr behavior is
+        // inherited from the spinner util, so piped output is unchanged.
+        let next_question = {
+            let _spinner = crate::spinner::Spinner::start("thinking");
+            strategy.next_question(&current, &context, bank)?
+        };
+        match next_question {
             Some(next) => {
                 logger.next_question_selected(
                     &config.session_id,
