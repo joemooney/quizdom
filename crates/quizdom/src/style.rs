@@ -94,6 +94,17 @@ pub(crate) fn breadcrumb() -> Style {
     Style::new().fg_color(Some(AnsiColor::BrightBlack.into()))
 }
 
+// trace:STORY-127 | ai:claude
+/// The Observer's META voice — the belief-neutral exchange reading surfaced by
+/// the `?` key. Styled distinctly (dimmed italic blue) so it reads as a
+/// separate, secondary voice commenting on the exchange, never mistaken for the
+/// question itself.
+pub(crate) fn meta() -> Style {
+    Style::new()
+        .italic()
+        .fg_color(Some(AnsiColor::BrightBlue.into()))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

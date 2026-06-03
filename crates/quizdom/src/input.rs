@@ -130,11 +130,14 @@ fn control_prompt(prefix: &str, context: InputContext) -> String {
         // trace:STORY-88 | ai:claude — the quick-add control is offered only at
         // the frontier, where "add a question from here" is meaningful; the
         // review pane is for revising the saved path, not authoring.
+        // trace:STORY-127 | ai:claude — the observer control ('?') is offered in
+        // both contexts: it is non-destructive, so reading the exchange and
+        // returning to the same prompt is always safe.
         InputContext::Frontier => {
-            format!("{prefix}  [X] eXplore  [A] Add  [P] Punt  [B] Back  [Q] Quit")
+            format!("{prefix}  [?] Observe  [X] eXplore  [A] Add  [P] Punt  [B] Back  [Q] Quit")
         }
         InputContext::Review => {
-            format!("{prefix}  [X] eXplore  [P] Punt  [B] Back  [F] Forward  [Q] Quit")
+            format!("{prefix}  [?] Observe  [X] eXplore  [P] Punt  [B] Back  [F] Forward  [Q] Quit")
         }
     }
 }
@@ -145,9 +148,15 @@ fn control_prompt(prefix: &str, context: InputContext) -> String {
 /// [`control_prompt`] set for each context: the frontier offers `/add` (author
 /// a question), review offers `/forward` (re-walk the saved path) instead.
 fn free_text_controls(context: InputContext) -> String {
+    // trace:STORY-127 | ai:claude — `/observe` (or `?`) mirrors the single-key
+    // observer control for the free-text line-mode prompt.
     match context {
-        InputContext::Frontier => "/explore /add /punt /back /quit to navigate.".to_string(),
-        InputContext::Review => "/explore /punt /back /forward /quit to navigate.".to_string(),
+        InputContext::Frontier => {
+            "/observe /explore /add /punt /back /quit to navigate.".to_string()
+        }
+        InputContext::Review => {
+            "/observe /explore /punt /back /forward /quit to navigate.".to_string()
+        }
     }
 }
 
@@ -159,6 +168,11 @@ pub(crate) enum AnswerInput {
     // The user pressed the in-session quick-add control to author + link a new
     // question from the current node mid-exploration.
     Add,
+    // trace:STORY-127 | ai:claude
+    // The user pressed the in-session observer control ('?') to get a
+    // belief-neutral reading of the current exchange. Non-destructive: the
+    // session shows the reading, then re-presents the SAME question.
+    Observe,
     End,
 }
 
@@ -276,6 +290,11 @@ pub(crate) fn read_answer_or_end(
         if is_back_command(&raw) {
             return Ok(AnswerInput::Back);
         }
+        // trace:STORY-127 | ai:claude — the observer control is non-destructive,
+        // so it is recognized in every context before any answer parsing.
+        if is_observe_command(&raw) {
+            return Ok(AnswerInput::Observe);
+        }
         // trace:STORY-88 | ai:claude — quick-add is a frontier-only control.
         if context == InputContext::Frontier && is_add_command(&raw) {
             return Ok(AnswerInput::Add);
@@ -331,6 +350,9 @@ fn read_single_key_answer(
             KeyCode::Char('y') | KeyCode::Char('Y') if matches!(kind, AnswerKind::YesNo) => "y",
             KeyCode::Char('n') | KeyCode::Char('N') if matches!(kind, AnswerKind::YesNo) => "n",
             KeyCode::Char('x') | KeyCode::Char('X') => "x",
+            // trace:STORY-127 | ai:claude — the observer key. Non-destructive in
+            // every context, so it is accepted regardless of answer kind.
+            KeyCode::Char('?') => "?",
             // trace:STORY-88 | ai:claude — frontier-only quick-add key.
             KeyCode::Char('a') | KeyCode::Char('A') if context == InputContext::Frontier => "/add",
             KeyCode::Char('p') | KeyCode::Char('P') => "p",
@@ -378,6 +400,17 @@ pub(crate) fn is_forward_command(raw: &str) -> bool {
     matches!(
         raw.trim().to_ascii_lowercase().as_str(),
         "f" | "/f" | "/forward" | "forward"
+    )
+}
+
+// trace:STORY-127 | ai:claude
+/// The in-session observer control: surface a belief-neutral reading of the
+/// current exchange without disturbing it. Recognised as a bare `?`, `/?`,
+/// `/observe`, or the word `observe`.
+pub(crate) fn is_observe_command(raw: &str) -> bool {
+    matches!(
+        raw.trim().to_ascii_lowercase().as_str(),
+        "?" | "/?" | "/observe" | "observe"
     )
 }
 
