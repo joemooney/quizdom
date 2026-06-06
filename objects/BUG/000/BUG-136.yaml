@@ -15,7 +15,7 @@ priority: High
 owner: ''
 feature: Uncategorized
 created_at: 2026-06-06T17:36:15.597701959Z
-modified_at: 2026-06-06T18:27:26.068584787Z
+modified_at: 2026-06-06T18:27:28.601038016Z
 req_type: Bug
 tags:
 - bug
@@ -31,3 +31,8 @@ comments:
   content: 'Implemented. Dead-ends no longer trap the user. (1) RESUME CONTINUES: resuming a session with no saved next_question_ref now auto-attempts a fresh successor from the last answered question (strategy.next_question — LLM generates one; deterministic may surface a begets edge), logs next_question_selected so re-resume is stable, and only falls back to the menu if nothing comes back; ends only on user quit. (2) DEAD-END MENU: the two in-loop dead ends (no-begets, punt-finds-nothing) and the resume-terminal fallback now present [G]enerate/[P]unt/[A]dd/[S]ynopsis/[Q]uit instead of ending. Continue from the chosen question; quit prints the STORY-80 id+resume footer. Reuses existing facilities (different_topic_punt_question, quick_add_from_current, render_session_synopsis, observer). DESIGN NOTE: [G] re-runs the session''s configured strategy — under --strategy llm it (re)attempts generation; under deterministic it reports exhaustion and suggests --strategy llm rather than building an on-demand LLM (kept the strategy abstraction clean + tests hermetic; on-demand-LLM-from-deterministic is a possible follow-up). 4 new tests (resume-continues, menu [G] continues, offline degrade of [S]/[G]/[P]+quit footer, [P] to different topic); 3 STORY-80 dead-end tests updated to the new menu behavior. session.rs + tests.rs only; cargo test/fmt/clippy green.'
   created_at: 2026-06-06T18:27:26.068584787Z
   modified_at: 2026-06-06T18:27:26.068584787Z
+- id: 019e9e30-a4d9-7c40-8dd9-44b8e8794745
+  author: joe
+  content: Commit 73b008d references this requirement
+  created_at: 2026-06-06T18:27:28.601038016Z
+  modified_at: 2026-06-06T18:27:28.601038016Z
