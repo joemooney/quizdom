@@ -10,12 +10,12 @@ description: |-
   (2) GRACEFUL DEAD-END MENU: when the loop genuinely dead-ends (strategy returns None — deterministic bank exhausted, or the LLM declines), present a menu instead of just ending: [G]enerate a fresh question (LLM, from the current node), [P]unt to a different topic, [A]dd your own question, [S]ynopsis, [Q]uit. With --strategy llm, generation should be ATTEMPTED automatically before ever declaring a dead-end, so this menu is mostly for the deterministic/edge cases. The end-of-session footer (session id + resume cmd) still prints on Quit.
 
   Belief-neutral; the continue/punt/add options return to exploring (non-destructive). Lane: session.rs (the 3 dead-end paths + resume) + input.rs (the menu). ## Acceptance: resuming a terminal LLM session continues (generates a next) instead of ending; a genuine dead-end shows the option menu and each option works (generate/punt/add/synopsis/quit); deterministic-exhausted reachable; tests cover resume-continues + the menu + offline degrade.
-status: Approved
+status: InProgress
 priority: High
 owner: ''
 feature: Uncategorized
 created_at: 2026-06-06T17:36:15.597701959Z
-modified_at: 2026-06-06T17:36:15.597701959Z
+modified_at: 2026-06-06T18:07:41.163511903Z
 req_type: Bug
 tags:
 - bug
