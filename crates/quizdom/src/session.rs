@@ -1178,20 +1178,60 @@ fn run_session_from_current(
                     continue;
                 }
                 None => {
-                    // trace:STORY-80 | ai:claude
-                    render_session_end(
-                        Some("No different-topic questions. Session complete."),
-                        &config.session_id,
-                        output,
-                    )?;
-                    logger.session_ended(
-                        &config.session_id,
-                        &config.user_id,
+                    // trace:BUG-136 | ai:claude
+                    // Punt found no different-topic target — offer the dead-end
+                    // menu instead of forcing an exit.
+                    let context = StrategyContext {
+                        answer: answer.clone(),
+                        recent_path: recent_path.clone(),
+                    };
+                    match dead_end_menu(
+                        bank,
+                        strategy,
+                        user_authored_persister,
+                        &observer,
+                        &config.log_path,
                         &config.branch_id,
-                        answered_turn,
-                        "No different-topic punt target.",
-                    )?;
-                    break;
+                        &current,
+                        &context,
+                        &recent_path,
+                        &mut input,
+                        &mut free_text_input,
+                        output,
+                    )? {
+                        DeadEndOutcome::Continue(next) => {
+                            logger.next_question_selected(
+                                &config.session_id,
+                                &config.user_id,
+                                &config.branch_id,
+                                answered_turn,
+                                &current.id,
+                                &next.id,
+                                "Continued past a punt dead end via the menu.",
+                            )?;
+                            recent_path.push(AnsweredQuestion {
+                                question_ref: current.id.clone(),
+                                question_text: current.title.clone(),
+                                raw_answer: answer.raw,
+                                normalized_answer: answer.normalized,
+                            });
+                            current = next;
+                            turn += 1;
+                            continue;
+                        }
+                        DeadEndOutcome::Quit => {
+                            // trace:STORY-80 | ai:claude
+                            ended_at_frontier = true;
+                            logger.session_ended(
+                                &config.session_id,
+                                &config.user_id,
+                                &config.branch_id,
+                                answered_turn,
+                                "User quit at the dead-end menu (no punt target).",
+                            )?;
+                            break;
+                        }
+                    }
                 }
             }
         }
@@ -1264,20 +1304,57 @@ fn run_session_from_current(
                 turn += 1;
             }
             None => {
-                // trace:STORY-80 | ai:claude
-                render_session_end(
-                    Some("No follow-up questions. Session complete."),
-                    &config.session_id,
-                    output,
-                )?;
-                logger.session_ended(
-                    &config.session_id,
-                    &config.user_id,
+                // trace:BUG-136 | ai:claude
+                // No begets successor is not a forced exit: offer the dead-end
+                // menu (generate / punt / add / synopsis / quit). Continue from
+                // the chosen question, or end with the deferred footer on quit.
+                match dead_end_menu(
+                    bank,
+                    strategy,
+                    user_authored_persister,
+                    &observer,
+                    &config.log_path,
                     &config.branch_id,
-                    answered_turn,
-                    "No outgoing begets successor.",
-                )?;
-                break;
+                    &current,
+                    &context,
+                    &recent_path,
+                    &mut input,
+                    &mut free_text_input,
+                    output,
+                )? {
+                    DeadEndOutcome::Continue(next) => {
+                        logger.next_question_selected(
+                            &config.session_id,
+                            &config.user_id,
+                            &config.branch_id,
+                            answered_turn,
+                            &current.id,
+                            &next.id,
+                            "Continued past a dead end via the menu.",
+                        )?;
+                        recent_path.push(AnsweredQuestion {
+                            question_ref: current.id.clone(),
+                            question_text: current.title.clone(),
+                            raw_answer: answer.raw,
+                            normalized_answer: answer.normalized,
+                        });
+                        current = next;
+                        turn += 1;
+                    }
+                    DeadEndOutcome::Quit => {
+                        // trace:STORY-80 | ai:claude — surviving session still
+                        // gets the deferred id + resume footer after the loop.
+                        ended_at_frontier = true;
+                        logger.session_ended(
+                            &config.session_id,
+                            &config.user_id,
+                            &config.branch_id,
+                            answered_turn,
+                            "User quit at the dead-end menu (no begets successor).",
+                        )?;
+                        break;
+                    }
+                }
             }
         }
     }
@@ -1500,6 +1577,102 @@ fn quick_add_topic(current: &Question) -> String {
         .to_string()
 }
 
+// trace:BUG-136 | ai:claude
+/// What the dead-end menu resolved to: continue the session from a freshly
+/// chosen question, or quit.
+enum DeadEndOutcome {
+    Continue(Question),
+    Quit,
+}
+
+// trace:BUG-136 | ai:claude
+/// Render the dead-end menu. Plain text so it reads correctly under NO_COLOR /
+/// non-TTY (matching the rest of the session controls).
+fn render_dead_end_menu(output: &mut impl Write) -> Result<()> {
+    writeln!(
+        output,
+        "\nNo further questions on this path — but you're not stuck. What next?"
+    )?;
+    writeln!(
+        output,
+        "  [G] Generate a fresh question   [P] Punt to a different topic"
+    )?;
+    writeln!(
+        output,
+        "  [A] Add your own question       [S] Synopsis   [Q] Quit"
+    )?;
+    Ok(())
+}
+
+// trace:BUG-136 | ai:claude
+/// Present the dead-end menu and act on the choice. A genuine dead end (the
+/// strategy returned no successor) is not a forced exit: the user can generate
+/// a fresh question, punt to a different topic, author their own, read a
+/// synopsis, or quit. Loops until a choice yields a next question
+/// ([`DeadEndOutcome::Continue`]) or the user quits ([`DeadEndOutcome::Quit`]);
+/// EOF on the menu prompt is treated as quit. `[G]` re-runs the configured
+/// strategy from `current` — with `--strategy llm` that generates and persists a
+/// fresh follow-on; a deterministic/exhausted bank simply reports it has nothing
+/// and the menu stays open (the offline-degrade path).
+#[allow(clippy::too_many_arguments)]
+fn dead_end_menu(
+    bank: &dyn QuestionBank,
+    strategy: &dyn NextQuestionStrategy,
+    user_authored_persister: &dyn UserAuthoredQuestionPersister,
+    observer: &ObserverEngine,
+    log_path: &Path,
+    branch: &str,
+    current: &Question,
+    context: &StrategyContext,
+    recent_path: &[AnsweredQuestion],
+    input: &mut impl BufRead,
+    free_text_input: &mut FreeTextInput,
+    output: &mut impl Write,
+) -> Result<DeadEndOutcome> {
+    loop {
+        render_dead_end_menu(output)?;
+        let choice = match free_text_input.read_line(input, output, "> ")? {
+            Some(line) => line.trim().to_ascii_lowercase(),
+            None => return Ok(DeadEndOutcome::Quit),
+        };
+        match choice.chars().next() {
+            Some('g') => {
+                let generated = {
+                    let _spinner = crate::spinner::Spinner::start("thinking");
+                    strategy.next_question(current, context, bank)?
+                };
+                match generated {
+                    Some(next) => return Ok(DeadEndOutcome::Continue(next)),
+                    None => writeln!(
+                        output,
+                        "Couldn't generate a new question here (this strategy is exhausted — try `--strategy llm`)."
+                    )?,
+                }
+            }
+            Some('p') => match different_topic_punt_question(current, recent_path, bank)? {
+                Some(next) => return Ok(DeadEndOutcome::Continue(next)),
+                None => writeln!(output, "No different-topic question to punt to.")?,
+            },
+            Some('a') => {
+                // Author + link a begets follow-on from the current node; it
+                // becomes a successor in later sessions. Stay in the menu so the
+                // user can [G]enerate into it (or pick another exit).
+                quick_add_from_current(
+                    bank,
+                    strategy,
+                    user_authored_persister,
+                    current,
+                    input,
+                    output,
+                )?;
+            }
+            Some('s') => render_session_synopsis(observer, log_path, Some(branch), output)?,
+            Some('q') => return Ok(DeadEndOutcome::Quit),
+            _ => writeln!(output, "Pick one of G, P, A, S, or Q.")?,
+        }
+    }
+}
+
 enum ReviewOutcome {
     Frontier,
     Revised {
@@ -1689,8 +1862,41 @@ fn resume_session_with_term_persister(
     replay.render_recap(output)?;
     replay.render(output)?;
 
-    let Some(next_question_ref) = replay.next_question_ref.as_ref() else {
-        // trace:STORY-80 | ai:claude
+    let recent_path = replay.recent_path();
+    let question_reweighter = AidaCliQuestionReweighter::default();
+    // trace:STORY-88 | ai:claude — resumed sessions get the same quick-add path.
+    let user_authored_persister = AidaCliUserAuthoredQuestionPersister::default();
+
+    // Normal resume: a saved follow-up question exists, present it.
+    if let Some(next_question_ref) = replay.next_question_ref.as_ref() {
+        let mut resumed_config = config.clone();
+        resumed_config.seed = next_question_ref.clone();
+        return run_session_from_current(
+            &resumed_config,
+            bank,
+            strategy,
+            term_persister,
+            &AidaCliContradictsEdges::default(),
+            &AidaCliContradictionResolutionPersister::default(),
+            &question_reweighter,
+            &user_authored_persister,
+            input,
+            output,
+            replay.next_turn,
+            false,
+            recent_path,
+        );
+    }
+
+    // trace:BUG-136 | ai:claude
+    // No saved follow-up — but a terminal saved path is NOT a dead end. Try to
+    // continue from the last answered question: auto-attempt a fresh successor
+    // (with `--strategy llm` this generates one; a deterministic bank may still
+    // surface a begets edge), and only fall back to the interactive dead-end
+    // menu if nothing comes back. The session ends only if the user quits.
+    let Some(last) = replay.answers.last() else {
+        // Nothing answered and nothing saved: genuinely empty (STORY-81 normally
+        // discards these before they can be resumed).
         render_session_end(
             Some("No saved follow-up question. Session complete."),
             &config.session_id,
@@ -1698,13 +1904,71 @@ fn resume_session_with_term_persister(
         )?;
         return Ok(());
     };
+    let last_question = bank.load_question(&last.question_ref)?;
+    // The path that LED to the last answered question excludes the question
+    // itself — that is the strategy's `recent_path` when computing its successor.
+    let prior_path: Vec<AnsweredQuestion> = recent_path[..recent_path.len() - 1].to_vec();
+    let context = StrategyContext {
+        answer: Answer {
+            raw: last.raw_answer.clone(),
+            normalized: last.normalized_answer.clone(),
+        },
+        recent_path: prior_path.clone(),
+    };
+
+    let auto = {
+        let _spinner = crate::spinner::Spinner::start("thinking");
+        strategy.next_question(&last_question, &context, bank)?
+    };
+
+    let mut input = BufReader::new(input);
+    let next = match auto {
+        Some(next) => next,
+        None => {
+            let mut free_text_input = FreeTextInput::from_stdin()?;
+            let observer = ObserverEngine::for_config(config);
+            match dead_end_menu(
+                bank,
+                strategy,
+                &user_authored_persister,
+                &observer,
+                &config.log_path,
+                &config.branch_id,
+                &last_question,
+                &context,
+                &prior_path,
+                &mut input,
+                &mut free_text_input,
+                output,
+            )? {
+                DeadEndOutcome::Continue(next) => next,
+                DeadEndOutcome::Quit => {
+                    // trace:STORY-80 | ai:claude — surviving session keeps its
+                    // id + resume footer.
+                    render_session_end(None, &config.session_id, output)?;
+                    return Ok(());
+                }
+            }
+        }
+    };
+
+    // Persist the continuation so a later bare resume sees it as the saved
+    // follow-up (rather than re-deriving it every time).
+    {
+        let mut logger = SessionLogger::open(&config.log_path)?;
+        logger.next_question_selected(
+            &config.session_id,
+            &config.user_id,
+            &config.branch_id,
+            last.turn,
+            &last_question.id,
+            &next.id,
+            "Continued a terminal saved path on resume.",
+        )?;
+    }
 
     let mut resumed_config = config.clone();
-    resumed_config.seed = next_question_ref.clone();
-    let recent_path = replay.recent_path();
-    let question_reweighter = AidaCliQuestionReweighter::default();
-    // trace:STORY-88 | ai:claude — resumed sessions get the same quick-add path.
-    let user_authored_persister = AidaCliUserAuthoredQuestionPersister::default();
+    resumed_config.seed = next.id.clone();
     run_session_from_current(
         &resumed_config,
         bank,
@@ -1714,7 +1978,7 @@ fn resume_session_with_term_persister(
         &AidaCliContradictionResolutionPersister::default(),
         &question_reweighter,
         &user_authored_persister,
-        input,
+        &mut input,
         output,
         replay.next_turn,
         false,
