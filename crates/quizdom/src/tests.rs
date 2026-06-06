@@ -1776,8 +1776,10 @@ fn discarded_empty_session_ends_without_a_resume_hint() {
 }
 
 // trace:STORY-80 | ai:claude
-// The natural-completion dead end (strategy yields no follow-up) keeps its
-// descriptive message AND gains the id + resume command.
+// trace:BUG-136 | ai:claude
+// The natural-completion dead end (strategy yields no follow-up) now offers the
+// dead-end menu instead of ending outright; quitting it still prints the id +
+// resume command (the STORY-80 footer contract).
 #[test]
 fn no_follow_up_completion_prints_session_id_and_resume_command() {
     let path = std::env::temp_dir().join(format!(
@@ -1785,7 +1787,7 @@ fn no_follow_up_completion_prints_session_id_and_resume_command() {
         std::process::id()
     ));
     let _ = fs::remove_file(&path);
-    // A seed with no outgoing begets edge: answering it completes the session.
+    // A seed with no outgoing begets edge: answering it reaches the dead end.
     let bank = FakeBank::new([question("Q-1", 0, AnswerKind::YesNo)]);
     let config = test_config(&path, "Q-1");
     let mut output = Vec::new();
@@ -1794,14 +1796,14 @@ fn no_follow_up_completion_prints_session_id_and_resume_command() {
         &config,
         &bank,
         &DeterministicNextQuestionStrategy,
-        "yes\n".as_bytes(),
+        "yes\nq\n".as_bytes(),
         &mut output,
     )
     .unwrap();
 
     let output = String::from_utf8(output).unwrap();
     assert!(
-        output.contains("No follow-up questions. Session complete."),
+        output.contains("No further questions on this path"),
         "{output}"
     );
     assert!(output.contains("Session sess-test ended."), "{output}");
@@ -1814,8 +1816,9 @@ fn no_follow_up_completion_prints_session_id_and_resume_command() {
 }
 
 // trace:STORY-80 | ai:claude
-// The punt dead end (no different-topic target) keeps its message AND gains the
-// id + resume command.
+// trace:BUG-136 | ai:claude
+// The punt dead end (no different-topic target) now offers the dead-end menu;
+// quitting it still prints the id + resume command.
 #[test]
 fn punt_dead_end_prints_session_id_and_resume_command() {
     let path = std::env::temp_dir().join(format!(
@@ -1838,14 +1841,14 @@ fn punt_dead_end_prints_session_id_and_resume_command() {
         &bank,
         &DeterministicNextQuestionStrategy,
         &reweighter,
-        "punt\n".as_bytes(),
+        "punt\nq\n".as_bytes(),
         &mut output,
     )
     .unwrap();
 
     let output = String::from_utf8(output).unwrap();
     assert!(
-        output.contains("No different-topic questions. Session complete."),
+        output.contains("No further questions on this path"),
         "{output}"
     );
     assert!(output.contains("Session sess-test ended."), "{output}");
@@ -1895,8 +1898,10 @@ fn resume_dead_end_prints_session_id_and_resume_command() {
     .unwrap();
 
     let resume_output = String::from_utf8(resume_output).unwrap();
+    // trace:BUG-136 | ai:claude — resuming a terminal path now offers the menu;
+    // quitting it prints the footer rather than the old "Session complete." line.
     assert!(
-        resume_output.contains("No saved follow-up question. Session complete."),
+        resume_output.contains("No further questions on this path"),
         "{resume_output}"
     );
     assert!(
@@ -1906,6 +1911,246 @@ fn resume_dead_end_prints_session_id_and_resume_command() {
     assert!(
         resume_output.contains("Resume:  quizdom session resume sess-test"),
         "{resume_output}"
+    );
+
+    let _ = fs::remove_file(path);
+}
+
+// trace:BUG-136 | ai:claude
+// Stands in for an LLM that always generates a fresh follow-up. Used to prove a
+// terminal session CONTINUES into a generated question instead of dead-ending.
+struct AlwaysGeneratesStrategy {
+    generated: Question,
+}
+
+impl NextQuestionStrategy for AlwaysGeneratesStrategy {
+    fn next_question(
+        &self,
+        _current: &Question,
+        _context: &StrategyContext,
+        _bank: &dyn QuestionBank,
+    ) -> Result<Option<Question>> {
+        Ok(Some(self.generated.clone()))
+    }
+}
+
+// trace:BUG-136 | ai:claude
+// Returns None on its first call (so the session reaches the dead-end menu),
+// then a fresh question afterwards (so pressing [G] there continues).
+struct GeneratesAfterDeadEndStrategy {
+    generated: Question,
+    calls: std::cell::Cell<u32>,
+}
+
+impl NextQuestionStrategy for GeneratesAfterDeadEndStrategy {
+    fn next_question(
+        &self,
+        _current: &Question,
+        _context: &StrategyContext,
+        _bank: &dyn QuestionBank,
+    ) -> Result<Option<Question>> {
+        let n = self.calls.get();
+        self.calls.set(n + 1);
+        if n == 0 {
+            Ok(None)
+        } else {
+            Ok(Some(self.generated.clone()))
+        }
+    }
+}
+
+// trace:BUG-136 | ai:claude
+// Resuming a session whose saved path is terminal must NOT dead-end: it
+// auto-attempts a fresh successor (an LLM generates one) and continues into it.
+#[test]
+fn resume_continues_terminal_session_by_generating_a_next_question() {
+    let path = std::env::temp_dir().join(format!(
+        "quizdom-bug-136-resume-continue-{}.jsonl",
+        std::process::id()
+    ));
+    let _ = fs::remove_file(&path);
+    let q_gen = question("Q-GEN", 0, AnswerKind::YesNo);
+    let bank = FakeBank::new([question("Q-1", 0, AnswerKind::YesNo), q_gen.clone()]);
+    let config = test_config(&path, "Q-1");
+
+    // Start + answer Q-1, then quit the dead-end menu: a terminal saved path.
+    let mut start_output = Vec::new();
+    run_session(
+        &config,
+        &bank,
+        &DeterministicNextQuestionStrategy,
+        "yes\nq\n".as_bytes(),
+        &mut start_output,
+    )
+    .unwrap();
+
+    // Resume with a generating strategy: the terminal session must continue.
+    let mut resume_config = config.clone();
+    resume_config.command = SessionCommand::Resume;
+    let generator = AlwaysGeneratesStrategy { generated: q_gen };
+    let mut resume_output = Vec::new();
+    resume_session(
+        &resume_config,
+        &bank,
+        &generator,
+        "/end\n".as_bytes(),
+        &mut resume_output,
+    )
+    .unwrap();
+
+    let resume_output = String::from_utf8(resume_output).unwrap();
+    assert!(
+        resume_output.contains("Q-GEN"),
+        "resume should continue into the generated question: {resume_output}"
+    );
+    assert!(
+        !resume_output.contains("No further questions on this path"),
+        "a session that can generate should not show the dead-end menu: {resume_output}"
+    );
+
+    let _ = fs::remove_file(path);
+}
+
+// trace:BUG-136 | ai:claude
+// At a genuine dead end the menu's [G] re-attempts generation; when it yields a
+// question the session continues into it.
+#[test]
+fn dead_end_menu_generate_continues_into_a_fresh_question() {
+    let path = std::env::temp_dir().join(format!(
+        "quizdom-bug-136-menu-generate-{}.jsonl",
+        std::process::id()
+    ));
+    let _ = fs::remove_file(&path);
+    let q_gen = question("Q-GEN", 0, AnswerKind::YesNo);
+    let bank = FakeBank::new([question("Q-1", 0, AnswerKind::YesNo), q_gen.clone()]);
+    let config = test_config(&path, "Q-1");
+    let strategy = GeneratesAfterDeadEndStrategy {
+        generated: q_gen,
+        calls: std::cell::Cell::new(0),
+    };
+    let mut output = Vec::new();
+
+    // Answer Q-1 (-> dead-end menu), press [G] (-> continue into Q-GEN), end.
+    run_session(
+        &config,
+        &bank,
+        &strategy,
+        "yes\ng\n/end\n".as_bytes(),
+        &mut output,
+    )
+    .unwrap();
+
+    let output = String::from_utf8(output).unwrap();
+    assert!(
+        output.contains("No further questions on this path"),
+        "answering the only question should reach the dead-end menu: {output}"
+    );
+    assert!(
+        output.contains("Q-GEN"),
+        "[G] should continue into the generated question: {output}"
+    );
+
+    let _ = fs::remove_file(path);
+}
+
+// trace:BUG-136 | ai:claude
+// The dead-end menu degrades gracefully and stays open: [S] renders an offline
+// synopsis, [G] reports exhaustion under a deterministic bank, [P] reports no
+// different-topic target, and [Q] prints the resume footer. The menu re-prompts
+// after each non-exiting choice.
+#[test]
+fn dead_end_menu_degrades_offline_and_quits_with_footer() {
+    let path = std::env::temp_dir().join(format!(
+        "quizdom-bug-136-menu-degrade-{}.jsonl",
+        std::process::id()
+    ));
+    let _ = fs::remove_file(&path);
+    // Force the observer offline so [S] cannot shell out to the LLM.
+    std::env::set_var("QUIZDOM_CLAUDE_COMMAND", "quizdom-no-such-binary-bug136");
+    let bank = FakeBank::new([question_with_tags(
+        "Q-1",
+        10,
+        AnswerKind::YesNo,
+        ["topic:free-will", "weight:10"],
+    )]);
+    let config = test_config(&path, "Q-1");
+    let mut output = Vec::new();
+
+    run_session(
+        &config,
+        &bank,
+        &DeterministicNextQuestionStrategy,
+        "yes\ns\ng\np\nq\n".as_bytes(),
+        &mut output,
+    )
+    .unwrap();
+    std::env::remove_var("QUIZDOM_CLAUDE_COMMAND");
+
+    let output = String::from_utf8(output).unwrap();
+    assert!(
+        output.contains("META (synopsis, offline)"),
+        "[S] should render an offline synopsis: {output}"
+    );
+    assert!(
+        output.contains("Couldn't generate a new question"),
+        "[G] should report exhaustion under deterministic: {output}"
+    );
+    assert!(
+        output.contains("No different-topic question to punt to"),
+        "[P] with a single topic should report no target: {output}"
+    );
+    assert!(
+        output.contains("Session sess-test ended."),
+        "[Q] should print the resume footer: {output}"
+    );
+    assert!(
+        output.matches("No further questions on this path").count() >= 2,
+        "the menu should re-prompt after each non-exiting choice: {output}"
+    );
+
+    let _ = fs::remove_file(path);
+}
+
+// trace:BUG-136 | ai:claude
+// The dead-end menu's [P] punts to a different-topic question when one exists,
+// continuing the session there.
+#[test]
+fn dead_end_menu_punt_continues_to_a_different_topic() {
+    let path = std::env::temp_dir().join(format!(
+        "quizdom-bug-136-menu-punt-{}.jsonl",
+        std::process::id()
+    ));
+    let _ = fs::remove_file(&path);
+    let bank = FakeBank::new([
+        question_with_tags(
+            "Q-1",
+            10,
+            AnswerKind::YesNo,
+            ["topic:free-will", "weight:10"],
+        ),
+        question_with_tags("Q-2", 50, AnswerKind::YesNo, ["topic:meaning", "weight:50"]),
+    ]);
+    let config = test_config(&path, "Q-1");
+    let mut output = Vec::new();
+
+    // Q-1 dead-ends (no begets); [P] surfaces Q-2 (a different topic); end there.
+    run_session(
+        &config,
+        &bank,
+        &DeterministicNextQuestionStrategy,
+        "yes\np\n/end\n".as_bytes(),
+        &mut output,
+    )
+    .unwrap();
+
+    let output = String::from_utf8(output).unwrap();
+    assert!(
+        output.contains("No further questions on this path"),
+        "{output}"
+    );
+    assert!(
+        output.contains("Q-2"),
+        "[P] should continue into a different-topic question: {output}"
     );
 
     let _ = fs::remove_file(path);
