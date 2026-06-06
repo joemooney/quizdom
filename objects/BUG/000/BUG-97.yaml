@@ -35,10 +35,16 @@ priority: Medium
 owner: ''
 feature: Uncategorized
 created_at: 2026-06-01T05:35:57.458389576Z
-modified_at: 2026-06-01T05:35:57.458389576Z
+modified_at: 2026-06-06T18:06:49.984056988Z
 req_type: Bug
 tags:
 - auto-complete
 - auto-drafted
 - failure-1
 - implementer
+comments:
+- id: 019e9e1d-be80-7a71-9c95-d809cf53361e
+  author: joe
+  content: 'Triaged → rejected. Transient launch/env failure, not a reproducible AIDA orchestrator bug: the phase-1 implementer exited 1 within ~1-1.5s of launch, part of a single back-to-back batch (05:35:21–05:35:57Z, 2026-06-01) where every implementer died instantly at startup — too fast for any real implementation attempt (spawn/auth/env). The parent story was subsequently implemented and shipped Completed. Nothing to fix in the orchestrator.'
+  created_at: 2026-06-06T18:06:49.984056988Z
+  modified_at: 2026-06-06T18:06:49.984056988Z
