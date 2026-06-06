@@ -1,0 +1,24 @@
+id: 019e9bd0-be6a-7c23-855c-fd1c4e503543
+spec_id: Q-130
+agreed_id: Q-130
+prefix_override: Q
+title: 'Then hold the paradox at its hinge. You call dropping the belief ''a submission to evil'' — but a submission is something one *does*, freely, and is answerable for. So at the instant you release belief in free will, is that release itself a free act? If it is, then it is yours, authored, answerable — and you have not escaped freedom at all; you''ve performed one more free deed, the freest and the worst, and you remain bound to it. But if the release is *not* free — if by then there is no free ''you'' left to author it — then it is not a submission, not chosen, not evil, but merely a thing that happened, like weather. ''Submission to evil'' needs you to still be free at the very moment you renounce freedom. So which is it: is the escape a free act, in which case it fails as escape and binds you hardest of all — or an unfree event, in which case it succeeds but cannot be the ''evil'' you just named with such conviction? Can you renounce your freedom without exercising the very thing you renounce?'
+description: |-
+  LLM-generated quizdom question.
+
+  answer: free-text
+  origin: Q-129
+
+  Generated from origin question: Good — and let me match your plainer phrasing. You keep both: the mystery and the duty, with the duty binding only while you choose to believe in the freedom that grounds it. Grant all of that; it's consistent. But notice the one feature it has that a found fact wouldn't: you can drop the antecedent at will. So test it. Suppose you commit a real evil, and being answerable for it becomes unbearable. By your own rules nothing stops you from simply ceasing to believe in free will — and the answerability dissolves, honestly, no pretence, because you've released the belief that carried it. So is a duty you can set down the moment it costs you actually binding you to evil — or is it answerability held only for as long as you'd rather hold it, a weight kept by the same election that can drop it?
+status: Draft
+priority: Medium
+owner: ''
+feature: Uncategorized
+created_at: 2026-06-06T07:23:29.258750719Z
+modified_at: 2026-06-06T07:23:29.258750719Z
+req_type: Functional
+tags:
+- answer:free-text
+- seed
+- topic:free-will
+- weight:50
