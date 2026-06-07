@@ -51,7 +51,7 @@ priority: High
 owner: ''
 feature: Uncategorized
 created_at: 2026-06-07T05:10:44.220751890Z
-modified_at: 2026-06-07T14:25:54.343562761Z
+modified_at: 2026-06-07T14:52:00.307778231Z
 req_type: Epic
 tags:
 - architecture
@@ -86,4 +86,8 @@ relationships:
 - rel_type: Child
   target_id: 019ea279-9c0c-7a90-ae0f-a0991100a844
   created_at: 2026-06-07T14:25:54.343558126Z
+  created_by: joe
+- rel_type: Child
+  target_id: 019ea291-7b83-7e11-a7aa-06d13c974717
+  created_at: 2026-06-07T14:52:00.307770461Z
   created_by: joe
