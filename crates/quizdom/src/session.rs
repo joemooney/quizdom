@@ -18,6 +18,8 @@ use crate::model::{Answer, AnswerKind, Question, TermDefinition};
 use crate::observer::{read_exchange, structural_reading, Exchange, ExchangeReading};
 // trace:STORY-164 | ai:claude
 use crate::observer::{answer_help, HelpAnswer};
+// trace:STORY-165 | ai:claude
+use crate::observer::{read_tutor, TutorContext, TutorReading};
 // trace:STORY-128 | ai:claude
 use crate::persist::{
     AidaCliGeneratedQuestionPersister, AidaCliQuestionReweighter,
@@ -817,6 +819,21 @@ impl ObserverEngine {
             Self::Offline => crate::observer::static_help_index(question, &tool_context),
         }
     }
+
+    // trace:STORY-165 | ai:claude
+    /// Coach the user's articulation with `/tutor`: reflect their OWN point back
+    /// more precisely, teach the relevant distinction, and name the missing nuance.
+    /// Uses the LLM when present and falls back to the STRUCTURAL coaching note
+    /// offline, so `/tutor` always responds, online or off. The ARTICULATION
+    /// counterpart to [`read`]. Belief-neutral by construction: the system prompt
+    /// and the structural fallback both refuse to supply a belief or take a side.
+    fn tutor(&self, context: &TutorContext) -> TutorReading {
+        match self {
+            Self::ClaudeCli(client) => read_tutor(client, context),
+            Self::Anthropic(client) => read_tutor(client, context),
+            Self::Offline => crate::observer::structural_tutor(context),
+        }
+    }
 }
 
 // trace:STORY-164 | ai:claude
@@ -1529,47 +1546,78 @@ fn render_help_answer(answer: &HelpAnswer, output: &mut impl Write) -> Result<()
     Ok(())
 }
 
-// trace:STORY-163 | ai:claude
-/// Render the graceful placeholder for the `/tutor` articulation & nuance coach.
-///
-/// STORY-163 wires `/tutor` through the palette + recognizer; the coaching LLM
-/// engine (reflect + sharpen the user's OWN point, surface the missing nuance,
-/// never supply the belief) is STORY-165's job. Until that lands, selecting /
-/// typing `/tutor` is NON-DESTRUCTIVE: it prints this note in the META voice and
-/// the caller re-presents the SAME question. Belief-neutral by construction — it
-/// promises to sharpen the user's own point and name missing nuance, and never
-/// supplies a belief or takes a side.
-fn render_tutor_placeholder(text: &str, output: &mut impl Write) -> Result<()> {
-    let header =
-        "META (/tutor) — articulation & nuance coach (sharpens YOUR point; never supplies it):";
+// trace:STORY-165 | ai:claude
+/// Assemble the [`TutorContext`] for the `/tutor` coach at the frontier: the
+/// question on screen plus the user's OWN point. The point is the text typed after
+/// `/tutor` when given; on a bare `/tutor` it falls back to the user's most recent
+/// answer on the path (the half-formed view they are reaching to sharpen). It reads
+/// only the user's OWN words — it never seeds a belief.
+fn tutor_context_for_frontier(
+    text: &str,
+    current: &Question,
+    recent_path: &[AnsweredQuestion],
+) -> TutorContext {
+    let typed = text.trim();
+    let point = if !typed.is_empty() {
+        typed.to_string()
+    } else {
+        recent_path
+            .last()
+            .map(|prior| prior.raw_answer.clone())
+            .unwrap_or_default()
+    };
+    TutorContext {
+        question: current.title.clone(),
+        point,
+    }
+}
+
+// trace:STORY-165 | ai:claude
+/// Render a [`TutorReading`] from the `/tutor` channel as a clearly-labeled META
+/// voice, visually distinct from the question (style::meta). Content-aware but
+/// STILL belief-neutral: it reflects the user's OWN point back more precisely
+/// (framed as a check), teaches the relevant distinction, and names the nuance they
+/// have not yet addressed — it never supplies a belief or takes a side. Pure over
+/// the buffer + reading, so it is unit-testable without a live LLM. The caller
+/// re-presents the SAME question afterwards (non-destructive). The header flags the
+/// offline degraded mode (the structural note) so the user knows when no model
+/// coached.
+fn render_tutor_reading(reading: &TutorReading, output: &mut impl Write) -> Result<()> {
+    let header = if reading.degraded {
+        "META (/tutor, offline) — articulation & nuance coach (sharpens YOUR point; never supplies it):"
+    } else {
+        "META (/tutor) — articulation & nuance coach (sharpens YOUR point; never supplies it):"
+    };
     writeln!(
         output,
         "\n{}",
         crate::style::paint(crate::style::meta(), header)
     )?;
-    let body = "/tutor reflects your own half-formed view back more precisely, teaches the \
-relevant distinction, and names the nuance you have not yet addressed — without ever telling you \
-what to believe. The coaching engine is coming soon; for now, use /observe for a belief-neutral \
-reading of the current exchange.";
-    writeln!(
-        output,
-        "{}",
-        crate::style::paint(crate::style::meta(), &format!("  {body}"))
-    )?;
-    // trace:STORY-163 | ai:claude — echo back the point the user typed after
-    // /tutor (when any) as the thing to be sharpened — belief-neutral: it reflects
-    // the user's OWN words, never supplying a belief. STORY-165 replaces this with
-    // the coaching engine that sharpens it.
-    let text = text.trim();
-    if !text.is_empty() {
+    let line = |label: &str, body: &str, output: &mut dyn Write| -> Result<()> {
+        if !body.trim().is_empty() {
+            writeln!(
+                output,
+                "{}",
+                crate::style::paint(crate::style::meta(), &format!("  {label}: {body}"))
+            )?;
+        }
+        Ok(())
+    };
+    line("Your point, sharper", &reading.reflection, output)?;
+    line("The distinction", &reading.distinction, output)?;
+    if !reading.missing_nuance.is_empty() {
         writeln!(
             output,
             "{}",
-            crate::style::paint(
-                crate::style::meta(),
-                &format!("  The point you're reaching for: \"{text}\"")
-            )
+            crate::style::paint(crate::style::meta(), "  Nuance you have not yet addressed:")
         )?;
+        for nuance in &reading.missing_nuance {
+            writeln!(
+                output,
+                "{}",
+                crate::style::paint(crate::style::meta(), &format!("    - {nuance}"))
+            )?;
+        }
     }
     Ok(())
 }
@@ -2155,10 +2203,17 @@ fn run_session_from_current(
                     continue;
                 }
                 AnswerInput::Tutor(text) => {
-                    // trace:STORY-163 | ai:claude — non-destructive articulation
-                    // coach; render the graceful placeholder and re-present the SAME
-                    // question. The coaching engine lands in STORY-165.
-                    render_tutor_placeholder(&text, output)?;
+                    // trace:STORY-165 | ai:claude — non-destructive articulation &
+                    // nuance coach: reflect the user's OWN point back more precisely,
+                    // teach the distinction, and name the missing nuance — never
+                    // supplying a belief or taking a side. Re-present the SAME
+                    // question (like Observe). Offline degrades to a structural note.
+                    let context = tutor_context_for_frontier(&text, &current, &recent_path);
+                    let reading = {
+                        let _spinner = crate::spinner::Spinner::start("tutoring");
+                        observer.tutor(&context)
+                    };
+                    render_tutor_reading(&reading, output)?;
                     continue;
                 }
                 AnswerInput::End => {
@@ -2902,7 +2957,7 @@ fn browse_answered_path(
             // out-of-band channel that applies anywhere, including the review pane:
             // answer the free-form question from TOOL-CONTEXT (belief-neutral; the
             // static index offline) and stay on the same reviewed answer. `/tutor`
-            // stays a placeholder until STORY-165 ships its coaching engine.
+            // (STORY-165) likewise coaches the reviewed answer's articulation here.
             AnswerInput::Help(question) => {
                 let answer = {
                     let _spinner = crate::spinner::Spinner::start("helping");
@@ -2911,8 +2966,26 @@ fn browse_answered_path(
                 render_help_answer(&answer, output)?;
                 continue;
             }
+            // trace:STORY-165 | ai:claude — `/tutor` in review coaches the user's
+            // OWN point: the text typed after /tutor, or (bare) the SAVED answer on
+            // this reviewed step. Belief-neutral (structural note offline); stay on
+            // the same reviewed answer.
             AnswerInput::Tutor(text) => {
-                render_tutor_placeholder(&text, output)?;
+                let typed = text.trim();
+                let point = if typed.is_empty() {
+                    reviewed.raw_answer.clone()
+                } else {
+                    typed.to_string()
+                };
+                let context = TutorContext {
+                    question: question.title.clone(),
+                    point,
+                };
+                let reading = {
+                    let _spinner = crate::spinner::Spinner::start("tutoring");
+                    review.observer.tutor(&context)
+                };
+                render_tutor_reading(&reading, output)?;
                 continue;
             }
             AnswerInput::End => return Ok(ReviewOutcome::End),
@@ -3944,25 +4017,90 @@ mod conclude_tests {
         assert!(answer.answer.contains("about the tool, not your belief"));
     }
 
-    // ---- STORY-163: /tutor graceful placeholder ----------------------------
+    // ---- STORY-165: /tutor articulation & nuance coach ---------------------
 
     #[test]
-    fn tutor_placeholder_promises_to_sharpen_the_users_point_without_supplying_a_belief() {
-        // trace:STORY-163 | ai:claude — the /tutor note reflects + sharpens the
-        // user's OWN point and names missing nuance, and explicitly never tells the
-        // user what to believe — the belief-neutral guarantee, surfaced even before
-        // the LLM engine (STORY-165) lands.
+    fn render_tutor_reading_labels_the_meta_voice_and_flags_offline() {
+        // trace:STORY-165 | ai:claude — the /tutor reading renders in the META voice
+        // (distinct from the question): reflection + distinction + missing nuance,
+        // belief-neutral header. The offline header flags the structural-note mode.
         let mut out = Vec::new();
-        render_tutor_placeholder("free will is uncaused choice", &mut out).expect("render");
+        render_tutor_reading(
+            &TutorReading {
+                reflection: "You seem to be getting at X — is that it?".to_string(),
+                distinction: "The line between uncaused and unconstrained.".to_string(),
+                missing_nuance: vec!["What 'forced' includes".to_string()],
+                degraded: false,
+            },
+            &mut out,
+        )
+        .expect("render");
         let text = String::from_utf8(out).unwrap();
-        assert!(text.contains("/tutor"));
-        assert!(text.to_lowercase().contains("nuance"));
-        assert!(text
-            .to_lowercase()
-            .contains("without ever telling you what to believe"));
-        // It echoes the user's OWN point back (to be sharpened), never supplying a
-        // belief or taking a side.
-        assert!(text.contains("free will is uncaused choice"));
-        assert!(!text.to_lowercase().contains("you should believe"));
+        assert!(text.contains("META (/tutor)"));
+        assert!(text.to_lowercase().contains("never supplies it"));
+        assert!(text.contains("is that it?"));
+        assert!(text.contains("Nuance you have not yet addressed:"));
+        assert!(text.contains("What 'forced' includes"));
+
+        let mut out = Vec::new();
+        render_tutor_reading(
+            &TutorReading {
+                reflection: "r".to_string(),
+                distinction: String::new(),
+                missing_nuance: vec![],
+                degraded: true,
+            },
+            &mut out,
+        )
+        .expect("render");
+        let text = String::from_utf8(out).unwrap();
+        assert!(text.contains("META (/tutor, offline)"));
+    }
+
+    #[test]
+    fn tutor_context_for_frontier_uses_typed_point_then_falls_back_to_last_answer() {
+        // trace:STORY-165 | ai:claude — `/tutor <text>` sharpens the typed point; a
+        // bare `/tutor` falls back to the user's most recent answer (the half-formed
+        // view they are reaching to sharpen). It reads only the user's OWN words.
+        let current = Question {
+            id: "Q-2".to_string(),
+            title: "Is free will real?".to_string(),
+            tags: vec![],
+            answer_kind: AnswerKind::FreeText,
+            weight: 0,
+        };
+        let path = vec![AnsweredQuestion {
+            question_ref: "Q-1".to_string(),
+            question_text: "What is a choice?".to_string(),
+            raw_answer: "a choice is an unforced selection".to_string(),
+            normalized_answer: "a choice is an unforced selection".to_string(),
+        }];
+
+        let typed = tutor_context_for_frontier("free will is uncaused", &current, &path);
+        assert_eq!(typed.question, "Is free will real?");
+        assert_eq!(typed.point, "free will is uncaused");
+
+        let bare = tutor_context_for_frontier("   ", &current, &path);
+        assert_eq!(bare.point, "a choice is an unforced selection");
+
+        let empty = tutor_context_for_frontier("", &current, &[]);
+        assert_eq!(empty.point, "");
+    }
+
+    #[test]
+    fn offline_observer_tutor_coaches_from_a_structural_note() {
+        // trace:STORY-165 | ai:claude — end-to-end through the ObserverEngine: an
+        // offline engine coaches /tutor from a STRUCTURAL note (reflect + distinction
+        // + nuance), belief-neutral — it never supplies a belief or takes a side.
+        let context = TutorContext {
+            question: "Is free will real?".to_string(),
+            point: "free will is unforced choice".to_string(),
+        };
+        let reading = ObserverEngine::Offline.tutor(&context);
+        assert!(reading.degraded);
+        assert!(reading.reflection.to_lowercase().contains("is that"));
+        assert!(!reading.missing_nuance.is_empty());
+        // Belief-neutral: the distinction is the USER's to draw, not the tutor's.
+        assert!(reading.distinction.to_lowercase().contains("yours to draw"));
     }
 }

@@ -262,12 +262,12 @@ pub(crate) enum AnswerInput {
     // re-presents the SAME question. STORY-163 wires the command + a graceful
     // placeholder; the belief-neutral, tool-context LLM answer lands in STORY-164.
     Help(String),
-    // trace:STORY-163 | ai:claude
+    // trace:STORY-165 | ai:claude
     // The user opened the /tutor articulation & nuance coach (via the palette or
     // the typed `/tutor` command). Carries any text typed after `/tutor`.
-    // Non-destructive. STORY-163 wires the command + a graceful placeholder; the
-    // coaching LLM engine (reflect + sharpen the user's OWN point, surface missing
-    // nuance, never supply the belief) lands in STORY-165.
+    // Non-destructive. The coaching LLM engine (reflect + sharpen the user's OWN
+    // point, surface the missing nuance, never supply the belief) lives in
+    // observer.rs (STORY-165); session.rs wires it to this variant.
     Tutor(String),
     End,
 }
