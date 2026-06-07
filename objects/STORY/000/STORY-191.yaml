@@ -20,12 +20,12 @@ description: |-
   - Scroll + re-read highlight span the full hydrated transcript; follow-mode starts at the newest exchange.
   - A long transcript renders smoothly (visible-window render or cached lines), not re-parsing all history per frame.
   - Tests: resume hydrates N turns into the pane as styled lines; scroll reaches turn 1; only the viewport is parsed/rendered per frame (or a render cache is hit).
-status: InProgress
+status: Completed
 priority: High
 owner: ''
 feature: Uncategorized
 created_at: 2026-06-07T21:31:10.656119931Z
-modified_at: 2026-06-07T21:31:26.554117620Z
+modified_at: 2026-06-07T21:58:16.039324701Z
 req_type: Story
 tags:
 - performance
