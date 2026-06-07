@@ -1,0 +1,18 @@
+id: 019ea07e-4659-7ba0-85ac-ee7948f89fa6
+spec_id: STORY-170
+agreed_id: STORY-170
+title: Migrate the rich interactions into TUI components
+description: 'Render the meta-channels (/observe /tutor /help /synopsis) as panes/popups in the META voice; the closing ritual (rest -> closing statements -> verdict) and the dead-end menu as TUI flows; the goal/breadcrumb/roundedness/mode in the status bar; /add and /goal and /mode prompts as TUI inputs. Reuse the existing front-end-agnostic engines (no LLM-logic change). ## Acceptance: every interaction available in the line front-end is available + well-rendered in the TUI; behavior parity; tests (headless) unaffected. Depends on the TUI shell.'
+status: Approved
+priority: High
+owner: ''
+feature: Uncategorized
+created_at: 2026-06-07T05:11:30.649708860Z
+modified_at: 2026-06-07T05:11:30.649708860Z
+req_type: Story
+tags:
+- components
+- migrate
+- ratatui
+- story
+- tui
