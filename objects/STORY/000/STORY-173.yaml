@@ -15,7 +15,7 @@ priority: High
 owner: ''
 feature: Uncategorized
 created_at: 2026-06-07T06:46:03.174173134Z
-modified_at: 2026-06-07T06:47:34.348014451Z
+modified_at: 2026-06-07T06:52:22.524529195Z
 req_type: Story
 tags:
 - goal
@@ -29,3 +29,8 @@ comments:
   content: 'UX refinement (user): the user-requested path is — typing ''/goal'' when NO goal is set first PROMPTS ''No goal set — request one? [y/N]''; on yes, run observer::propose_goal and offer accept/edit/decline. Also add a ''/request-goal'' alias that does the same directly (skips the confirm). When a goal IS set, ''/goal'' still shows the current one.'
   created_at: 2026-06-07T06:47:34.348014451Z
   modified_at: 2026-06-07T06:47:34.348014451Z
+- id: 019ea0da-9e7c-79a1-afb5-1c5b1418c8ef
+  author: joe
+  content: 'DECIDED (user): interrogator goal-offer = ''offer once, on crystallize'' — when a thesis has formed and no goal is set, offer exactly once; never re-offer. On-demand paths (/goal prompt, /request-goal) always available.'
+  created_at: 2026-06-07T06:52:22.524529195Z
+  modified_at: 2026-06-07T06:52:22.524529195Z
