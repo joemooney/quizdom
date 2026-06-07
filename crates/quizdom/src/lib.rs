@@ -1,6 +1,8 @@
 // trace:TASK-56 | ai:codex
 mod bank;
 mod contradiction;
+// trace:STORY-180 | ai:claude — the capable TUI free-text editor (tui-textarea).
+mod editor;
 mod error;
 // trace:STORY-168 | ai:claude
 mod frontend;
