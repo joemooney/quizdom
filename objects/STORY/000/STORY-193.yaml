@@ -32,7 +32,7 @@ priority: High
 owner: ''
 feature: Uncategorized
 created_at: 2026-06-07T21:34:02.003798481Z
-modified_at: 2026-06-07T21:58:58.185085627Z
+modified_at: 2026-06-07T22:13:16.397718738Z
 req_type: Story
 tags:
 - focus
@@ -56,3 +56,8 @@ comments:
   content: 'DECIDED (user): mouse mode = ON by default (wheel scroll + click-to-focus), with a TOGGLE on F2 (and a ''/mouse'' palette command) that flips mouse capture OFF so the terminal''s native click-drag selection/copy works, and back ON. Reflect the current state somewhere (status bar segment or the cheat-sheet) and restore capture state cleanly across exit/panic and the Ctrl-X Ctrl-E $EDITOR suspend/resume.'
   created_at: 2026-06-07T21:35:40.820722358Z
   modified_at: 2026-06-07T21:35:40.820722358Z
+- id: 019ea425-b9ed-7252-aa7b-1ed7534a90aa
+  author: joe
+  content: 'Implemented: Focus enum (Input|Transcript) with Tab/Shift-Tab/Esc routing in tui.rs; route_key() routes transcript-focused arrows/page/Home-End to scroll (editor bypassed), input-focused keys edit; Ctrl-Up/Down convenience scroll kept. Focus-aware borders (focused_border/unfocused_border/border_for in style.rs). ratatui Scrollbar on transcript right edge (scrollbar_state + render_transcript_scrollbar) replacing the ''>'' indicator. Mouse DECIDED default-ON via TerminalGuard EnableMouseCapture, with F2 + /mouse toggle (is_mouse_command, handled locally, never reaches engine); mouse_action() maps wheel->scroll, click->focus, scrollbar drag->ScrollTo fraction; capture disabled+restored across suspend/resume (Ctrl-X Ctrl-E), exit, panic. Status bar surfaces ''mouse: off'' (ON implicit); cheat-sheet documents Tab/Shift-Tab/Esc/Home-End/F2//mouse. 11 new tests; 503 lib + 7 llm green; no new clippy warnings; LineFrontEnd byte output untouched.'
+  created_at: 2026-06-07T22:13:16.397718738Z
+  modified_at: 2026-06-07T22:13:16.397718738Z
