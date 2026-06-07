@@ -1,0 +1,33 @@
+id: 019ea3fc-acb4-7552-927f-05fa182e00e0
+spec_id: STORY-190
+agreed_id: STORY-190
+title: Context-aware palette — grey out inapplicable commands (e.g. /judge, /resolved unless an objection is open)
+description: |-
+  Palette commands that only apply in certain session states should render GREYED OUT (dimmed, still shown for discoverability) when inapplicable, instead of all appearing available and failing at execution with a note.
+
+  MECHANISM:
+  - Add a PaletteContext snapshot of the relevant session state: { objection_open: bool, goal_set: bool, score_on: bool, can_back: bool, can_forward: bool }, populated by the ENGINE (it knows objection_state.is_some(), goal.is_some(), the gauge on/off, Frontier/Review). Thread it into the palette: enrich what read_answer receives (extend InputContext — currently the coarse Frontier/Review enum — or add a sibling state struct) and pass it into run_palette / PaletteState.
+  - PaletteCommand gains an AVAILABILITY predicate: fn(&PaletteContext) -> Availability where Availability = Enabled | Disabled { reason: &'static str }. State-independent commands default to Enabled. Keep the predicates NEXT TO the command registry (single source of truth, like the STORY-176 keymap registry) so adding a context rule is one place.
+  - WIRE the predicates: /judge + /resolved -> Enabled iff objection_open (reason 'needs an open objection'); /objection -> Disabled iff objection_open (reason 'an objection is already open' — one-at-a-time); /request-goal -> Enabled iff !goal_set (reason 'a goal is already set'); /back -> iff can_back; /forward -> iff can_forward. Others stay Enabled (/score is a toggle -> always Enabled).
+  - RENDER: disabled commands shown DIMMED (greyed) with their reason; still NAVIGABLE so the user can read the '?'-detail (which can explain when it applies); Enter on a disabled command is a NO-OP that surfaces the reason — it never executes/returns the command. Filter/search still include greyed commands (STORY-177 modes unaffected).
+  - Apply in BOTH the ratatui TUI palette and the line front-end palette.
+
+  ## Acceptance
+  - /judge and /resolved are greyed with a reason unless an objection is open; enabled when one is.
+  - /objection greyed when an objection is already open; /request-goal greyed when a goal is set; /back greyed with no history; /forward greyed at the frontier.
+  - Disabled commands are shown dimmed, navigable for '?'-detail, and Enter on them is a no-op that shows the reason — never executes.
+  - Availability rules live with the command registry; both TUI and line palettes honor them; STORY-177 filter modes still work over the full (incl. greyed) list.
+  - Belief-neutral; headless degrade unaffected; tests cover each predicate (enabled/disabled by state) and that Enter on a disabled command does not return it.
+status: Approved
+priority: High
+owner: ''
+feature: Uncategorized
+created_at: 2026-06-07T21:28:26.036889056Z
+modified_at: 2026-06-07T21:28:26.036889056Z
+req_type: Story
+tags:
+- context
+- palette
+- story
+- tui
+- ux
