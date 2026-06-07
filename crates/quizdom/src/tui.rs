@@ -41,6 +41,9 @@ use crate::input::{
     is_terminate_command, is_verdict_command, mode_command_text, normalize_answer,
     objection_command_text, tutor_command_text, AnswerInput, InputContext,
 };
+// trace:STORY-176 | ai:claude — the single keymap registry drives BOTH the key
+// dispatcher (here) and the cheat-sheet overlay, so they can never drift.
+use crate::keymap::{self, KeyAction};
 use crate::model::{Answer, AnswerKind};
 use crate::palette::{command_registry, PaletteState};
 use crate::style::theme;
@@ -142,6 +145,12 @@ pub(crate) struct TranscriptPane {
     /// Whether the pane is pinned to the bottom (follow mode). New output keeps
     /// the newest lines in view until the user scrolls up.
     follow: bool,
+    // trace:STORY-176 | ai:claude — the re-read HIGHLIGHT cursor: a line index the
+    // user moves with Ctrl-←/→ to re-read earlier exchanges WITHOUT changing any
+    // answer (scroll-to-view only; 'B'/back stays the only way to revise). `None`
+    // until the user first navigates; clamped to `[0, len-1]` at the first/last
+    // exchange. Moving it scrolls the line into view (leaving follow mode).
+    highlight: Option<usize>,
 }
 
 impl TranscriptPane {
@@ -150,6 +159,7 @@ impl TranscriptPane {
             lines: Vec::new(),
             scroll: 0,
             follow: true,
+            highlight: None,
         }
     }
 
@@ -209,6 +219,98 @@ impl TranscriptPane {
         if next >= max_top {
             self.follow = true;
         }
+    }
+
+    // trace:STORY-176 | ai:claude
+    /// The current re-read HIGHLIGHT line index, or `None` until the user first
+    /// navigates with Ctrl-←/→. Read by the draw call to mark the highlighted row.
+    pub(crate) fn highlight(&self) -> Option<usize> {
+        self.highlight
+    }
+
+    // trace:STORY-176 | ai:claude
+    /// The indices of the transcript's EXCHANGE ANCHORS — the non-empty lines a
+    /// user re-reads (questions, echoed answers, meta readings). Blank spacer rows
+    /// are skipped so Ctrl-←/→ jumps between content, not whitespace. Pure so the
+    /// clamp behavior is testable without a terminal.
+    fn anchors(&self) -> Vec<usize> {
+        self.lines
+            .iter()
+            .enumerate()
+            .filter(|(_, line)| !line.trim().is_empty())
+            .map(|(index, _)| index)
+            .collect()
+    }
+
+    // trace:STORY-176 | ai:claude
+    /// Move the re-read highlight to the PREVIOUS exchange anchor (Ctrl-←),
+    /// CLAMPED at the first anchor — it never moves before the first exchange.
+    /// Scroll-to-view ONLY: it scrolls the highlighted line into view and leaves
+    /// follow mode, but changes no answer ('B'/back is the only way to revise).
+    /// Returns the new highlight index (or `None` when the transcript is empty).
+    pub(crate) fn highlight_prev(&mut self, height: usize) -> Option<usize> {
+        let anchors = self.anchors();
+        if anchors.is_empty() {
+            self.highlight = None;
+            return None;
+        }
+        let next = match self.highlight {
+            // First navigation starts from the last anchor (the newest exchange).
+            None => *anchors.last().unwrap(),
+            Some(current) => {
+                // The largest anchor strictly less than the current line, clamped
+                // at the first anchor (cannot go before the first exchange).
+                anchors
+                    .iter()
+                    .rev()
+                    .find(|&&index| index < current)
+                    .copied()
+                    .unwrap_or_else(|| *anchors.first().unwrap())
+            }
+        };
+        self.highlight = Some(next);
+        self.scroll_into_view(next, height);
+        Some(next)
+    }
+
+    // trace:STORY-176 | ai:claude
+    /// Move the re-read highlight to the NEXT exchange anchor (Ctrl-→), CLAMPED at
+    /// the last anchor — it never moves past the last exchange. Scroll-to-view
+    /// only, like [`highlight_prev`]. Returns the new highlight index.
+    pub(crate) fn highlight_next(&mut self, height: usize) -> Option<usize> {
+        let anchors = self.anchors();
+        if anchors.is_empty() {
+            self.highlight = None;
+            return None;
+        }
+        let next = match self.highlight {
+            None => *anchors.last().unwrap(),
+            Some(current) => anchors
+                .iter()
+                .find(|&&index| index > current)
+                .copied()
+                .unwrap_or_else(|| *anchors.last().unwrap()),
+        };
+        self.highlight = Some(next);
+        self.scroll_into_view(next, height);
+        Some(next)
+    }
+
+    // trace:STORY-176 | ai:claude
+    /// Scroll so `line` is visible in a `height`-row viewport, leaving follow mode
+    /// (the user is now reading back). Clamps the top so the viewport never runs
+    /// past the buffer ends. Used by the highlight navigation to keep the
+    /// re-read line on screen.
+    fn scroll_into_view(&mut self, line: usize, height: usize) {
+        let height = height.max(1);
+        let max_top = self.lines.len().saturating_sub(height);
+        self.follow = false;
+        if line < self.scroll {
+            self.scroll = line;
+        } else if line >= self.scroll + height {
+            self.scroll = (line + 1).saturating_sub(height);
+        }
+        self.scroll = self.scroll.min(max_top);
     }
 }
 
@@ -449,11 +551,22 @@ impl<R: BufRead> TuiFrontEnd<R> {
                 // Per-role colors + quote-attribution: each visible row is
                 // classified to a voice and split into themed spans.
                 // trace:STORY-171 | ai:claude
+                // trace:STORY-176 | ai:claude — the re-read HIGHLIGHT line (moved by
+                // Ctrl-←/→) renders on a subtle highlight background so the user can
+                // see which earlier exchange they are re-reading.
+                let highlight = transcript.highlight();
                 let body: Vec<Line> = transcript
                     .lines()
                     .iter()
+                    .enumerate()
                     .skip(offset)
-                    .map(|line| styled_transcript_line(line))
+                    .map(|(index, line)| {
+                        let mut styled = styled_transcript_line(line);
+                        if Some(index) == highlight {
+                            styled = styled.style(theme::reread_highlight());
+                        }
+                        styled
+                    })
                     .collect();
                 let follow_hint = if offset + inner_height < transcript.len() {
                     " (scrolled — ↓ to follow) "
@@ -572,6 +685,56 @@ impl<R: BufRead> TuiFrontEnd<R> {
         }
     }
 
+    // trace:STORY-176 | ai:claude
+    /// Open the keyboard CHEAT-SHEET overlay (the `?` key). Renders the cheat-sheet
+    /// — GENERATED from the single keymap registry, so it can never drift from the
+    /// dispatcher — centered on top of the current screen, and waits for any key
+    /// (or Esc) to dismiss it. `editing` is the input-box text kept showing behind
+    /// it. Non-destructive: it returns to the same prompt.
+    fn show_cheat_sheet(&mut self, editing: &str) -> Result<()> {
+        loop {
+            self.draw_cheat_sheet(editing)?;
+            let Event::Key(key) = event::read().map_err(QuizdomError::Io)? else {
+                continue;
+            };
+            if !matches!(key.kind, KeyEventKind::Press | KeyEventKind::Repeat) {
+                continue;
+            }
+            // Any key dismisses the cheat-sheet (it is a read-only reference).
+            return Ok(());
+        }
+    }
+
+    // trace:STORY-176 | ai:claude
+    /// Draw the cheat-sheet overlay over the current screen: the three panes
+    /// behind it (so the context stays visible) plus the centered cheat-sheet box
+    /// rendered from [`keymap::render_cheat_sheet`].
+    fn draw_cheat_sheet(&mut self, editing: &str) -> Result<()> {
+        // First lay down the normal screen, then the overlay on top.
+        self.draw(editing, None)?;
+        let cheat_text = keymap::render_cheat_sheet();
+        self.terminal
+            .draw(|frame| {
+                let overlay = palette_rect(frame.area());
+                frame.render_widget(Clear, overlay);
+                let body: Vec<Line> = cheat_text
+                    .lines()
+                    .map(|line| Line::from(line.to_string()))
+                    .collect();
+                let widget = Paragraph::new(body)
+                    .block(
+                        Block::default()
+                            .borders(Borders::ALL)
+                            .border_style(theme::border())
+                            .title(" keyboard cheat-sheet — any key to close "),
+                    )
+                    .wrap(Wrap { trim: false });
+                frame.render_widget(widget, overlay);
+            })
+            .map_err(QuizdomError::Io)?;
+        Ok(())
+    }
+
     /// The shared input loop: flush pending output, draw, then gather one line of
     /// text from the keyboard. Handles editing (chars / Backspace), transcript
     /// scrolling (↑/↓ / PageUp / PageDown), the live `/` palette (on a bare `/`
@@ -599,6 +762,38 @@ impl<R: BufRead> TuiFrontEnd<R> {
             {
                 return Ok(None);
             }
+            // trace:STORY-176 | ai:claude — consult the SINGLE keymap registry first
+            // for the non-text keystrokes (navigation highlight, transcript scroll,
+            // the `?` cheat-sheet). The `?` cheat-sheet only fires when the input box
+            // is empty, so typing a literal `?` into an answer/free-text line still
+            // works. A dispatched key is handled here and the loop continues; an
+            // un-dispatched key falls through to the editing / command path below,
+            // so the front-end-agnostic command routing is unchanged.
+            let dispatched = keymap::dispatch(key.code, key.modifiers);
+            if let Some(action) = dispatched {
+                let suppress_cheat_sheet =
+                    matches!(action, KeyAction::CheatSheet) && !editing.is_empty();
+                if !suppress_cheat_sheet {
+                    match action {
+                        KeyAction::HighlightPrev => {
+                            self.transcript.highlight_prev(viewport);
+                        }
+                        KeyAction::HighlightNext => {
+                            self.transcript.highlight_next(viewport);
+                        }
+                        KeyAction::ScrollLineUp => self.transcript.scroll_up(1, viewport),
+                        KeyAction::ScrollLineDown => self.transcript.scroll_down(1, viewport),
+                        KeyAction::ScrollPageUp => {
+                            self.transcript.scroll_up(viewport.max(1), viewport)
+                        }
+                        KeyAction::ScrollPageDown => {
+                            self.transcript.scroll_down(viewport.max(1), viewport)
+                        }
+                        KeyAction::CheatSheet => self.show_cheat_sheet(&editing)?,
+                    }
+                    continue;
+                }
+            }
             match key.code {
                 KeyCode::Enter => {
                     let line = editing.trim().to_string();
@@ -608,10 +803,6 @@ impl<R: BufRead> TuiFrontEnd<R> {
                 KeyCode::Backspace => {
                     editing.pop();
                 }
-                KeyCode::Up => self.transcript.scroll_up(1, viewport),
-                KeyCode::Down => self.transcript.scroll_down(1, viewport),
-                KeyCode::PageUp => self.transcript.scroll_up(viewport.max(1), viewport),
-                KeyCode::PageDown => self.transcript.scroll_down(viewport.max(1), viewport),
                 KeyCode::Char('/') if editing.is_empty() => {
                     // A bare `/` at the start of the line opens the LIVE palette
                     // on the keystroke (the EPIC-167 fix). A selected command is
@@ -939,6 +1130,91 @@ mod tests {
         assert_eq!(pane.visible_offset(5), pane.len() - 5);
         pane.push_block("line 21");
         assert_eq!(pane.visible_offset(5), pane.len() - 5, "follow resumed");
+    }
+
+    // ---- STORY-176: re-read highlight navigation (clamps at first/last) -----
+
+    // trace:STORY-176 | ai:claude — Ctrl-←/→ move a re-read HIGHLIGHT through the
+    // transcript's exchange anchors and CLAMP at the first / last exchange: it can
+    // never move before the first or past the last. Non-destructive scroll-to-view.
+    #[test]
+    fn highlight_navigation_clamps_at_first_and_last_exchange() {
+        let mut pane = TranscriptPane::new();
+        // Five content lines, each followed by a trailing blank that push_block
+        // collapses — so the anchors are the five content rows, with a genuine
+        // blank spacer row interleaved to prove spacers are skipped by `anchors`.
+        for i in 0..5 {
+            pane.push_block(&format!("exchange {i}\n\n"));
+        }
+        // Lines: "exchange 0", "", "exchange 1", "", ... — anchors at the even rows.
+        let anchors: Vec<usize> = (0..5).map(|i| i * 2).collect();
+        for &a in &anchors {
+            assert!(!pane.lines()[a].trim().is_empty(), "anchor {a} is content");
+        }
+
+        // First Ctrl-→ (or Ctrl-←) starts at the NEWEST exchange (the last anchor).
+        assert_eq!(pane.highlight_prev(3), Some(*anchors.last().unwrap()));
+
+        // Walk all the way back: it stops at the FIRST anchor and never goes before.
+        for _ in 0..20 {
+            pane.highlight_prev(3);
+        }
+        assert_eq!(
+            pane.highlight(),
+            Some(anchors[0]),
+            "clamped at the first exchange"
+        );
+        // Another Ctrl-← stays put (cannot move before the first exchange).
+        pane.highlight_prev(3);
+        assert_eq!(pane.highlight(), Some(anchors[0]));
+
+        // Walk all the way forward: it stops at the LAST anchor and never goes past.
+        for _ in 0..20 {
+            pane.highlight_next(3);
+        }
+        assert_eq!(
+            pane.highlight(),
+            Some(*anchors.last().unwrap()),
+            "clamped at the last exchange"
+        );
+        pane.highlight_next(3);
+        assert_eq!(pane.highlight(), Some(*anchors.last().unwrap()));
+    }
+
+    // trace:STORY-176 | ai:claude — moving the highlight is SCROLL-TO-VIEW only: it
+    // scrolls the highlighted line into the viewport (leaving follow mode) but the
+    // transcript lines are untouched (non-destructive; 'B'/back is the only revise).
+    #[test]
+    fn highlight_navigation_scrolls_into_view_without_mutating_lines() {
+        let mut pane = TranscriptPane::new();
+        for i in 0..30 {
+            pane.push_block(&format!("line {i}"));
+        }
+        let before: Vec<String> = pane.lines().to_vec();
+        // From the bottom, walk the highlight up several exchanges in a 5-row view.
+        for _ in 0..10 {
+            pane.highlight_prev(5);
+        }
+        let highlighted = pane.highlight().unwrap();
+        let top = pane.visible_offset(5);
+        // The highlighted line is within the visible window [top, top+5).
+        assert!(
+            highlighted >= top && highlighted < top + 5,
+            "highlight {highlighted} must be visible in [{top}, {})",
+            top + 5
+        );
+        // Lines are unchanged — navigation re-reads, it never revises.
+        assert_eq!(pane.lines(), before.as_slice());
+    }
+
+    // trace:STORY-176 | ai:claude — an empty transcript has no anchors, so the
+    // highlight stays None and navigation is a no-op (no panic on the edge).
+    #[test]
+    fn highlight_navigation_is_a_no_op_on_an_empty_transcript() {
+        let mut pane = TranscriptPane::new();
+        assert_eq!(pane.highlight_prev(5), None);
+        assert_eq!(pane.highlight_next(5), None);
+        assert_eq!(pane.highlight(), None);
     }
 
     // trace:STORY-169 | ai:claude

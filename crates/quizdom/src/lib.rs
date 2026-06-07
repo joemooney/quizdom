@@ -6,6 +6,8 @@ mod error;
 mod frontend;
 mod honing;
 mod input;
+// trace:STORY-176 | ai:claude
+mod keymap;
 mod model;
 // trace:STORY-127 | ai:claude
 mod observer;

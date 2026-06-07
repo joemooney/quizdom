@@ -1463,13 +1463,15 @@ fn editor_mode_defaults_to_emacs_for_other_editors() {
 fn renders_all_question_kinds() {
     let cases = [
         // trace:STORY-128 | ai:claude — `[S] Synopsis` joins the advertised set.
+        // trace:STORY-176 | ai:claude — observe is `[o]` now (moved off `?`); `[?]`
+        // shows the keyboard cheat-sheet, advertised at the end of the control set.
         (
             AnswerKind::YesNo,
-            "[Y] Yes  [N] No  [?] Observe  [S] Synopsis  [X] eXplore  [A] Add  [P] Punt  [B] Back  [Q] Quit",
+            "[Y] Yes  [N] No  [o] Observe  [S] Synopsis  [X] eXplore  [A] Add  [P] Punt  [B] Back  [Q] Quit  [?] keys",
         ),
         (
             AnswerKind::Choice(vec!["libertarian".to_string(), "compatibilist".to_string()]),
-            "[1-2] Choose  [?] Observe  [S] Synopsis  [X] eXplore  [A] Add  [P] Punt  [B] Back  [Q] Quit",
+            "[1-2] Choose  [o] Observe  [S] Synopsis  [X] eXplore  [A] Add  [P] Punt  [B] Back  [Q] Quit  [?] keys",
         ),
         // trace:BUG-98 | ai:claude — free-text (frontier) now advertises the
         // same control set as the single-key prompt, expressed as slash-commands.
@@ -2918,8 +2920,9 @@ fn back_and_forward_browse_answered_path_without_truncating() {
     assert!(output.contains("saved answer: yes"));
     assert!(output.contains("Reviewing answer 1/2:"));
     // trace:STORY-128 | ai:claude — `[S] Synopsis` joins the review controls.
+    // trace:STORY-176 | ai:claude — observe is `[o]`; `[?] keys` ends the set.
     assert!(output.contains(
-        "[Y] Yes  [N] No  [?] Observe  [S] Synopsis  [X] eXplore  [P] Punt  [B] Back  [F] Forward  [Q] Quit"
+        "[Y] Yes  [N] No  [o] Observe  [S] Synopsis  [X] eXplore  [P] Punt  [B] Back  [F] Forward  [Q] Quit  [?] keys"
     ));
 
     let log = fs::read_to_string(&path).unwrap();
@@ -3161,13 +3164,15 @@ fn observer_key_reads_exchange_then_re_presents_same_question_offline() {
     let config = test_config(&path, "Q-1");
     let mut output = Vec::new();
 
-    // Answer Q-1 yes (-> Q-yes), press '?' at Q-yes, then end. The observer reads
-    // the Q-1 -> "yes" -> Q-yes exchange and re-presents Q-yes unchanged.
+    // trace:STORY-176 | ai:claude — the observe affordance MOVED from `?` to `o`
+    // (the DECIDED change); `?` now opens the cheat-sheet. Answer Q-1 yes (-> Q-yes),
+    // press 'o' at Q-yes, then end. The observer reads the Q-1 -> "yes" -> Q-yes
+    // exchange and re-presents Q-yes unchanged.
     run_session(
         &config,
         &bank,
         &strategy,
-        "yes\n?\n/end\n".as_bytes(),
+        "yes\no\n/end\n".as_bytes(),
         &mut output,
     )
     .unwrap();
@@ -3208,6 +3213,80 @@ fn observer_key_reads_exchange_then_re_presents_same_question_offline() {
     assert!(
         !log.contains("META (observer"),
         "the META reading must not be written to the session log"
+    );
+
+    let _ = fs::remove_file(&path);
+}
+
+// trace:STORY-176 | ai:claude
+// '?' mid-session prints the keyboard CHEAT-SHEET (the headless degrade of the
+// TUI overlay) generated from the keymap registry, then re-presents the SAME
+// question — non-destructive, and the observe affordance is now 'o', not '?'.
+#[test]
+fn cheatsheet_key_prints_grouped_bindings_then_re_presents_same_question() {
+    let path = std::env::temp_dir().join(format!(
+        "quizdom-story-176-cheatsheet-{}.jsonl",
+        std::process::id()
+    ));
+    let _ = fs::remove_file(&path);
+    let bank = story_69_branching_bank();
+    let strategy = DeterministicNextQuestionStrategy;
+    let config = test_config(&path, "Q-1");
+    let mut output = Vec::new();
+
+    // Answer Q-1 yes (-> Q-yes), press '?' at Q-yes (cheat-sheet), then end.
+    run_session(
+        &config,
+        &bank,
+        &strategy,
+        "yes\n?\n/end\n".as_bytes(),
+        &mut output,
+    )
+    .unwrap();
+
+    let output = String::from_utf8(output).unwrap();
+    // The cheat-sheet header + every group heading is printed (generated from the
+    // single keymap registry, so it cannot drift from the TUI dispatcher).
+    assert!(
+        output.contains("Keyboard cheat-sheet"),
+        "expected the cheat-sheet header: {output}"
+    );
+    for group in ["Answering", "Navigation", "Meta", "Editing", "Session"] {
+        assert!(
+            output.contains(group),
+            "cheat-sheet missing {group}: {output}"
+        );
+    }
+    // The DECIDED bindings are documented: observe is 'o', '?' is the cheat-sheet,
+    // and the navigation keys are listed.
+    assert!(output.contains("Observe"), "observe row present: {output}");
+    assert!(
+        output.contains("Ctrl-←"),
+        "navigation row present: {output}"
+    );
+    // Non-destructive: the cheat-sheet is printed at the Q-yes prompt and the input
+    // re-prompts (the `?` keypress is handled inline, then awaits the next input);
+    // the question itself is never re-answered, and the cheat-sheet appears AFTER
+    // Q-yes was presented.
+    let q_yes_at = output.find("Q-yes").expect("Q-yes presented");
+    let cheat_at = output
+        .find("Keyboard cheat-sheet")
+        .expect("cheat-sheet printed");
+    assert!(
+        cheat_at > q_yes_at,
+        "the cheat-sheet must print at the Q-yes prompt: {output}"
+    );
+    // The cheat-sheet leaves no trace in the persisted session log.
+    let log = fs::read_to_string(&path).unwrap();
+    assert!(
+        !log.contains("Keyboard cheat-sheet"),
+        "the cheat-sheet must not be written to the session log: {log}"
+    );
+    assert!(
+        !log.lines()
+            .any(|line| line.contains(r#""event_type":"answer_recorded""#)
+                && line.contains(r#""question_ref":"Q-yes""#)),
+        "the cheat-sheet keypress must not record an answer for Q-yes: {log}"
     );
 
     let _ = fs::remove_file(&path);
