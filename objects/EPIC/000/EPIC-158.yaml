@@ -61,7 +61,7 @@ priority: High
 owner: ''
 feature: Uncategorized
 created_at: 2026-06-07T02:07:21.958497954Z
-modified_at: 2026-06-07T03:06:54.901661908Z
+modified_at: 2026-06-07T03:07:15.545047002Z
 req_type: Epic
 tags:
 - closing
@@ -99,3 +99,8 @@ comments:
   content: Commit ed523da references this requirement
   created_at: 2026-06-07T02:45:19.718900380Z
   modified_at: 2026-06-07T02:45:19.718900380Z
+- id: 019ea00c-84d9-7d22-a125-b83287498a39
+  author: joe
+  content: 'COMPLETE. STORY-159 (goal/focus: flag + /goal + Observer-proposed; orients questioning + roundedness), STORY-160 (closing ritual: /rest -> closing statements -> verdict, terminator forfeits last word), STORY-161 (debate mode: --mode/''/mode''; questioner steelmans the opposing side; verdict judges argument structure not truth). Full discourse lifecycle: free-flow -> goal -> probe -> roundedness -> rest -> verdict. 293 tests.'
+  created_at: 2026-06-07T03:07:15.545047002Z
+  modified_at: 2026-06-07T03:07:15.545047002Z
