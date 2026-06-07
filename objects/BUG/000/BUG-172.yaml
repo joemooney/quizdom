@@ -16,3 +16,7 @@ tags:
 - post-v1
 - quote
 - tui
+relationships:
+- rel_type: Child
+  target_id: 019ea07d-90fc-7b53-ad38-d8979d58a26f
+  created_at: 2026-06-07T06:44:01.524777993Z
