@@ -8,7 +8,7 @@ priority: High
 owner: ''
 feature: Uncategorized
 created_at: 2026-06-07T06:47:36.703727772Z
-modified_at: 2026-06-07T06:47:36.703727772Z
+modified_at: 2026-06-07T06:50:32.885624304Z
 req_type: Story
 tags:
 - post-v1
@@ -17,3 +17,9 @@ tags:
 - story
 - toggle
 - tui
+comments:
+- id: 019ea0d8-f235-75c2-8b79-97c7de13c449
+  author: joe
+  content: 'Refinement (user): when a GOAL is set, the gauge expresses ESTIMATED DISTANCE TO GOAL — progress toward resolving it (''~70% of the way to settling X; the open thread is whether determinism undermines responsibility''), not just abstract structural roundedness. This unifies with EPIC-154/STORY-159 (roundedness already measured w.r.t. the goal). So: goal set -> ''distance-to-goal'' gauge (composite roundedness scoped to the goal + the limiting gap as the remaining distance); no goal -> general roundedness. Same on-demand-by-default + gate-recompute cost guard. The ''limiting gap'' IS the distance.'
+  created_at: 2026-06-07T06:50:32.885624304Z
+  modified_at: 2026-06-07T06:50:32.885624304Z
