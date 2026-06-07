@@ -977,20 +977,24 @@ fn parse_control(raw: &str, context: InputContext) -> Option<AnswerInput> {
     None
 }
 
-// trace:STORY-171 | ai:claude
-/// Build a styled ratatui [`Line`] for one transcript row: attribute the row to
-/// a voice ([`theme::classify_line`]) and split it into colored spans
-/// ([`theme::line_fragments`]) — applying SYMMETRIC QUOTE ATTRIBUTION across the
-/// interrogator<->user pair (a quoted span renders in the OPPOSING role's color,
-/// since each party quotes the other). Pure over the plain text the engine
-/// emitted, so the per-role coloring is testable without a terminal.
+// trace:STORY-179 | ai:claude
+// trace:BUG-178  | ai:claude
+/// Build a styled ratatui [`Line`] for one transcript row by rendering it as
+/// markdown ([`crate::markdown`]): the row's voice ([`theme::classify_line`])
+/// supplies the base color, inline `*emph*`/`**strong**`/`` `code` `` and the
+/// per-line block constructs (lists, headings, blockquotes) are interpreted,
+/// and quoted spans recolor to the role-agnostic quote-yellow (BUG-178). The
+/// renderer keeps a 1:1 source-line mapping, so the transcript pane's
+/// scroll/highlight indices are unaffected. Pure over the plain text the engine
+/// emitted, so the styling is testable without a terminal.
 fn styled_transcript_line(text: &str) -> Line<'static> {
-    let role = theme::classify_line(text);
-    let spans: Vec<Span<'static>> = theme::line_fragments(role, text)
-        .into_iter()
-        .map(|fragment| Span::styled(fragment.text, fragment.style))
-        .collect();
-    Line::from(spans)
+    // Render this single source line through the message renderer and take its
+    // one produced line (multi-line fenced blocks are not expressible in a lone
+    // line; every per-line construct is). `render_lines` of a one-element slice
+    // gives exactly one line.
+    crate::markdown::render_lines(std::slice::from_ref(&text.to_string()))
+        .pop()
+        .unwrap_or_else(|| Line::from(text.to_string()))
 }
 
 // trace:STORY-171 | ai:claude
@@ -1424,31 +1428,67 @@ mod tests {
         assert_eq!(line.spans[0].style.fg, Some(theme::CHALLENGER));
     }
 
-    // trace:STORY-171 | ai:claude
+    // trace:BUG-178 | ai:claude — quote coloring is now role-AGNOSTIC: a quoted
+    // span recolors to the single QUOTE yellow regardless of which voice the
+    // line belongs to (retiring the BUG-172 opposing-role attribution).
     #[test]
-    fn styled_transcript_line_attributes_a_quote_to_the_interrogator() {
-        // A quoted span inside the user's answer renders in the interrogator's
-        // color; the surrounding answer stays the user color.
+    fn styled_transcript_line_colors_a_user_quote_in_quote_yellow() {
+        // A quoted span inside the user's answer recolors to the quote-yellow;
+        // the surrounding answer (and the `> ` echo marker) stay the user color.
         let line = styled_transcript_line(r#"> you said "it is free" but I disagree"#);
-        assert_eq!(line.spans.len(), 3);
+        let quoted = line
+            .spans
+            .iter()
+            .find(|s| s.content.contains("it is free"))
+            .expect("quoted span");
+        assert_eq!(quoted.style.fg, Some(theme::QUOTE));
+        assert_eq!(quoted.content, r#""it is free""#);
+        // The `> ` echo marker and the surrounding answer stay user-green.
+        assert!(line
+            .spans
+            .iter()
+            .any(|s| s.content.contains("but I disagree") && s.style.fg == Some(theme::USER)));
+        assert_eq!(line.spans[0].content, "> ");
         assert_eq!(line.spans[0].style.fg, Some(theme::USER));
-        assert_eq!(line.spans[1].style.fg, Some(theme::INTERROGATOR));
-        assert_eq!(line.spans[1].content, r#""it is free""#);
-        assert_eq!(line.spans[2].style.fg, Some(theme::USER));
     }
 
-    // trace:BUG-172 | ai:claude
+    // trace:BUG-178 | ai:claude
     #[test]
-    fn styled_transcript_line_attributes_an_interrogator_quote_to_the_user() {
-        // SYMMETRIC complement: a quoted span inside the INTERROGATOR's line
-        // renders in the user's color (the interrogator is quoting the user);
-        // the surrounding framing stays the interrogator color.
+    fn styled_transcript_line_colors_an_interrogator_quote_in_quote_yellow() {
+        // A quoted span inside the INTERROGATOR's line ALSO recolors to the
+        // quote-yellow (role-agnostic); the surrounding framing stays cyan.
         let line = styled_transcript_line(r#"You said "it is free" — really?"#);
-        assert_eq!(line.spans.len(), 3);
-        assert_eq!(line.spans[0].style.fg, Some(theme::INTERROGATOR));
-        assert_eq!(line.spans[1].style.fg, Some(theme::USER));
-        assert_eq!(line.spans[1].content, r#""it is free""#);
-        assert_eq!(line.spans[2].style.fg, Some(theme::INTERROGATOR));
+        let quoted = line
+            .spans
+            .iter()
+            .find(|s| s.content.contains("it is free"))
+            .expect("quoted span");
+        assert_eq!(quoted.style.fg, Some(theme::QUOTE));
+        assert_eq!(quoted.content, r#""it is free""#);
+        assert!(line
+            .spans
+            .iter()
+            .any(|s| s.content.contains("You said") && s.style.fg == Some(theme::INTERROGATOR)));
+    }
+
+    // trace:BUG-178 | ai:claude — the OBSERVED META example now colorizes both
+    // single-quoted spans (previously uncovered: META wasn't in the pair, and
+    // single quotes weren't detected).
+    #[test]
+    fn styled_transcript_line_colors_a_meta_single_quote() {
+        let line = styled_transcript_line(
+            "META — not 'I pronounce my life well lived' but 'I hope that verdict is within reach'",
+        );
+        let colored: Vec<_> = line
+            .spans
+            .iter()
+            .filter(|s| s.style.fg == Some(theme::QUOTE))
+            .collect();
+        assert_eq!(
+            colored.len(),
+            2,
+            "both single-quoted spans colorize on a META line"
+        );
     }
 
     // trace:STORY-171 | ai:claude

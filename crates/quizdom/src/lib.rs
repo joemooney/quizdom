@@ -24,6 +24,8 @@ mod spinner;
 mod strategy;
 // trace:STORY-76 | ai:claude
 mod style;
+// trace:STORY-179 | ai:claude — TUI markdown renderer (inline+block) with quote-yellow (BUG-178).
+mod markdown;
 // trace:STORY-169 | ai:claude
 mod tui;
 // trace:STORY-128 | ai:claude
