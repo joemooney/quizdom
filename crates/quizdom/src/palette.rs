@@ -307,6 +307,30 @@ resolved, never a belief to adopt.",
             // trace:STORY-190 | ai:claude — greyed once a goal is already set.
             availability: no_goal_yet,
         },
+        // trace:STORY-194 | ai:claude — the runtime editor-model switch + the
+        // unified settings surface. Both are always-available, non-destructive
+        // meta controls (the panel is the unified home; the dedicated commands
+        // stay as shortcuts and stay in sync with it).
+        PaletteCommand {
+            command: "/editor",
+            description: "Switch the free-text editor model (emacs | vim | auto)",
+            detail: "Switches the free-text answer editor between Emacs/readline and Vim modal \
+editing at runtime — no restart, no env change. `auto` follows $VISUAL/$EDITOR (the startup \
+default). The answer box title shows the active model and updates live; a bare /editor shows the \
+current model. The choice PERSISTS across launches. Belief-neutral: it only chooses HOW keys edit \
+text, never what is asked.",
+            availability: always_enabled,
+        },
+        PaletteCommand {
+            command: "/settings",
+            description: "Open the settings panel (editor, mouse, score, mode)",
+            detail: "Opens the unified SETTINGS panel listing the runtime preferences with their \
+current values — editor mode (Emacs/Vim/Auto), mouse capture, the score gauge, and the session \
+mode (Socratic/Debate) — toggled/cycled in place. The dedicated commands (/editor, /mouse, \
+/score, /mode) remain as shortcuts and stay in sync with the panel. Settings PERSIST across \
+launches. Headless: /settings prints the value list; /settings set <key> <value> mutates one.",
+            availability: always_enabled,
+        },
         PaletteCommand {
             command: "/mode",
             description: "Toggle questioning mode (socratic | debate)",

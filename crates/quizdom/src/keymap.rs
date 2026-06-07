@@ -281,6 +281,17 @@ pub(crate) fn keymap_registry() -> Vec<KeyBinding> {
             "State or show the session goal/thesis",
             KeyGroup::Meta,
         ),
+        // trace:STORY-194 | ai:claude — the runtime editor switch + settings panel.
+        doc(
+            "/editor",
+            "Switch the free-text editor model (emacs | vim | auto)",
+            KeyGroup::Meta,
+        ),
+        doc(
+            "/settings",
+            "Open the settings panel (editor, mouse, score, mode)",
+            KeyGroup::Meta,
+        ),
         doc(
             "/",
             "Open the slash-command palette (every command, with help)",
@@ -293,10 +304,13 @@ pub(crate) fn keymap_registry() -> Vec<KeyBinding> {
             KeyGroup::Editing,
         ),
         // ----- Session --------------------------------------------------------
+        // trace:STORY-194 | ai:claude — F1 is the keyboard CHEAT-SHEET (DECIDED:
+        // alias of '?'). It dispatches to the SAME KeyAction::CheatSheet, so the
+        // single-table contract keeps the dispatcher + cheat-sheet in sync.
         key(
-            "?",
+            "? / F1",
             KeyAction::CheatSheet,
-            &[(KeyCode::Char('?'), NONE)],
+            &[(KeyCode::Char('?'), NONE), (KeyCode::F(1), NONE)],
             "Show this keyboard cheat-sheet",
             KeyGroup::Session,
         ),
@@ -435,6 +449,11 @@ mod tests {
             dispatch(KeyCode::Char('?'), KeyModifiers::NONE),
             Some(KeyAction::CheatSheet)
         );
+        // trace:STORY-194 | ai:claude — F1 is the cheat-sheet alias of '?'.
+        assert_eq!(
+            dispatch(KeyCode::F(1), KeyModifiers::NONE),
+            Some(KeyAction::CheatSheet)
+        );
     }
 
     // trace:STORY-176 | ai:claude — the dispatcher SCANS the registry: every trigger
@@ -534,16 +553,19 @@ mod tests {
         assert_eq!(observe.group, KeyGroup::Meta);
         assert!(observe.description.to_lowercase().contains("observe"));
 
+        // trace:STORY-194 | ai:claude — the cheat-sheet row now documents '? / F1'
+        // (F1 is the DECIDED alias); it still maps to KeyAction::CheatSheet.
         let cheat = registry
             .iter()
-            .find(|b| b.keys == "?")
+            .find(|b| b.keys.contains('?') && b.action == Some(KeyAction::CheatSheet))
             .expect("a '?' cheat-sheet binding");
         assert_eq!(cheat.action, Some(KeyAction::CheatSheet));
+        assert!(cheat.keys.contains("F1"), "F1 is documented as the alias");
         // No registry row binds '?' to observe any more.
         assert!(
             !registry
                 .iter()
-                .any(|b| b.keys == "?" && b.description.to_lowercase().contains("observe")),
+                .any(|b| b.keys.contains('?') && b.description.to_lowercase().contains("observe")),
             "'?' must no longer be the observe key"
         );
     }

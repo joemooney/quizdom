@@ -2971,6 +2971,9 @@ fn run_session_from_current(
                             last_gauge = None;
                             render_score_gauge_off(fe.out())?;
                         }
+                        // trace:STORY-194 | ai:claude — keep the /settings panel in
+                        // sync with the dedicated /score shortcut + persist it.
+                        fe.sync_score(score_gauge_on);
                         continue;
                     }
                     AnswerInput::Goal(text) => {
@@ -3056,6 +3059,70 @@ fn run_session_from_current(
                             answered_turn,
                             fe.out(),
                         )?;
+                        // trace:STORY-194 | ai:claude — keep the /settings panel in
+                        // sync with the dedicated /mode shortcut + persist it.
+                        fe.sync_mode(mode.as_str());
+                        continue;
+                    }
+                    AnswerInput::Editor(token) => {
+                        // trace:STORY-194 | ai:claude
+                        // Runtime editor-model switch: `/editor <emacs|vim|auto>`
+                        // rebuilds the free-text editor under the new model (the box
+                        // title updates live in the TUI); a bare `/editor` shows the
+                        // current model. The front-end owns + persists the choice;
+                        // the headless line path echoes it (rustyline already chose
+                        // its edit mode from $EDITOR). Non-destructive: the SAME
+                        // question is re-presented. Belief-neutral plumbing.
+                        fe.set_editor_choice(&token);
+                        continue;
+                    }
+                    AnswerInput::Settings(rest) => {
+                        // trace:STORY-194 | ai:claude
+                        // The unified SETTINGS surface: `/settings` opens the panel
+                        // (TUI) / prints the value list (headless). The front-end
+                        // owns editor + mouse; the engine owns score + mode. Push the
+                        // engine's LIVE score/mode into the front-end so the panel
+                        // shows the true current values, open the surface, then
+                        // RECONCILE any score/mode change back through the same
+                        // /score / /mode logic so the dedicated shortcuts and the
+                        // panel stay in sync. Non-destructive: the SAME question is
+                        // re-presented.
+                        fe.sync_score(score_gauge_on);
+                        fe.sync_mode(mode.as_str());
+                        let updated = fe.settings_surface(&rest);
+                        // Reconcile MODE first (cheap, no LLM).
+                        if updated.mode != mode {
+                            set_mode_in_session(
+                                &mut mode,
+                                updated.mode.as_str(),
+                                config,
+                                &mut logger,
+                                answered_turn,
+                                fe.out(),
+                            )?;
+                            fe.sync_mode(mode.as_str());
+                        }
+                        // Reconcile the SCORE gauge through the same toggle logic as
+                        // AnswerInput::Score (computing immediately when turned on).
+                        if updated.score != score_gauge_on {
+                            score_gauge_on = updated.score;
+                            if score_gauge_on {
+                                let gauge = compute_score_gauge(
+                                    &observer,
+                                    &config.log_path,
+                                    Some(&config.branch_id),
+                                    goal.as_deref(),
+                                    objection_open_threads.last().map(String::as_str),
+                                );
+                                render_score_gauge(&gauge, true, fe.out())?;
+                                last_gauge = Some(gauge);
+                                turns_since_score = 0;
+                            } else {
+                                last_gauge = None;
+                                render_score_gauge_off(fe.out())?;
+                            }
+                            fe.sync_score(score_gauge_on);
+                        }
                         continue;
                     }
                     AnswerInput::Rest => {
@@ -3759,6 +3826,11 @@ fn ask_contradiction_follow_up(
         // trace:STORY-161 | ai:claude — a stray `/mode` toggle on a transient
         // contradiction follow-up is a no-op here (no loop mode state in scope).
         | AnswerInput::Mode(_)
+        // trace:STORY-194 | ai:claude — a stray `/editor` / `/settings` on a
+        // transient contradiction follow-up is a no-op here (no editor/settings
+        // surface in scope; those live on the main frontier loop).
+        | AnswerInput::Editor(_)
+        | AnswerInput::Settings(_)
         | AnswerInput::Rest
         | AnswerInput::Verdict
         | AnswerInput::Terminate
@@ -4075,6 +4147,16 @@ fn browse_answered_path(
             // effect at the FRONTIER (where the live mode drives the next-question
             // prompt), so a stray `/mode` in the review pane is a no-op.
             AnswerInput::Mode(_) => continue,
+            // trace:STORY-194 | ai:claude — `/editor` is a front-end-local model
+            // switch that applies anywhere (it never touches engine loop state), so
+            // honor it in the review pane too; the box title updates live. The
+            // `/settings` panel, by contrast, reconciles the FRONTIER score/mode
+            // state, so a stray `/settings` here is a no-op (return to the frontier).
+            AnswerInput::Editor(token) => {
+                fe.set_editor_choice(&token);
+                continue;
+            }
+            AnswerInput::Settings(_) => continue,
             // trace:STORY-160 | ai:claude — the closing ritual begins at the
             // FRONTIER (where the live position + goal state are in scope), not
             // from inside the review pane re-walking the saved path. A stray

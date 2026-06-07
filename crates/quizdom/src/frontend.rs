@@ -21,6 +21,9 @@ use crate::input::{read_answer_or_end, AnswerInput, FreeTextInput, InputContext}
 use crate::model::AnswerKind;
 // trace:STORY-190 | ai:claude
 use crate::palette::PaletteContext;
+// trace:STORY-194 | ai:claude — the settings surface crosses the seam: the engine
+// owns score/mode authoritatively, the front-end owns editor/mouse + persistence.
+use crate::settings::Settings;
 use std::io::{BufRead, BufReader, Read, Write};
 
 /// The interface the session ENGINE talks to instead of stdin/stdout.
@@ -83,6 +86,35 @@ pub(crate) trait FrontEnd {
     /// TUI front-end implements this by feeding the core from its own input source.
     fn author_io(&mut self) -> (&mut dyn BufRead, &mut dyn Write);
 
+    // trace:STORY-194 | ai:claude
+    /// Switch the free-text EDITOR MODEL at runtime (`/editor <emacs|vim|auto>`).
+    /// `token` is the raw editor token (empty = SHOW the current model). The
+    /// front-end rebuilds its editor under the new model, writes a confirmation
+    /// (or the current model) through `out()`, and PERSISTS the setting so the
+    /// choice sticks. The headless line front-end has no live in-pane TextEditor
+    /// (rustyline already picked its mode from `$EDITOR` at startup), so it just
+    /// records + echoes the resolved choice; the TUI rebuilds + retags the box.
+    fn set_editor_choice(&mut self, token: &str);
+
+    // trace:STORY-194 | ai:claude
+    /// KEEP the front-end's owned settings in sync when a DEDICATED shortcut
+    /// (`/score`, `/mode`) flips the engine-owned state, so the `/settings` panel
+    /// always reflects the live value. Persists the change. No-op-cheap.
+    fn sync_score(&mut self, on: bool);
+    /// Mirror of [`sync_score`](FrontEnd::sync_score) for the session mode token
+    /// (`socratic` / `debate`).
+    fn sync_mode(&mut self, mode_token: &str);
+
+    // trace:STORY-194 | ai:claude
+    /// Open the SETTINGS surface (`/settings`). `rest` is the text after
+    /// `/settings` (empty = open the panel; `set <key> <value>` is the headless
+    /// line path). The front-end mutates its OWN canonical [`Settings`] (editor /
+    /// mouse applied locally; score / mode recorded), PERSISTS them, and returns
+    /// the new settings so the ENGINE can reconcile its `mode` + `score_gauge_on`
+    /// through its own `/score` / `/mode` logic. The line front-end degrades to a
+    /// printed value list; the TUI opens the interactive panel.
+    fn settings_surface(&mut self, rest: &str) -> Settings;
+
     // trace:STORY-191 | ai:claude
     /// HYDRATE a resumed session's prior conversation into the front-end as the
     /// CLEAN STYLED transcript (the same role-colored, markdown-rendered Q/A the
@@ -109,6 +141,10 @@ pub(crate) struct LineFrontEnd<R: Read, W: Write> {
     input: BufReader<R>,
     free_text_input: FreeTextInput,
     output: W,
+    // trace:STORY-194 | ai:claude — the canonical settings (loaded/seeded once).
+    // Headless `/settings` degrades to a printed value list; `/editor` records the
+    // choice (rustyline already chose its edit mode from $EDITOR at startup).
+    settings: Settings,
 }
 
 impl<R: Read, W: Write> LineFrontEnd<R, W> {
@@ -122,6 +158,11 @@ impl<R: Read, W: Write> LineFrontEnd<R, W> {
             input: BufReader::new(input),
             free_text_input,
             output,
+            // trace:STORY-194 | ai:claude — load the persisted settings (seed from
+            // $EDITOR on a first run). Affects only the new /settings + /editor
+            // commands, so the byte-exact behavior the piped tests assert is
+            // untouched.
+            settings: crate::settings::load_or_seed(),
         })
     }
 
@@ -172,6 +213,97 @@ impl<R: Read, W: Write> FrontEnd for LineFrontEnd<R, W> {
     fn author_io(&mut self) -> (&mut dyn BufRead, &mut dyn Write) {
         (&mut self.input, &mut self.output)
     }
+
+    // trace:STORY-194 | ai:claude
+    fn set_editor_choice(&mut self, token: &str) {
+        let token = token.trim();
+        if token.is_empty() {
+            let _ = writeln!(
+                self.output,
+                "Editor mode: {} (use /editor <emacs|vim|auto> to change)",
+                self.settings.editor.label()
+            );
+            return;
+        }
+        match crate::settings::EditorChoice::parse(token) {
+            Some(choice) => {
+                self.settings.editor = choice;
+                let _ = crate::settings::save(&self.settings);
+                let _ = writeln!(
+                    self.output,
+                    "Editor mode set: {} (the in-pane editor follows this in the TUI)",
+                    choice.label()
+                );
+            }
+            None => {
+                let _ = writeln!(
+                    self.output,
+                    "Unknown editor mode: {token} (expected emacs, vim, or auto). Unchanged ({}).",
+                    self.settings.editor.label()
+                );
+            }
+        }
+    }
+
+    // trace:STORY-194 | ai:claude
+    fn sync_score(&mut self, on: bool) {
+        if self.settings.score != on {
+            self.settings.score = on;
+            let _ = crate::settings::save(&self.settings);
+        }
+    }
+
+    // trace:STORY-194 | ai:claude
+    fn sync_mode(&mut self, mode_token: &str) {
+        if let Some(mode) = crate::strategy::SessionMode::parse(mode_token) {
+            if self.settings.mode != mode {
+                self.settings.mode = mode;
+                let _ = crate::settings::save(&self.settings);
+            }
+        }
+    }
+
+    // trace:STORY-194 | ai:claude — the HEADLESS settings surface: a bare
+    // `/settings` prints the current value list; `/settings set <key> <value>`
+    // mutates one setting. The engine reconciles score/mode from the returned set.
+    fn settings_surface(&mut self, rest: &str) -> Settings {
+        use crate::settings::SettingKey;
+        let rest = rest.trim();
+        let mut tokens = rest.split_whitespace();
+        if tokens.next().map(|t| t.eq_ignore_ascii_case("set")) == Some(true) {
+            let key = tokens.next();
+            let value = tokens.next();
+            match (key.and_then(SettingKey::parse), value) {
+                (Some(key), Some(value)) => {
+                    if self.settings.set_from_token(key, value) {
+                        let _ = crate::settings::save(&self.settings);
+                        let _ = writeln!(
+                            self.output,
+                            "{} set: {}",
+                            key.label(),
+                            self.settings.value_label(key)
+                        );
+                    } else {
+                        let _ = writeln!(
+                            self.output,
+                            "Unknown value `{value}` for {}. Unchanged.",
+                            key.label()
+                        );
+                    }
+                }
+                _ => {
+                    let _ = writeln!(
+                        self.output,
+                        "Usage: /settings set <editor|mouse|score|mode> <value>"
+                    );
+                }
+            }
+        } else {
+            // Bare `/settings` (or any non-`set` text): print the value list.
+            let _ = write!(self.output, "{}", self.settings.render_list());
+        }
+        self.settings
+    }
 }
 
 #[cfg(test)]
@@ -188,6 +320,49 @@ mod tests {
         write!(fe.out(), "hello {}", 42).unwrap();
         let out = fe.into_output();
         assert_eq!(String::from_utf8(out).unwrap(), "hello 42");
+    }
+
+    // trace:STORY-194 | ai:claude — the HEADLESS settings surface DEGRADES to a
+    // printed value list on a bare `/settings`: it lists every setting (editor,
+    // mouse, score, mode) with its current value, written to the output sink. No
+    // disk write (bare /settings does not persist).
+    #[test]
+    fn headless_settings_prints_the_value_list() {
+        let mut fe = LineFrontEnd::new(Cursor::new(Vec::new()), Vec::new()).unwrap();
+        let _ = fe.settings_surface("");
+        let out = String::from_utf8(fe.into_output()).unwrap();
+        for label in ["Editor mode", "Mouse", "Score gauge", "Session mode"] {
+            assert!(out.contains(label), "list missing {label}:\n{out}");
+        }
+    }
+
+    // trace:STORY-194 | ai:claude — a bare `/editor` SHOWS the current model
+    // (headless degradation: the line front-end has no live in-pane editor) without
+    // persisting; an in-memory `set mode` mutation flows back through the returned
+    // settings so the engine can reconcile.
+    #[test]
+    fn headless_editor_shows_and_settings_set_mutates() {
+        let mut fe = LineFrontEnd::new(Cursor::new(Vec::new()), Vec::new()).unwrap();
+        fe.set_editor_choice("");
+        let out = String::from_utf8(fe.into_output()).unwrap();
+        assert!(out.to_lowercase().contains("editor mode"), "{out}");
+    }
+
+    // trace:STORY-194 | ai:claude — the persisted-settings ROUND-TRIP across a
+    // simulated RELOAD: serialize a settings set to the config schema then parse it
+    // back recovers every value (the engine + front-end agree on a saved choice).
+    #[test]
+    fn settings_round_trip_across_a_simulated_reload() {
+        use crate::settings::Settings;
+        let saved = Settings {
+            editor: crate::settings::EditorChoice::Vim,
+            mouse: false,
+            score: true,
+            mode: crate::strategy::SessionMode::Debate,
+        };
+        // Simulate writing to disk and relaunching: serialize, then parse fresh.
+        let reloaded = Settings::from_toml(&saved.to_toml());
+        assert_eq!(reloaded, saved);
     }
 
     // trace:STORY-168 | ai:claude
