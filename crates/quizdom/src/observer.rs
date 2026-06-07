@@ -236,6 +236,86 @@ pub fn structural_reading(exchange: &Exchange) -> ExchangeReading {
     }
 }
 
+// trace:STORY-159 | ai:claude
+/// The Observer's proposal that a thesis has crystallized and could become the
+/// session GOAL. Belief-neutral: `goal` is the QUESTION/claim the exploration is
+/// settling (e.g. "can libertarian free will be held consistently?"), never a
+/// belief to adopt. The session offers it to the user, who accepts or declines —
+/// the Observer proposes, it never imposes.
+#[derive(Debug, Clone, Eq, PartialEq)]
+pub struct GoalProposal {
+    /// The proposed goal/thesis, phrased belief-neutrally as the question being
+    /// resolved.
+    pub goal: String,
+    /// A short belief-neutral rationale for why this thesis seems to be the one
+    /// the session is circling.
+    pub rationale: String,
+}
+
+/// System prompt pinning the goal-proposal step to its belief-neutral contract.
+/// The Observer reads the arc so far and, IF a single thesis has clearly
+/// crystallized, names it as a QUESTION to settle — never a belief to advocate.
+const GOAL_PROPOSAL_SYSTEM_PROMPT: &str = "You are quizdom's Observer proposing a session GOAL. You are STRICTLY belief-neutral. Read the positions the user has taken so far and decide whether a single THESIS has crystallized — one underlying claim or question the whole exploration is circling. If (and only if) one has, propose it as the session goal, phrased as the QUESTION being resolved (e.g. \"can libertarian free will be held consistently?\"), NEVER as a belief to adopt and NEVER asserting which answer is correct. If no single thesis has crystallized yet, decline. Stay descriptive: you propose the question, the user decides.";
+
+/// Build the goal-proposal prompt from the positions taken so far.
+fn goal_proposal_prompt(positions: &[String]) -> String {
+    let mut prompt = String::from("Positions the user has taken so far:\n");
+    for position in positions {
+        prompt.push_str(&format!("- {position}\n"));
+    }
+    prompt.push_str(
+        "\nReturn only JSON: {\"crystallized\":true|false,\"goal\":\"the thesis as a belief-neutral QUESTION to settle\",\"rationale\":\"short neutral reason\"}. Set crystallized=false (and leave goal empty) unless a single clear thesis has emerged. The goal MUST be phrased as a question being resolved, never a belief to adopt.",
+    );
+    prompt
+}
+
+/// Ask the Observer whether a thesis has crystallized into a proposable session
+/// goal, given the user's recorded `positions`. Returns `Some(GoalProposal)`
+/// only when the model reports a crystallized thesis with a non-empty goal;
+/// `None` otherwise — including offline / malformed responses, where no goal is
+/// fabricated (the session simply stays free-flowing).
+pub fn propose_goal<C: LLMClient>(client: &C, positions: &[String]) -> Option<GoalProposal> {
+    if positions.is_empty() {
+        return None;
+    }
+    let prompt = goal_proposal_prompt(positions);
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_time()
+        .build()
+        .ok()?;
+    let (text, _tool_calls) = runtime
+        .block_on(client.call(GOAL_PROPOSAL_SYSTEM_PROMPT, &[Message::user(prompt)], &[]))
+        .ok()?;
+    parse_goal_proposal(&text)
+}
+
+/// Parse the goal-proposal JSON. Returns `None` unless `crystallized` is true and
+/// `goal` is a non-empty string, so a hedging or malformed response never yields
+/// a fabricated goal.
+pub fn parse_goal_proposal(text: &str) -> Option<GoalProposal> {
+    let value: Value = serde_json::from_str(text.trim()).ok()?;
+    if !value
+        .get("crystallized")
+        .and_then(Value::as_bool)
+        .unwrap_or(false)
+    {
+        return None;
+    }
+    let goal = value
+        .get("goal")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|goal| !goal.is_empty())?
+        .to_string();
+    let rationale = value
+        .get("rationale")
+        .and_then(Value::as_str)
+        .unwrap_or("")
+        .trim()
+        .to_string();
+    Some(GoalProposal { goal, rationale })
+}
+
 /// The first sentence (or the whole string if it has no terminator), trimmed,
 /// used to keep the structural note compact without echoing a long prompt.
 fn first_sentence(text: &str) -> String {
@@ -384,5 +464,68 @@ mod tests {
         exchange.answer = String::new();
         let reading = structural_reading(&exchange);
         assert!(reading.mismatch.contains("no answer recorded yet"));
+    }
+
+    // ---- STORY-159: Observer-proposed goal ---------------------------------
+
+    fn positions() -> Vec<String> {
+        vec![
+            "On \"Is free will real?\": yes".to_string(),
+            "On \"Can a caused choice be free?\": no".to_string(),
+        ]
+    }
+
+    #[test]
+    fn proposes_a_goal_when_a_thesis_has_crystallized() {
+        // trace:STORY-159 | ai:claude
+        let client = MockClient::ok(
+            r#"{"crystallized":true,"goal":"can libertarian free will be held consistently?","rationale":"the user keeps circling whether uncaused choice survives causation"}"#,
+        );
+        let proposal = propose_goal(&client, &positions()).expect("a crystallized thesis");
+        assert_eq!(
+            proposal.goal,
+            "can libertarian free will be held consistently?"
+        );
+        assert!(proposal.rationale.contains("causation"));
+        // The prompt pins belief-neutrality: a QUESTION to settle, not a belief.
+        let prompt = client.last_prompt.borrow().clone().unwrap();
+        assert!(prompt.contains("belief-neutral QUESTION"));
+        assert!(prompt.contains("On \"Is free will real?\": yes"));
+    }
+
+    #[test]
+    fn declines_when_no_thesis_has_crystallized() {
+        // trace:STORY-159 | ai:claude — crystallized=false yields no goal, so the
+        // session stays free-flowing rather than being handed a fabricated thesis.
+        let client =
+            MockClient::ok(r#"{"crystallized":false,"goal":"","rationale":"still wandering"}"#);
+        assert!(propose_goal(&client, &positions()).is_none());
+    }
+
+    #[test]
+    fn declines_when_crystallized_but_goal_is_empty() {
+        // A crystallized flag with no goal text is not a usable proposal.
+        let client = MockClient::ok(r#"{"crystallized":true,"goal":"   "}"#);
+        assert!(propose_goal(&client, &positions()).is_none());
+    }
+
+    #[test]
+    fn no_proposal_with_no_positions() {
+        // Nothing recorded yet → no thesis can have crystallized; never calls out.
+        let client = MockClient::ok(r#"{"crystallized":true,"goal":"a thesis"}"#);
+        assert!(propose_goal(&client, &[]).is_none());
+    }
+
+    #[test]
+    fn declines_offline_or_on_malformed_response() {
+        // trace:STORY-159 | ai:claude — offline / junk degrades to no proposal.
+        assert!(propose_goal(&MockClient::err(), &positions()).is_none());
+        assert!(propose_goal(&MockClient::ok("not json"), &positions()).is_none());
+    }
+
+    #[test]
+    fn parse_goal_proposal_requires_crystallized_true() {
+        assert!(parse_goal_proposal(r#"{"goal":"x"}"#).is_none());
+        assert!(parse_goal_proposal(r#"{"crystallized":true,"goal":"x"}"#).is_some());
     }
 }

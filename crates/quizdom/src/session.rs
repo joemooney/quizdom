@@ -65,6 +65,12 @@ pub(crate) struct CliConfig {
     pub(crate) strategy: StrategyKind,
     pub(crate) strategy_provided: bool,
     pub(crate) llm_backend: LlmBackendKind,
+    // trace:STORY-159 | ai:claude
+    /// The session GOAL/thesis set at start via `--goal <text>` (one of the
+    /// three ways a goal can be set — the other two are the in-session command
+    /// and the Observer proposal, handled in the loop). `None` means the session
+    /// starts free-flowing. Belief-neutral: the claim/question being resolved.
+    pub(crate) goal: Option<String>,
 }
 
 #[derive(Debug, Clone, Copy, Eq, PartialEq)]
@@ -105,6 +111,8 @@ impl CliConfig {
         let mut strategy = env_strategy();
         let mut strategy_provided = false;
         let mut llm_backend = env_llm_backend();
+        // trace:STORY-159 | ai:claude
+        let mut goal = None;
         let mut args = args.into_iter().peekable();
 
         if matches!(args.peek().map(String::as_str), Some("session")) {
@@ -149,6 +157,10 @@ impl CliConfig {
                     log_path_provided = true;
                 }
                 "--branch" => branch_id = next_arg(&mut args, "--branch")?,
+                // trace:STORY-159 | ai:claude — the `--goal <text>` flag sets the
+                // session goal at start (way 1 of 3). An empty value is rejected
+                // by `next_arg`, so a bare `--goal` is a usage error.
+                "--goal" => goal = Some(next_arg(&mut args, "--goal")?),
                 "--proposition" => proposition = Some(next_arg(&mut args, "--proposition")?),
                 "--agree-seed" => agree_seed = Some(next_arg(&mut args, "--agree-seed")?),
                 "--disagree-seed" => disagree_seed = Some(next_arg(&mut args, "--disagree-seed")?),
@@ -188,6 +200,7 @@ impl CliConfig {
             strategy,
             strategy_provided,
             llm_backend,
+            goal,
         })
     }
 }
@@ -297,6 +310,7 @@ fn usage() -> String {
         "",
         "Options:",
         "  --seed Q-23                         Seed question for start",
+        "  --goal text                         Goal/thesis to orient the session",
         "  --branch main                       Session branch to read/write",
         "  --strategy deterministic|weighted|llm  Follow-up selection strategy",
         "  --user local-user                   User id for session logs",
@@ -413,15 +427,25 @@ pub(crate) fn resolve_resume_config(mut config: CliConfig) -> Result<CliConfig> 
             if let Some(llm_backend) = metadata.llm_backend {
                 config.llm_backend = llm_backend;
             }
+            // trace:STORY-159 | ai:claude — restore the goal so a resumed session
+            // keeps orienting toward the same thesis. An explicit `--goal` on the
+            // resume command still wins (handled below).
+            if config.goal.is_none() {
+                config.goal = metadata.goal;
+            }
         }
     }
     Ok(config)
 }
 
-#[derive(Debug, Clone, Copy, Eq, PartialEq)]
+#[derive(Debug, Clone, Eq, PartialEq)]
 struct SessionStrategyMetadata {
     strategy: StrategyKind,
     llm_backend: Option<LlmBackendKind>,
+    // trace:STORY-159 | ai:claude — the goal set at start, restored on resume so
+    // a resumed session keeps orienting toward the same thesis without re-passing
+    // `--goal`. The most recent `goal_set` event (if any) overrides this.
+    goal: Option<String>,
 }
 
 impl SessionStrategyMetadata {
@@ -435,6 +459,12 @@ impl SessionStrategyMetadata {
 
     fn from_reader(reader: impl Read, branch_id: &str) -> Result<Option<Self>> {
         let reader = BufReader::new(reader);
+        // trace:STORY-159 | ai:claude — the strategy/backend come from the start
+        // event, but the goal can be UPDATED in-session (a `goal_set` event), so
+        // the whole branch is scanned and the most recent goal wins. The start
+        // event still gates whether any metadata is returned at all.
+        let mut started: Option<Self> = None;
+        let mut latest_goal: Option<String> = None;
         for line in reader.lines() {
             let line = line?;
             if line.trim().is_empty() {
@@ -445,22 +475,45 @@ impl SessionStrategyMetadata {
             if event_branch(&value) != branch_id {
                 continue;
             }
-            if value.get("event_type").and_then(Value::as_str) != Some("session_started") {
-                continue;
-            }
-            let Some(strategy_value) = value.get("strategy").and_then(Value::as_str) else {
-                return Ok(None);
-            };
-            let strategy = parse_strategy(strategy_value)?;
-            let llm_backend = value
-                .get("llm_backend")
+            let goal_field = value
+                .get("goal")
                 .and_then(Value::as_str)
-                .map(parse_llm_backend)
-                .transpose()?;
-            return Ok(Some(Self {
-                strategy,
-                llm_backend,
-            }));
+                .map(str::trim)
+                .filter(|goal| !goal.is_empty())
+                .map(str::to_string);
+            match value.get("event_type").and_then(Value::as_str) {
+                Some("session_started") => {
+                    let Some(strategy_value) = value.get("strategy").and_then(Value::as_str) else {
+                        return Ok(None);
+                    };
+                    let strategy = parse_strategy(strategy_value)?;
+                    let llm_backend = value
+                        .get("llm_backend")
+                        .and_then(Value::as_str)
+                        .map(parse_llm_backend)
+                        .transpose()?;
+                    if let Some(goal) = goal_field.clone() {
+                        latest_goal = Some(goal);
+                    }
+                    started = Some(Self {
+                        strategy,
+                        llm_backend,
+                        goal: None,
+                    });
+                }
+                // trace:STORY-159 | ai:claude — an in-session / Observer-proposed
+                // goal logged after start; the most recent one wins.
+                Some("goal_set") => {
+                    if let Some(goal) = goal_field {
+                        latest_goal = Some(goal);
+                    }
+                }
+                _ => {}
+            }
+        }
+        if let Some(mut metadata) = started {
+            metadata.goal = latest_goal;
+            return Ok(Some(metadata));
         }
         Ok(None)
     }
@@ -650,6 +703,19 @@ impl ObserverEngine {
             Self::Offline => structural_synopsis(arc),
         }
     }
+
+    // trace:STORY-159 | ai:claude
+    /// Ask the Observer whether a thesis has crystallized into a proposable
+    /// session goal, from the `positions` recorded so far. Returns `None` offline
+    /// (no LLM to detect a crystallized thesis) — the session stays free-flowing
+    /// rather than fabricating a goal. The GOAL-proposal counterpart to [`read`].
+    fn propose_goal(&self, positions: &[String]) -> Option<crate::observer::GoalProposal> {
+        match self {
+            Self::ClaudeCli(client) => crate::observer::propose_goal(client, positions),
+            Self::Anthropic(client) => crate::observer::propose_goal(client, positions),
+            Self::Offline => None,
+        }
+    }
 }
 
 // trace:STORY-128 | ai:claude
@@ -717,6 +783,137 @@ fn prompt_to_conclude(
         None => return Ok(false),
     };
     Ok(matches!(choice.as_str(), "c" | "conclude" | "y" | "yes"))
+}
+
+// trace:STORY-159 | ai:claude
+/// Apply an in-session goal command. A non-empty `text` SETS the live goal and
+/// logs a `goal_set` event (so resume restores it and the arc/synopsis orient to
+/// it); a bare `/goal` (empty `text`) just SHOWS the current goal without
+/// changing it — a goal is never cleared, only replaced. `source` records who
+/// set it (`"user"` for the command, `"observer"` for an accepted proposal).
+/// Belief-neutral throughout: the goal is the question being settled.
+fn set_goal_in_session(
+    goal: &mut Option<String>,
+    text: &str,
+    source: &str,
+    config: &CliConfig,
+    logger: &mut SessionLogger,
+    turn: u64,
+    output: &mut impl Write,
+) -> Result<()> {
+    let text = text.trim();
+    if text.is_empty() {
+        match goal.as_deref() {
+            Some(current) => writeln!(output, "Current goal: {current}")?,
+            None => writeln!(
+                output,
+                "No goal set yet — state one with `/goal <the question you're resolving>`."
+            )?,
+        }
+        return Ok(());
+    }
+    *goal = Some(text.to_string());
+    logger.goal_set(
+        &config.session_id,
+        &config.user_id,
+        &config.branch_id,
+        turn,
+        text,
+        source,
+    )?;
+    writeln!(
+        output,
+        "Goal set: {text}\n(Questions and the roundedness score now orient toward resolving it.)"
+    )?;
+    Ok(())
+}
+
+// trace:STORY-159 | ai:claude
+/// When no goal is set yet, ask the Observer whether a thesis has crystallized
+/// and, if so, OFFER it as the session goal. The user decides (agency: the
+/// default is to keep exploring free-flowing). Accepting sets the goal exactly as
+/// the `/goal` command would (logged `source:"observer"`). Degrades gracefully:
+/// offline / no crystallized thesis / EOF prompt → no goal is set, the session
+/// stays free-flowing. Belief-neutral: the proposed goal is a QUESTION to settle,
+/// never a belief to adopt.
+#[allow(clippy::too_many_arguments)]
+fn maybe_propose_goal(
+    goal: &mut Option<String>,
+    observer: &ObserverEngine,
+    arc: &SessionArc,
+    config: &CliConfig,
+    logger: &mut SessionLogger,
+    turn: u64,
+    input: &mut impl BufRead,
+    free_text_input: &mut FreeTextInput,
+    output: &mut impl Write,
+) -> Result<()> {
+    // Only propose when free-flowing — a session that already has a goal does not
+    // get nagged with another.
+    if goal.is_some() {
+        return Ok(());
+    }
+    let positions: Vec<String> = arc
+        .turns
+        .iter()
+        .filter(|turn| !turn.position.is_empty())
+        .map(|turn| {
+            if turn.question.is_empty() {
+                turn.position.clone()
+            } else {
+                format!("On \"{}\": {}", turn.question, turn.position)
+            }
+        })
+        .collect();
+    let proposal = {
+        let _spinner = crate::spinner::Spinner::start("reading for a thesis");
+        observer.propose_goal(&positions)
+    };
+    let Some(proposal) = proposal else {
+        return Ok(());
+    };
+    writeln!(
+        output,
+        "\n{}",
+        crate::style::paint(
+            crate::style::meta(),
+            &format!(
+                "META (observer) — it sounds like you're trying to settle: {}",
+                proposal.goal
+            )
+        )
+    )?;
+    if !proposal.rationale.trim().is_empty() {
+        writeln!(
+            output,
+            "{}",
+            crate::style::paint(
+                crate::style::meta(),
+                &format!("  Why: {}", proposal.rationale.trim())
+            )
+        )?;
+    }
+    let prompt = "Make that the session goal? [y]es / [k]eep exploring (default keep): ";
+    let accepted = match free_text_input.read_line(input, output, prompt)? {
+        Some(line) => matches!(
+            line.trim().to_ascii_lowercase().as_str(),
+            "y" | "yes" | "g" | "goal"
+        ),
+        // EOF / non-TTY: never set a goal on the user's behalf.
+        None => false,
+    };
+    if accepted {
+        set_goal_in_session(
+            goal,
+            &proposal.goal,
+            "observer",
+            config,
+            logger,
+            turn,
+            output,
+        )?;
+    }
+    Ok(())
 }
 
 // trace:STORY-127 | ai:claude
@@ -975,6 +1172,14 @@ fn run_session_from_current(
     // (`write_start_event == false`) already carry prior answers, so they are
     // meaningful even when the resumed run adds nothing.
     let mut answer_recorded = false;
+    // trace:STORY-159 | ai:claude
+    // The live session GOAL/thesis. Seeded from `--goal` / the resumed start
+    // (config.goal) and updated in-session by the `/goal` command or an accepted
+    // Observer proposal. When set it ORIENTS the next-question prompt (via
+    // StrategyContext) and the roundedness score (via the arc), and shows in the
+    // breadcrumb. `None` = free-flowing. Belief-neutral: the question being
+    // resolved, never a belief.
+    let mut goal: Option<String> = config.goal.clone();
     let mut current = bank.load_question(&config.seed)?;
     let mut settled_terms = Vec::new();
     let mut surfaced_contradictions = BTreeSet::new();
@@ -998,6 +1203,8 @@ fn run_session_from_current(
             &current.id,
             config.strategy,
             config.llm_backend,
+            // trace:STORY-159 | ai:claude
+            config.goal.as_deref(),
         )?;
     }
 
@@ -1036,7 +1243,15 @@ fn run_session_from_current(
                 // user deep in a long session always sees current topic, how far
                 // they've explored (depth = answered questions so far on this
                 // path), and which branch they're on.
-                render_breadcrumb(&current, recent_path.len(), &config.branch_id, output)?;
+                // trace:STORY-159 | ai:claude — surface the live goal in the
+                // breadcrumb so the user always sees the thesis being resolved.
+                render_breadcrumb(
+                    &current,
+                    recent_path.len(),
+                    &config.branch_id,
+                    goal.as_deref(),
+                    output,
+                )?;
                 let probed_terms = load_probed_terms(bank, &current);
                 if let Some(settled) = settled_definition_for(&probed_terms, &settled_terms) {
                     render_settled_term_definition(settled, output)?;
@@ -1141,6 +1356,26 @@ fn run_session_from_current(
                         // (or any non-conclude path / offline) just re-presents the
                         // SAME question and keeps exploring.
                         if let Some((synopsis, arc)) = rendered {
+                            // trace:STORY-159 | ai:claude
+                            // OBSERVER-PROPOSED goal (way 3 of 3): if the session
+                            // is still free-flowing, let the Observer read the arc
+                            // and OFFER a goal when a thesis has crystallized. The
+                            // user decides; declining keeps exploring. Offered
+                            // before the conclude prompt so a goal can orient the
+                            // remaining exploration.
+                            if goal.is_none() {
+                                maybe_propose_goal(
+                                    &mut goal,
+                                    &observer,
+                                    &arc,
+                                    config,
+                                    &mut logger,
+                                    answered_turn,
+                                    &mut input,
+                                    &mut free_text_input,
+                                    output,
+                                )?;
+                            }
                             if synopsis.offers_conclude()
                                 && prompt_to_conclude(&mut input, &mut free_text_input, output)?
                             {
@@ -1160,6 +1395,29 @@ fn run_session_from_current(
                         continue;
                     }
                     AnswerInput::Forward => continue,
+                    AnswerInput::Goal(text) => {
+                        // trace:STORY-159 | ai:claude
+                        // In-session goal (way 2 of 3): the user states the
+                        // thesis. A non-empty text SETS the goal — logged as a
+                        // `goal_set` event (so resume restores it and the arc /
+                        // synopsis orient to it) — then the SAME question is
+                        // re-presented, now oriented toward the goal. A bare
+                        // `/goal` (empty text) just SHOWS the current goal; it
+                        // never clears one (agency: a goal is removed only by
+                        // setting a new one). Non-destructive: nothing else
+                        // changes. Belief-neutral: the goal is the question being
+                        // settled, never a belief.
+                        set_goal_in_session(
+                            &mut goal,
+                            &text,
+                            "user",
+                            config,
+                            &mut logger,
+                            answered_turn,
+                            output,
+                        )?;
+                        continue;
+                    }
                     AnswerInput::End => {
                         // trace:STORY-80 | ai:claude
                         ended_at_frontier = true;
@@ -1242,6 +1500,8 @@ fn run_session_from_current(
                     let context = StrategyContext {
                         answer: answer.clone(),
                         recent_path: recent_path.clone(),
+                        // trace:STORY-159 | ai:claude — orient toward the goal.
+                        goal: goal.clone(),
                     };
                     match dead_end_menu(
                         bank,
@@ -1326,6 +1586,9 @@ fn run_session_from_current(
         let context = StrategyContext {
             answer: answer.clone(),
             recent_path: recent_path.clone(),
+            // trace:STORY-159 | ai:claude — the next-question selection orients
+            // toward the live goal so questions aim at resolving it.
+            goal: goal.clone(),
         };
 
         // trace:BUG-100 | ai:claude
@@ -1575,11 +1838,15 @@ fn ask_contradiction_follow_up(
         // trace:STORY-128 | ai:claude — and the synopsis control: this transient
         // runtime prompt has no observer engine in scope, so a stray `S` here is
         // a no-op rather than a whole-session reading.
+        // trace:STORY-159 | ai:claude — likewise the goal command: this transient
+        // runtime contradiction prompt has no goal state in scope, so a stray
+        // `/goal` here is a no-op rather than re-orienting mid-resolution.
         AnswerInput::Add
         | AnswerInput::Back
         | AnswerInput::Forward
         | AnswerInput::Observe
-        | AnswerInput::Synopsis => Ok(false),
+        | AnswerInput::Synopsis
+        | AnswerInput::Goal(_) => Ok(false),
     }
 }
 
@@ -1854,6 +2121,11 @@ fn browse_answered_path(
                 )?;
                 continue;
             }
+            // trace:STORY-159 | ai:claude — the goal command is frontier-only in
+            // effect: the review pane re-walks the saved path, so a stray `/goal`
+            // here is a no-op rather than re-orienting from inside review. (The
+            // goal is set at the frontier, where it can orient the next question.)
+            AnswerInput::Goal(_) => continue,
             AnswerInput::End => return Ok(ReviewOutcome::End),
         }
     }
@@ -1987,6 +2259,9 @@ fn resume_session_with_term_persister(
             normalized: last.normalized_answer.clone(),
         },
         recent_path: prior_path.clone(),
+        // trace:STORY-159 | ai:claude — a resumed session keeps orienting toward
+        // its restored goal when auto-continuing a terminal saved path.
+        goal: config.goal.clone(),
     };
 
     let auto = {
@@ -2389,6 +2664,7 @@ impl SessionLogger {
         Ok(Self { file, next_event })
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn session_started(
         &mut self,
         session_id: &str,
@@ -2397,6 +2673,9 @@ impl SessionLogger {
         seed_question_ref: &str,
         strategy: StrategyKind,
         llm_backend: LlmBackendKind,
+        // trace:STORY-159 | ai:claude — the goal set at start (`--goal`), recorded
+        // so resume can restore it and the arc/synopsis can orient to it.
+        goal: Option<&str>,
     ) -> Result<()> {
         let event_id = self.event_id();
         let llm_backend_value = (strategy == StrategyKind::Llm).then(|| llm_backend.as_str());
@@ -2414,6 +2693,35 @@ impl SessionLogger {
             "strategy": strategy.as_str(),
             "llm_backend": llm_backend_value,
             "llm_model": llm_model,
+            "goal": goal,
+        }))
+    }
+
+    // trace:STORY-159 | ai:claude
+    /// Record a goal set (or changed) IN-SESSION — via the `/goal` command or an
+    /// accepted Observer proposal. The most recent `goal_set` event is what the
+    /// arc/synopsis and resume restore read, so this is how an in-session goal
+    /// overrides a `--goal` flag (or a free-flowing start).
+    fn goal_set(
+        &mut self,
+        session_id: &str,
+        user_id: &str,
+        branch_id: &str,
+        turn: u64,
+        goal: &str,
+        source: &str,
+    ) -> Result<()> {
+        let event_id = self.event_id();
+        self.write(json!({
+            "event_id": event_id,
+            "event_type": "goal_set",
+            "occurred_at": Utc::now().to_rfc3339(),
+            "session_id": session_id,
+            "user_id": user_id,
+            "branch_id": branch_id,
+            "turn": turn,
+            "goal": goal,
+            "source": source,
         }))
     }
 

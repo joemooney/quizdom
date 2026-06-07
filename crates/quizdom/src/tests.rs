@@ -1475,9 +1475,10 @@ fn renders_all_question_kinds() {
         // same control set as the single-key prompt, expressed as slash-commands.
         // trace:STORY-127 | ai:claude — `/observe` joins the advertised set.
         // trace:STORY-128 | ai:claude — `/synopsis` joins the advertised set.
+        // trace:STORY-159 | ai:claude — `/goal` joins the advertised set.
         (
             AnswerKind::FreeText,
-            "Answer in your own words, or /observe /synopsis /explore /add /punt /back /quit",
+            "Answer in your own words, or /observe /synopsis /goal /explore /add /punt /back /quit",
         ),
     ];
 
@@ -2393,6 +2394,94 @@ fn bare_resume_keeps_latest_session_resolution() {
     assert!(!config.session_id_provided);
 }
 
+// ---- STORY-159: session goal/focus -------------------------------------
+
+// trace:STORY-159 | ai:claude — way 1 of 3: the `--goal <text>` flag sets the
+// goal at start.
+#[test]
+fn goal_flag_sets_the_session_goal_at_start() {
+    let config = CliConfig::parse([
+        "session".to_string(),
+        "start".to_string(),
+        "--goal".to_string(),
+        "can libertarian free will be held consistently?".to_string(),
+    ])
+    .unwrap();
+    assert_eq!(
+        config.goal.as_deref(),
+        Some("can libertarian free will be held consistently?")
+    );
+}
+
+// trace:STORY-159 | ai:claude — a bare `--goal` with no value is a usage error
+// (an empty goal would orient nothing).
+#[test]
+fn bare_goal_flag_without_a_value_is_a_usage_error() {
+    let error = CliConfig::parse(["session".to_string(), "--goal".to_string()]).unwrap_err();
+    assert!(matches!(error, QuizdomError::Usage(_)));
+}
+
+// trace:STORY-159 | ai:claude — a free-flowing session carries no goal.
+#[test]
+fn start_without_goal_flag_is_free_flowing() {
+    let config = CliConfig::parse(["session".to_string(), "start".to_string()]).unwrap();
+    assert!(config.goal.is_none());
+}
+
+// trace:STORY-159 | ai:claude — way 2 of 3: the in-session `/goal <text>`
+// command. Recognized in leading `/goal` and bare `goal` keyword forms, casing
+// of the goal text preserved; a mid-answer mention of "goal" is NOT a command.
+#[test]
+fn goal_command_parses_the_in_session_form() {
+    assert_eq!(
+        goal_command_text("/goal is determinism true?").as_deref(),
+        Some("is determinism true?")
+    );
+    assert_eq!(
+        goal_command_text("/GOAL  Is Free Will Real?").as_deref(),
+        Some("Is Free Will Real?")
+    );
+    assert_eq!(
+        goal_command_text("goal settle compatibilism").as_deref(),
+        Some("settle compatibilism")
+    );
+    // Bare `/goal` (no text) carries an empty string — the session reads it as
+    // "show the current goal", never as a command to clear one.
+    assert_eq!(goal_command_text("/goal").as_deref(), Some(""));
+    assert_eq!(goal_command_text("goal").as_deref(), Some(""));
+    // A free-text answer that merely contains "goal" mid-sentence is an answer,
+    // not a command.
+    assert!(goal_command_text("my goal is happiness").is_none());
+    assert!(goal_command_text("yes").is_none());
+}
+
+// trace:STORY-159 | ai:claude — once a goal is set, the breadcrumb shows it so
+// the user always sees the thesis they are orienting toward; free-flowing
+// sessions omit the segment.
+#[test]
+fn breadcrumb_shows_the_goal_when_set() {
+    let question = question_with_tags(
+        "Q-1",
+        70,
+        AnswerKind::YesNo,
+        ["topic:free-will", "answer:yes-no", "weight:70"],
+    );
+    assert_eq!(
+        breadcrumb_line(&question, 2, "main", Some("is free will real?")),
+        "[topic: free will | depth: 2 | branch: main | goal: is free will real?]"
+    );
+    // No goal → no goal segment.
+    assert_eq!(
+        breadcrumb_line(&question, 2, "main", None),
+        "[topic: free will | depth: 2 | branch: main]"
+    );
+    // A blank goal is treated as no goal.
+    assert_eq!(
+        breadcrumb_line(&question, 2, "main", Some("   ")),
+        "[topic: free will | depth: 2 | branch: main]"
+    );
+}
+
 // trace:BUG-70 | ai:codex
 #[test]
 fn session_help_lists_commands_flags_and_resume_examples() {
@@ -2518,6 +2607,43 @@ fn explicit_resume_strategy_overrides_logged_strategy() {
     let _ = fs::remove_file(path);
 }
 
+// trace:STORY-159 | ai:claude — a resumed session restores its goal (from the
+// start event, then the latest in-session `goal_set`) so it keeps orienting
+// toward the same thesis without re-passing `--goal`.
+#[test]
+fn resume_restores_the_goal_latest_wins() {
+    let path = std::env::temp_dir().join(format!(
+        "quizdom-story-159-resume-goal-{}.jsonl",
+        std::process::id()
+    ));
+    let _ = fs::remove_file(&path);
+    fs::write(
+        &path,
+        concat!(
+            r#"{"event_type":"session_started","branch_id":"main","strategy":"deterministic","goal":"is free will real?","session_id":"sess-test","user_id":"test-user","seed_question_ref":"Q-1"}"#,
+            "\n",
+            r#"{"event_type":"goal_set","branch_id":"main","turn":1,"goal":"can libertarian free will be held consistently?","source":"observer","session_id":"sess-test","user_id":"test-user"}"#,
+            "\n",
+        ),
+    )
+    .unwrap();
+    let config = CliConfig::parse([
+        "session".to_string(),
+        "resume".to_string(),
+        "--log".to_string(),
+        path.to_string_lossy().to_string(),
+    ])
+    .unwrap();
+
+    let resolved = resolve_resume_config(config).unwrap();
+    assert_eq!(
+        resolved.goal.as_deref(),
+        Some("can libertarian free will be held consistently?")
+    );
+
+    let _ = fs::remove_file(path);
+}
+
 #[test]
 fn start_end_resume_round_trip_replays_path_and_finishes() {
     let path = std::env::temp_dir().join(format!(
@@ -2546,6 +2672,7 @@ fn start_end_resume_round_trip_replays_path_and_finishes() {
         strategy: StrategyKind::Deterministic,
         strategy_provided: false,
         llm_backend: LlmBackendKind::ClaudeCli,
+        goal: None,
     };
     let mut start_output = Vec::new();
 
@@ -2847,6 +2974,7 @@ fn forked_agree_and_disagree_branches_are_recoverable_independently() {
         strategy: StrategyKind::Deterministic,
         strategy_provided: false,
         llm_backend: LlmBackendKind::ClaudeCli,
+        goal: None,
     };
     let mut fork_output = Vec::new();
     fork_session(&fork_config, &mut fork_output).unwrap();
@@ -3051,6 +3179,7 @@ fn test_config(path: &Path, seed: &str) -> CliConfig {
         strategy: StrategyKind::Deterministic,
         strategy_provided: false,
         llm_backend: LlmBackendKind::ClaudeCli,
+        goal: None,
     }
 }
 
@@ -3061,6 +3190,7 @@ fn strategy_context(raw: &str) -> StrategyContext {
             normalized: raw.to_string(),
         },
         recent_path: Vec::new(),
+        goal: None,
     }
 }
 
@@ -3716,11 +3846,11 @@ fn breadcrumb_line_shows_topic_depth_and_branch() {
     );
 
     assert_eq!(
-        breadcrumb_line(&question, 0, "main"),
+        breadcrumb_line(&question, 0, "main", None),
         "[topic: free will | depth: 0 | branch: main]"
     );
     assert_eq!(
-        breadcrumb_line(&question, 3, "agree"),
+        breadcrumb_line(&question, 3, "agree", None),
         "[topic: free will | depth: 3 | branch: agree]"
     );
 }
@@ -3738,7 +3868,7 @@ fn breadcrumb_line_falls_back_when_topic_tag_is_missing() {
     );
 
     assert_eq!(
-        breadcrumb_line(&untagged, 2, "main"),
+        breadcrumb_line(&untagged, 2, "main", None),
         "[topic: (general) | depth: 2 | branch: main]"
     );
 }
@@ -3755,7 +3885,7 @@ fn render_breadcrumb_is_plain_text_when_styling_disabled() {
     crate::style::set_enabled(false);
     let mut output = Vec::new();
 
-    render_breadcrumb(&question, 1, "disagree", &mut output).unwrap();
+    render_breadcrumb(&question, 1, "disagree", None, &mut output).unwrap();
 
     let rendered = String::from_utf8(output).unwrap();
     assert_eq!(
@@ -3812,6 +3942,107 @@ fn session_shows_orientation_breadcrumb_each_turn() {
     assert!(
         rendered.contains("[topic: meaning | depth: 1 | branch: agree]"),
         "follow-up turn breadcrumb missing in:\n{rendered}"
+    );
+
+    let _ = fs::remove_file(path);
+}
+
+// trace:STORY-159 | ai:claude
+// End-to-end: stating the goal in-session via `/goal <text>` records a
+// `goal_set` event AND re-orients the breadcrumb — the SAME question is
+// re-presented (non-destructive), now carrying the goal segment. Non-TTY safe.
+#[test]
+fn in_session_goal_command_sets_goal_and_shows_it_in_the_breadcrumb() {
+    let path = std::env::temp_dir().join(format!(
+        "quizdom-story-159-in-session-goal-{}.jsonl",
+        std::process::id()
+    ));
+    let _ = fs::remove_file(&path);
+    let bank = FakeBank::new([question_with_tags(
+        "Q-1",
+        70,
+        AnswerKind::YesNo,
+        ["topic:free-will", "answer:yes-no", "weight:70"],
+    )]);
+    let config = test_config(&path, "Q-1");
+    let mut output = Vec::new();
+
+    // First the `/goal` command (re-presents the seed), then answer the seed (so
+    // the session survives, STORY-81), then quit at the dead-end menu.
+    run_session(
+        &config,
+        &bank,
+        &DeterministicNextQuestionStrategy,
+        "/goal can libertarian free will be held consistently?\nyes\nq\n".as_bytes(),
+        &mut output,
+    )
+    .unwrap();
+
+    let rendered = String::from_utf8(output).unwrap();
+    // The seed shows free-flowing first, then again WITH the goal segment after
+    // the command set it.
+    assert!(
+        rendered.contains("[topic: free will | depth: 0 | branch: main]"),
+        "pre-goal breadcrumb missing in:\n{rendered}"
+    );
+    assert!(
+        rendered.contains(
+            "[topic: free will | depth: 0 | branch: main | goal: can libertarian free will be held consistently?]"
+        ),
+        "post-goal breadcrumb missing in:\n{rendered}"
+    );
+    assert!(rendered.contains("Goal set: can libertarian free will be held consistently?"));
+
+    // The goal_set event is persisted (source:user) so resume restores it.
+    let log = fs::read_to_string(&path).unwrap();
+    assert!(log.contains(r#""event_type":"goal_set""#), "log:\n{log}");
+    assert!(log.contains(r#""source":"user""#));
+    assert!(log.contains("can libertarian free will be held consistently?"));
+
+    let _ = fs::remove_file(path);
+}
+
+// trace:STORY-159 | ai:claude — the `--goal` flag is recorded on the start event
+// so the goal orients from turn one and survives resume.
+#[test]
+fn start_records_the_goal_flag_on_the_session_started_event() {
+    let path = std::env::temp_dir().join(format!(
+        "quizdom-story-159-start-goal-{}.jsonl",
+        std::process::id()
+    ));
+    let _ = fs::remove_file(&path);
+    let bank = FakeBank::new([question_with_tags(
+        "Q-1",
+        70,
+        AnswerKind::YesNo,
+        ["topic:free-will", "answer:yes-no", "weight:70"],
+    )]);
+    let mut config = test_config(&path, "Q-1");
+    config.goal = Some("is free will real?".to_string());
+    let mut output = Vec::new();
+
+    // Answer the seed (so the session survives, STORY-81), then quit at the
+    // dead-end menu (Q-1 has no successor).
+    run_session(
+        &config,
+        &bank,
+        &DeterministicNextQuestionStrategy,
+        "yes\nq\n".as_bytes(),
+        &mut output,
+    )
+    .unwrap();
+
+    let rendered = String::from_utf8(output).unwrap();
+    // The breadcrumb carries the flag goal from the very first turn.
+    assert!(
+        rendered.contains("| goal: is free will real?]"),
+        "{rendered}"
+    );
+    let log = fs::read_to_string(&path).unwrap();
+    assert!(log.contains(r#""event_type":"session_started""#));
+    assert!(
+        log.contains(r#""goal":"is free will real?""#),
+        "log:\n{log}"
     );
 
     let _ = fs::remove_file(path);

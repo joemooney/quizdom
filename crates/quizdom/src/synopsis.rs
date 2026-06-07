@@ -73,6 +73,13 @@ pub struct SessionArc {
     /// rendered as a short "left vs right" label. May feed the synopsis's
     /// consistency read (EPIC-9 contradiction detection).
     pub tensions: Vec<String>,
+    // trace:STORY-159 | ai:claude
+    /// The session GOAL/thesis the exploration is resolving, if one was set. When
+    /// present, the roundedness score is measured WITH RESPECT TO it ("have you
+    /// settled X?") so the goal becomes the convergence target. Read structurally
+    /// from the most recent `session_started`/`goal_set` event in the log;
+    /// belief-neutral — the goal is a question being settled, never a belief.
+    pub goal: Option<String>,
 }
 
 impl SessionArc {
@@ -144,6 +151,23 @@ pub fn arc_from_session_log(reader: impl Read, branch: Option<&str>) -> Result<S
         if arc.user_id.is_empty() {
             if let Some(id) = value.get("user_id").and_then(Value::as_str) {
                 arc.user_id = id.to_string();
+            }
+        }
+
+        // trace:STORY-159 | ai:claude — capture the session goal from the start
+        // event or any later `goal_set` event (the most recent wins, so an
+        // in-session / Observer-proposed goal overrides the `--goal` flag).
+        if matches!(
+            value.get("event_type").and_then(Value::as_str),
+            Some("session_started") | Some("goal_set")
+        ) {
+            if let Some(goal) = value
+                .get("goal")
+                .and_then(Value::as_str)
+                .map(str::trim)
+                .filter(|goal| !goal.is_empty())
+            {
+                arc.goal = Some(goal.to_string());
             }
         }
 
@@ -329,6 +353,11 @@ pub struct SessionSynopsis {
     /// produced a usable score; `None` when offline / degraded, in which case
     /// the synopsis carries a "needs LLM" note rather than a fabricated number.
     pub roundedness: Option<Roundedness>,
+    // trace:STORY-159 | ai:claude
+    /// The session GOAL/thesis this synopsis was measured against, if one was set
+    /// — carried through from the [`SessionArc`] so the render can surface the
+    /// convergence target. Belief-neutral: the question being settled.
+    pub goal: Option<String>,
     /// True when this synopsis was synthesized structurally (offline / degraded)
     /// rather than by the LLM.
     pub degraded: bool,
@@ -362,6 +391,16 @@ const SYNOPSIS_SYSTEM_PROMPT: &str = "You are quizdom's session Synopsis observe
 /// Build the synopsis prompt for one [`SessionArc`].
 fn synopsis_prompt(arc: &SessionArc) -> String {
     let mut log = String::new();
+    // trace:STORY-159 | ai:claude
+    // When the session carries a GOAL, lead with it so the roundedness score is
+    // measured WITH RESPECT TO it ("how well-settled is THIS goal?") — the goal
+    // becomes the convergence target. Belief-neutral: completeness asks whether
+    // the goal's live objections were met, never whether the answer is "right".
+    if let Some(goal) = arc.goal.as_deref().map(str::trim).filter(|g| !g.is_empty()) {
+        log.push_str(&format!(
+            "Session goal (the claim/question being resolved): {goal}\nMeasure roundedness WITH RESPECT TO this goal — completeness/coherence are about how well-settled THIS goal is, and the limiting gap is what still stands between the user and resolving it. Stay belief-neutral: score whether the goal is settled structurally, never which answer is true.\n\n"
+        ));
+    }
     for turn in &arc.turns {
         log.push_str(&format!(
             "- (turn {}, branch {}) Q: {} | position: {}\n",
@@ -489,6 +528,9 @@ pub fn parse_synopsis(text: &str, arc: &SessionArc) -> Option<SessionSynopsis> {
         open_threads,
         engagement,
         roundedness,
+        // trace:STORY-159 | ai:claude — carry the goal the score was measured
+        // against through to the render.
+        goal: arc.goal.clone(),
         degraded: false,
     })
 }
@@ -594,7 +636,7 @@ pub fn structural_synopsis(arc: &SessionArc) -> SessionSynopsis {
         )
     };
 
-    let standing = match arc
+    let recent = match arc
         .turns
         .iter()
         .rev()
@@ -606,6 +648,13 @@ pub fn structural_synopsis(arc: &SessionArc) -> SessionSynopsis {
             last.position
         ),
         None => "No position recorded — nothing to stand on yet.".to_string(),
+    };
+    // trace:STORY-159 | ai:claude — even offline, the goal still ORIENTS the
+    // standing deterministically: it frames the recent position as progress
+    // toward resolving the goal, without fabricating a (needs-LLM) score.
+    let standing = match arc.goal.as_deref().map(str::trim).filter(|g| !g.is_empty()) {
+        Some(goal) => format!("Goal: \"{goal}\". {recent}"),
+        None => recent,
     };
 
     let open_threads: Vec<String> = arc
@@ -627,6 +676,9 @@ pub fn structural_synopsis(arc: &SessionArc) -> SessionSynopsis {
         // trace:STORY-155 | ai:claude — no fabricated score offline; the render
         // surfaces a "needs LLM" note in its place.
         roundedness: None,
+        // trace:STORY-159 | ai:claude — carry the goal so even the offline render
+        // shows the convergence target.
+        goal: arc.goal.clone(),
         degraded: true,
     }
 }
@@ -688,6 +740,17 @@ pub fn render_synopsis(synopsis: &SessionSynopsis, output: &mut impl Write) -> R
         Ok(())
     };
 
+    // trace:STORY-159 | ai:claude — surface the goal at the top of the synopsis
+    // when one is set, so the reader sees the convergence target the roundedness
+    // is measured against. Belief-neutral: it names the question being settled.
+    if let Some(goal) = synopsis
+        .goal
+        .as_deref()
+        .map(str::trim)
+        .filter(|g| !g.is_empty())
+    {
+        line("Goal", goal, output)?;
+    }
     bullets("Positions taken", &synopsis.positions, output)?;
     line("How they evolved", &synopsis.evolution, output)?;
     line("Internal consistency", &synopsis.consistency, output)?;
@@ -1668,6 +1731,7 @@ mod tests {
                 coherence: 90,
                 limiting_gap: String::new(),
             }),
+            goal: None,
             degraded: false,
         };
         let mut out = Vec::new();
@@ -1677,6 +1741,94 @@ mod tests {
         // fallback echoes the user's own recorded standing.
         let expected = concluding_standing(&arc).expect("a recorded standing");
         assert!(rendered.contains(&expected));
+    }
+
+    // ---- STORY-159: goal-aware synopsis ------------------------------------
+
+    // A session that set a goal at start, then UPDATED it in-session via a
+    // `goal_set` event — exercising both goal sources and the "latest wins" rule.
+    const GOAL_LOG: &str = r#"
+{"event_type":"session_started","session_id":"sess-9","user_id":"ada","branch_id":"main","strategy":"deterministic","goal":"is free will real?"}
+{"event_type":"question_presented","session_id":"sess-9","user_id":"ada","branch_id":"main","turn":1,"question_ref":"Q-1","question_text":"Is free will real?"}
+{"event_type":"answer_recorded","session_id":"sess-9","user_id":"ada","branch_id":"main","turn":1,"question_ref":"Q-1","raw_answer":"yes","normalized_answer":"yes"}
+{"event_type":"goal_set","session_id":"sess-9","user_id":"ada","branch_id":"main","turn":1,"goal":"can libertarian free will be held consistently?","source":"observer"}
+{"event_type":"question_presented","session_id":"sess-9","user_id":"ada","branch_id":"main","turn":2,"question_ref":"Q-2","question_text":"Can a caused choice be free?"}
+{"event_type":"answer_recorded","session_id":"sess-9","user_id":"ada","branch_id":"main","turn":2,"question_ref":"Q-2","raw_answer":"no","normalized_answer":"no"}
+"#;
+
+    fn goal_arc() -> SessionArc {
+        arc_from_session_log(GOAL_LOG.as_bytes(), Some("main")).expect("arc parses")
+    }
+
+    #[test]
+    fn arc_captures_the_goal_latest_wins() {
+        // trace:STORY-159 | ai:claude — the goal is read from the start event and
+        // then OVERRIDDEN by the later `goal_set` (in-session / Observer-proposed).
+        let arc = goal_arc();
+        assert_eq!(
+            arc.goal.as_deref(),
+            Some("can libertarian free will be held consistently?")
+        );
+    }
+
+    #[test]
+    fn arc_has_no_goal_when_none_was_set() {
+        // The SAMPLE_LOG sets no goal — free-flowing.
+        assert!(arc(None).goal.is_none());
+    }
+
+    #[test]
+    fn synopsis_prompt_orients_roundedness_to_the_goal() {
+        // trace:STORY-159 | ai:claude — when a goal is set, the prompt asks the
+        // model to measure roundedness WITH RESPECT TO it, belief-neutrally.
+        let client = MockClient::ok(r#"{"standing":"s"}"#);
+        let _ = synopsize(&client, &goal_arc());
+        let prompt = client.last_prompt.borrow().clone().unwrap();
+        assert!(prompt.contains("can libertarian free will be held consistently?"));
+        assert!(prompt.contains("Measure roundedness WITH RESPECT TO this goal"));
+        assert!(prompt.contains("never which answer is true"));
+    }
+
+    #[test]
+    fn synopsis_prompt_has_no_goal_preamble_when_free_flowing() {
+        let client = MockClient::ok(r#"{"standing":"s"}"#);
+        let _ = synopsize(&client, &arc(None));
+        let prompt = client.last_prompt.borrow().clone().unwrap();
+        assert!(!prompt.contains("Session goal"));
+        assert!(!prompt.contains("Measure roundedness WITH RESPECT TO"));
+    }
+
+    #[test]
+    fn synopsis_carries_and_renders_the_goal() {
+        // trace:STORY-159 | ai:claude — the goal flows through to the synopsis and
+        // is surfaced in the render so the convergence target is visible.
+        let client = MockClient::ok(&synopsis_body("s", 90, 90, 90, 90, "g"));
+        let synopsis = synopsize(&client, &goal_arc());
+        assert_eq!(
+            synopsis.goal.as_deref(),
+            Some("can libertarian free will be held consistently?")
+        );
+        let mut out = Vec::new();
+        render_synopsis(&synopsis, &mut out).expect("render");
+        let rendered = String::from_utf8(out).expect("utf8");
+        assert!(rendered.contains("Goal: can libertarian free will be held consistently?"));
+    }
+
+    #[test]
+    fn offline_synopsis_still_orients_to_the_goal() {
+        // trace:STORY-159 | ai:claude — offline degrades to the structural summary
+        // but the goal STILL orients deterministically: it frames the standing and
+        // is carried through for the render, with no fabricated score.
+        let synopsis = structural_synopsis(&goal_arc());
+        assert!(synopsis.degraded);
+        assert!(synopsis.roundedness.is_none());
+        assert_eq!(
+            synopsis.goal.as_deref(),
+            Some("can libertarian free will be held consistently?")
+        );
+        assert!(synopsis
+            .standing
+            .contains("Goal: \"can libertarian free will be held consistently?\""));
     }
 
     /// Write `contents` to a unique temp file and return its path.
