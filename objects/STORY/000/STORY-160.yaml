@@ -8,7 +8,7 @@ priority: High
 owner: ''
 feature: Uncategorized
 created_at: 2026-06-07T02:07:57.559325071Z
-modified_at: 2026-06-07T02:44:55.879796569Z
+modified_at: 2026-06-07T02:44:58.113654090Z
 req_type: Story
 tags:
 - closing
@@ -21,3 +21,9 @@ relationships:
 - rel_type: Child
   target_id: 019e9fd5-af66-7663-abe9-9c0e4792940f
   created_at: 2026-06-07T02:07:59.531186057Z
+comments:
+- id: 019e9ff8-1c81-76c0-ad7e-91fb7338cb4c
+  author: joe
+  content: 'Implemented the closing ritual: rest-your-case phase transition (input.rs controls /rest, verdict, terminate -> session.rs run_closing_phase state machine), challenger closing objections (observer.rs read_closing_objection, belief-neutral structural, degrades offline), verdict reuses the synopsis roundedness engine (EPIC-154) oriented to the goal. Fairness rule enforced: the terminator forfeits the last word (final_word_speaker), so the other side makes the final closing statement first. closing_statement + phase_changed events logged and folded into the verdict arc. Tests cover phase transition, the fairness rule, verdict orientation, offline degradation, and non-TTY EOF. cargo fmt + cargo test --workspace (276 lib tests) green; no new clippy warnings.'
+  created_at: 2026-06-07T02:44:58.113654090Z
+  modified_at: 2026-06-07T02:44:58.113654090Z
