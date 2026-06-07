@@ -1,0 +1,35 @@
+id: 019ea3c4-27b4-7c23-a9df-f5550a687184
+spec_id: STORY-188
+agreed_id: STORY-188
+title: 'Turn-envelope: one interrogator LLM call per turn returns {next_question, objection?, goal_offer?}'
+description: |-
+  Implement ADR (turn-envelope consolidation). Today maybe_offer_goal_on_crystallize and maybe_interrogator_objection each spawn a full-history 'claude -p' EVERY turn (the one-shot guard gates the outcome, not the cadence) — 2-3 redundant full-history calls/turn that almost always return nothing.
+
+  CHANGE:
+  - Define a TurnEnvelope returned by the LLM interrogator turn-call: { next_question: String, objection: Option<String>, goal_offer: Option<GoalProposal> }. Belief-neutral fields (objection = a STRUCTURAL tension; goal_offer = the QUESTION to resolve).
+  - The LLM strategy's next-question generation requests this envelope in ONE structured-output call, using the history it ALREADY sends. (strategy.rs)
+  - The session loop reads the envelope's fields instead of calling observer.propose_goal / observer.interrogator_objection per turn. The per-turn probe calls are REMOVED. (session.rs)
+  - KEEP the existing semantics on SURFACING: free-flow (don't surface on a thin conversation), the one-shot guards (offer_made/objection_made → surface the goal-offer / interrogator-objection at most once), the META labeling, and the existing accept/edit/decline + raise_objection flows. Only the SOURCE of the decision moves (envelope field, not a separate spawn).
+  - Deterministic / offline / non-LLM strategies: envelope.objection = None, goal_offer = None — no extra cost, degrade exactly as today.
+  - UNCHANGED: user-initiated /goal, /request-goal, user /objection, /judge (on-demand observer calls, not per-turn); the SCORE gauge stays separately gated.
+
+  ## Acceptance
+  - Exactly ONE interrogator LLM call per turn (a counting mock asserts observer.propose_goal / interrogator_objection are NOT called per turn).
+  - The goal-offer and interrogator-objection still surface with the SAME one-shot + free-flow semantics, now driven by envelope fields.
+  - Deterministic/offline strategies make no extra calls and surface no objection/goal-offer.
+  - Belief-neutral throughout; the /score gauge behavior is unchanged.
+  - All existing goal-offer / objection tests still pass (adapted to the envelope source); headless byte output unchanged.
+status: Approved
+priority: High
+owner: ''
+feature: Uncategorized
+created_at: 2026-06-07T20:26:41.972698397Z
+modified_at: 2026-06-07T20:26:41.972698397Z
+req_type: Story
+tags:
+- cost
+- llm
+- performance
+- refactor
+- story
+- strategy
