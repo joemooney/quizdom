@@ -56,12 +56,12 @@ description: |
     deterministically where it can; verdict shows a "needs LLM" note). Mocked-LLM
     tests cover goal-orientation, the closing phase + terminator rule, and debate
     mode.
-status: Approved
+status: Completed
 priority: High
 owner: ''
 feature: Uncategorized
 created_at: 2026-06-07T02:07:21.958497954Z
-modified_at: 2026-06-07T02:45:19.718900380Z
+modified_at: 2026-06-07T03:06:54.901661908Z
 req_type: Epic
 tags:
 - closing
