@@ -413,6 +413,10 @@ pub(crate) fn edit_mode_from_editor(editor: &str) -> EditMode {
 pub(crate) fn read_answer_or_end(
     kind: &AnswerKind,
     context: InputContext,
+    // trace:STORY-190 | ai:claude — the live session snapshot for the palette's
+    // context-aware availability (which commands grey out right now). Threaded
+    // from the engine through the front-end seam into `run_palette*`.
+    palette_ctx: palette::PaletteContext,
     input: &mut impl BufRead,
     free_text_input: &mut FreeTextInput,
     output: &mut dyn Write,
@@ -422,7 +426,7 @@ pub(crate) fn read_answer_or_end(
             AnswerKind::FreeText => free_text_input
                 .read_line(input, output, "")?
                 .ok_or_else(|| QuizdomError::Parse("no answer provided".to_string()))?,
-            _ => read_control_answer_or_line(input, output, kind, context)?,
+            _ => read_control_answer_or_line(input, output, kind, context, palette_ctx)?,
         };
         // trace:STORY-163 | ai:claude — a bare `/` line at a free-text prompt
         // opens the slash-command PALETTE overlay (the single-key prompts open it
@@ -433,7 +437,8 @@ pub(crate) fn read_answer_or_end(
         // bare `/`, which falls through to ordinary parsing — non-TTY use is
         // unaffected.
         if is_palette_trigger(&raw) {
-            if let Some(palette::PaletteOutcome::Selected(command)) = palette::run_palette(output)?
+            if let Some(palette::PaletteOutcome::Selected(command)) =
+                palette::run_palette(palette_ctx, output)?
             {
                 raw = command;
             }
@@ -549,10 +554,13 @@ fn read_control_answer_or_line(
     output: &mut dyn Write,
     kind: &AnswerKind,
     context: InputContext,
+    // trace:STORY-190 | ai:claude — passed through to the single-key reader so the
+    // `/`-opened palette greys inapplicable commands.
+    palette_ctx: palette::PaletteContext,
 ) -> Result<String> {
     // trace:STORY-51 | ai:codex
     if io::stdin().is_terminal() {
-        if let Some(raw) = read_single_key_answer(output, kind, context)? {
+        if let Some(raw) = read_single_key_answer(output, kind, context, palette_ctx)? {
             return Ok(raw);
         }
     }
@@ -567,6 +575,8 @@ fn read_single_key_answer(
     output: &mut dyn Write,
     kind: &AnswerKind,
     context: InputContext,
+    // trace:STORY-190 | ai:claude
+    palette_ctx: palette::PaletteContext,
 ) -> Result<Option<String>> {
     let Ok(_raw_mode) = RawModeGuard::enter() else {
         return Ok(None);
@@ -610,7 +620,7 @@ fn read_single_key_answer(
             // which then flows through the SAME command recognizers as the typed
             // form (so palette and typed routes are identical). Esc / backspacing
             // out cancels back to the prompt — we just re-loop for the next key.
-            KeyCode::Char('/') => match palette::run_palette_in_raw(output)? {
+            KeyCode::Char('/') => match palette::run_palette_in_raw(palette_ctx, output)? {
                 Some(palette::PaletteOutcome::Selected(command)) => {
                     writeln!(output, "{command}")?;
                     output.flush()?;

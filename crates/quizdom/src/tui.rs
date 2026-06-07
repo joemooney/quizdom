@@ -51,7 +51,8 @@ use crate::editor::{
 // dispatcher (here) and the cheat-sheet overlay, so they can never drift.
 use crate::keymap::{self, KeyAction};
 use crate::model::{Answer, AnswerKind};
-use crate::palette::{command_registry, PaletteState};
+// trace:STORY-190 | ai:claude — PaletteContext threads the availability snapshot.
+use crate::palette::{command_registry, PaletteContext, PaletteState};
 use crate::style::theme;
 use crossterm::event::{self, Event, KeyCode, KeyEventKind, KeyModifiers};
 use crossterm::execute;
@@ -587,6 +588,11 @@ pub(crate) struct TuiFrontEnd<R: BufRead, B: Backend = CrosstermBackend<Stdout>>
     // so the Ctrl-X Ctrl-E round-trip can be driven by a mock in tests (CI never
     // spawns a real editor); production wires [`SpawnEditorLauncher`].
     launcher: Box<dyn EditorLauncher>,
+    // trace:STORY-190 | ai:claude — the live availability snapshot for the `/`
+    // palette, refreshed at the top of each `read_answer` from the engine-supplied
+    // context. The line/closing-ritual prompts leave it at the default (every
+    // command enabled) since no answer context applies there.
+    palette_ctx: PaletteContext,
 }
 
 impl<R: BufRead> TuiFrontEnd<R, CrosstermBackend<Stdout>> {
@@ -612,6 +618,8 @@ impl<R: BufRead> TuiFrontEnd<R, CrosstermBackend<Stdout>> {
             // trace:STORY-180 | ai:claude — infer the editing model from $EDITOR once.
             editor_model: editor_model(),
             launcher: Box::new(SpawnEditorLauncher),
+            // trace:STORY-190 | ai:claude
+            palette_ctx: PaletteContext::default(),
         };
         tui.transcript.push_block(
             "quizdom — interactive session. Type your answer and press Enter. Press / for the \
@@ -640,6 +648,8 @@ impl<R: BufRead> TuiFrontEnd<R, ratatui::backend::TestBackend> {
             author_output: Vec::new(),
             editor_model: EditorModel::Emacs,
             launcher: Box::new(SpawnEditorLauncher),
+            // trace:STORY-190 | ai:claude
+            palette_ctx: PaletteContext::default(),
         }
     }
 
@@ -698,7 +708,20 @@ impl<R: BufRead, B: Backend> TuiFrontEnd<R, B> {
     /// Draw the three panes (and, when open, the palette overlay) for the current
     /// state. `editing` is the text in the input box; `palette` is `Some` while
     /// the `/` overlay is open.
-    fn draw(&mut self, editing: &str, palette: Option<(&PaletteState, bool)>) -> Result<()> {
+    // trace:STORY-190 | ai:claude — the overlay tuple grew a `show_reason` flag so
+    // Enter's no-op on a greyed command can surface its reason; `draw_palette` is
+    // the thin wrapper the palette loop calls.
+    fn draw_palette(
+        &mut self,
+        editing: &str,
+        state: &PaletteState,
+        show_detail: bool,
+        show_reason: bool,
+    ) -> Result<()> {
+        self.draw(editing, Some((state, show_detail, show_reason)))
+    }
+
+    fn draw(&mut self, editing: &str, palette: Option<(&PaletteState, bool, bool)>) -> Result<()> {
         let transcript = &self.transcript;
         let status_text = self.status.render();
         self.terminal
@@ -777,10 +800,17 @@ impl<R: BufRead, B: Backend> TuiFrontEnd<R, B> {
                 frame.render_widget(status_widget, panes.status);
 
                 // ----- palette overlay (drawn in place, on top) -----
-                if let Some((state, show_detail)) = palette {
+                if let Some((state, show_detail, show_reason)) = palette {
                     let overlay = palette_rect(frame.area());
                     frame.render_widget(Clear, overlay);
-                    let text = crate::palette::render_to_string(state, show_detail);
+                    // trace:STORY-190 | ai:claude — render with the availability
+                    // layer: greyed rows carry their reason, and Enter's no-op note
+                    // shows when `show_reason`.
+                    let text = crate::palette::render_to_string_with_reason(
+                        state,
+                        show_detail,
+                        show_reason,
+                    );
                     let body: Vec<Line> = text.lines().map(|l| Line::from(l.to_string())).collect();
                     let widget = Paragraph::new(body)
                         .block(
@@ -811,10 +841,14 @@ impl<R: BufRead, B: Backend> TuiFrontEnd<R, B> {
     /// on an empty buffer, showing all). Only Backspace on a truly EMPTY buffer
     /// — i.e. [`PaletteState::pop_filter`] returning `false` — cancels.
     fn run_palette(&mut self, editing: &str) -> Result<Option<String>> {
-        let mut state = PaletteState::new(command_registry());
+        // trace:STORY-190 | ai:claude — open the palette over the live availability
+        // snapshot so inapplicable commands render greyed; Enter on a greyed
+        // command is a NO-OP (surfacing its reason) and never returns it.
+        let mut state = PaletteState::new(command_registry(), self.palette_ctx);
         let mut show_detail = false;
+        let mut show_reason = false;
         loop {
-            self.draw(editing, Some((&state, show_detail)))?;
+            self.draw_palette(editing, &state, show_detail, show_reason)?;
             let Event::Key(key) = event::read().map_err(QuizdomError::Io)? else {
                 continue;
             };
@@ -824,21 +858,36 @@ impl<R: BufRead, B: Backend> TuiFrontEnd<R, B> {
             match key.code {
                 KeyCode::Esc => return Ok(None),
                 KeyCode::Enter => {
-                    if let Some(command) = state.highlighted() {
-                        return Ok(Some(command.command.to_string()));
+                    // trace:STORY-190 | ai:claude — only an ENABLED command returns;
+                    // a disabled (greyed) one surfaces its reason and keeps the menu
+                    // up — it never executes / is returned.
+                    if let Some(command) = state.selection() {
+                        return Ok(Some(command));
+                    }
+                    if let Some((_, availability)) = state.highlighted_with_availability() {
+                        if !availability.is_enabled() {
+                            show_reason = true;
+                            show_detail = false;
+                        }
                     }
                 }
                 KeyCode::Up => {
                     show_detail = false;
+                    show_reason = false;
                     state.move_up();
                 }
                 KeyCode::Down => {
                     show_detail = false;
+                    show_reason = false;
                     state.move_down();
                 }
-                KeyCode::Char('?') => show_detail = !show_detail,
+                KeyCode::Char('?') => {
+                    show_reason = false;
+                    show_detail = !show_detail;
+                }
                 KeyCode::Backspace => {
                     show_detail = false;
+                    show_reason = false;
                     // trace:STORY-177 | ai:claude — `pop_filter` returns false
                     // ONLY on a truly empty buffer; backspacing the leading `/`
                     // succeeds (flips to search) and keeps the overlay open.
@@ -849,6 +898,7 @@ impl<R: BufRead, B: Backend> TuiFrontEnd<R, B> {
                 }
                 KeyCode::Char(c) => {
                     show_detail = false;
+                    show_reason = false;
                     state.push_filter(c);
                 }
                 _ => {}
@@ -1230,7 +1280,16 @@ impl<R: BufRead, B: Backend> FrontEnd for TuiFrontEnd<R, B> {
         &mut self.pending
     }
 
-    fn read_answer(&mut self, kind: &AnswerKind, context: InputContext) -> Result<AnswerInput> {
+    fn read_answer(
+        &mut self,
+        kind: &AnswerKind,
+        context: InputContext,
+        palette_ctx: PaletteContext,
+    ) -> Result<AnswerInput> {
+        // trace:STORY-190 | ai:claude — stash the engine-supplied availability
+        // snapshot so `run_palette` (opened from this answer prompt) greys the
+        // inapplicable commands for the CURRENT session state.
+        self.palette_ctx = palette_ctx;
         // Re-present the question until a recognized answer/control arrives. The
         // engine already rendered the question text through `out()`, so we only
         // gather + parse here. Parsing reuses the SAME recognizers as the line
