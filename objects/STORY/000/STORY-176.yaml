@@ -1,0 +1,36 @@
+id: 019ea0e1-3948-78d2-ac44-a9a40959ffaa
+spec_id: STORY-176
+agreed_id: STORY-176
+title: TUI keyboard shortcuts — navigation keys (Ctrl-Left/Right, scroll) + a discoverable cheat-sheet from one keymap
+description: |-
+  Add real keyboard navigation + discoverability to the ratatui TUI (EPIC-167).
+
+  NAVIGATION:
+  - Ctrl-Left = previous question, Ctrl-Right = next question (see DECIDED comment for whether this REVISITS-to-view or RE-OPENS-to-revise like the existing 'B'/back).
+  - PageUp/PageDown (and Ctrl-Up/Down) scroll the transcript pane.
+
+  DISCOVERABILITY — a CHEAT-SHEET overlay listing every binding, grouped: Answering (Y/N/X/P/A/S/B), Navigation (Ctrl-Left/Right, PageUp/Down), Meta (/observe /tutor /help /synopsis + the observe key), Editing (vim/emacs per $EDITOR, STORY-51), Session (/quit, Ctrl-C). The '?' key currently = observe-this-exchange AND per-command detail in the palette — the binding for the cheat-sheet vs observe is a DECISION (see comment).
+
+  KEY DESIGN PRINCIPLE: a SINGLE keymap registry is the source of truth — the dispatcher AND the cheat-sheet render from the SAME table so they can never drift. Adding a binding adds its cheat-sheet row automatically.
+
+  Lane: tui.rs (key dispatch + cheat-sheet overlay) + input.rs/palette.rs (the keymap registry) + style.rs (overlay theme). Headless/non-TTY: the cheat-sheet degrades to a static printed list; navigation keys are a TUI-only affordance (the headless 'B'/back still works).
+
+  ## Acceptance
+  - Ctrl-Left/Right navigate questions (per the decided semantics); PageUp/PageDown scroll the transcript.
+  - A cheat-sheet overlay lists ALL bindings, grouped, rendered FROM the keymap registry (single source of truth).
+  - The '?'-vs-observe binding conflict is resolved per the decision and documented in the cheat-sheet.
+  - Non-TTY/headless degrade gracefully; existing single-key controls + editing keys unchanged.
+  - Tests: key-dispatch table, cheat-sheet is generated from the registry (no drift), navigation bounds (can't go before the first / past the last question).
+status: Approved
+priority: High
+owner: ''
+feature: Uncategorized
+created_at: 2026-06-07T06:59:35.368196989Z
+modified_at: 2026-06-07T06:59:35.368196989Z
+req_type: Story
+tags:
+- keyboard
+- post-v1
+- shortcuts
+- story
+- tui
