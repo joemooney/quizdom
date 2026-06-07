@@ -16,3 +16,7 @@ tags:
 - session
 - story
 - terminal
+relationships:
+- rel_type: Child
+  target_id: 019e9f92-a9c0-7d51-9105-8610d6e3810c
+  created_at: 2026-06-07T00:55:28.784379498Z
