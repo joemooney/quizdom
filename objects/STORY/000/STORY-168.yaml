@@ -1,0 +1,18 @@
+id: 019ea07e-1a3f-77f2-9551-3479f48b1372
+spec_id: STORY-168
+agreed_id: STORY-168
+title: Front-end seam + headless line front-end (foundation; preserve ALL tests)
+description: 'FOUNDATIONAL REFACTOR (no behavior change). Extract a small FRONT-END interface the session engine talks to: the engine emits render-intents (show question / meta-reading / synopsis / verdict / menu / breadcrumb) and requests input/control through the trait; the engine''s control flow (loop, strategy, observer, synopsis, closing, goal/mode) stops touching stdout/stdin directly. Reimplement TODAY''s line-based behavior as the first front-end impl (''headless line front-end''), used for: the ~336 piped/byte tests, non-TTY, ''--no-tui'', and the standalone commands (contradictions/curate/synopsis/question add/session list/show). ## Acceptance: engine I/O goes only through the front-end trait; the headless line front-end reproduces current output; ALL existing tests pass UNCHANGED (this is the safety net); no behavior change.'
+status: Approved
+priority: High
+owner: ''
+feature: Uncategorized
+created_at: 2026-06-07T05:11:19.359207235Z
+modified_at: 2026-06-07T05:11:19.359207235Z
+req_type: Story
+tags:
+- foundation
+- front-end
+- refactor
+- seam
+- story
