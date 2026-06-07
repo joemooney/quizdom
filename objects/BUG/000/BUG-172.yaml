@@ -8,7 +8,7 @@ priority: Medium
 owner: ''
 feature: Uncategorized
 created_at: 2026-06-07T06:43:59.350742021Z
-modified_at: 2026-06-07T06:50:09.097748728Z
+modified_at: 2026-06-07T06:50:10.249794479Z
 req_type: Bug
 tags:
 - bug
@@ -20,3 +20,9 @@ relationships:
 - rel_type: Child
   target_id: 019ea07d-90fc-7b53-ad38-d8979d58a26f
   created_at: 2026-06-07T06:44:01.524777993Z
+comments:
+- id: 019ea0d8-99c9-7bb0-a648-b5604fa8c429
+  author: joe
+  content: 'Symmetric quote-attribution: opposing_role() helper + generalized line_fragments gate. Quote in interrogator line -> user GREEN; user line -> interrogator CYAN. Tests both directions (style.rs + tui.rs). Merged via PR #60 (16c36c2).'
+  created_at: 2026-06-07T06:50:10.249794479Z
+  modified_at: 2026-06-07T06:50:10.249794479Z
