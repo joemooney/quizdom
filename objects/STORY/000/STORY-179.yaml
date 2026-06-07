@@ -31,12 +31,12 @@ description: |-
   - Paragraphs wrap to the pane width; block constructs reflow without crashing.
   - Headless/LineFrontEnd output byte-unchanged (literal markdown); existing piped tests pass.
   - Tests: inline emph/strong/code, list, heading, blockquote, code-fence, quote-yellow-composition, code-span-not-quote-colored, wrap/reflow smoke.
-status: Approved
+status: InProgress
 priority: High
 owner: ''
 feature: Uncategorized
 created_at: 2026-06-07T14:51:43.875515782Z
-modified_at: 2026-06-07T14:53:44.607184689Z
+modified_at: 2026-06-07T15:20:20.203291491Z
 req_type: Story
 tags:
 - markdown
