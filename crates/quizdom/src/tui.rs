@@ -42,6 +42,7 @@ use crate::input::{
 };
 use crate::model::{Answer, AnswerKind};
 use crate::palette::{command_registry, PaletteState};
+use crate::style::theme;
 use crossterm::event::{self, Event, KeyCode, KeyEventKind, KeyModifiers};
 use crossterm::execute;
 use crossterm::terminal::{
@@ -49,7 +50,7 @@ use crossterm::terminal::{
 };
 use ratatui::backend::CrosstermBackend;
 use ratatui::layout::{Constraint, Direction, Layout, Rect};
-use ratatui::style::{Color, Style};
+use ratatui::style::Style;
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders, Clear, Paragraph, Wrap};
 use ratatui::Terminal;
@@ -383,11 +384,14 @@ impl<R: BufRead> TuiFrontEnd<R> {
                 // ----- transcript pane -----
                 let inner_height = panes.transcript.height.saturating_sub(2) as usize;
                 let offset = transcript.visible_offset(inner_height);
+                // Per-role colors + quote-attribution: each visible row is
+                // classified to a voice and split into themed spans.
+                // trace:STORY-171 | ai:claude
                 let body: Vec<Line> = transcript
                     .lines()
                     .iter()
                     .skip(offset)
-                    .map(|line| Line::from(line.clone()))
+                    .map(|line| styled_transcript_line(line))
                     .collect();
                 let follow_hint = if offset + inner_height < transcript.len() {
                     " (scrolled — ↓ to follow) "
@@ -395,18 +399,26 @@ impl<R: BufRead> TuiFrontEnd<R> {
                     " transcript "
                 };
                 let transcript_widget = Paragraph::new(body)
-                    .block(Block::default().borders(Borders::ALL).title(follow_hint))
+                    .block(
+                        Block::default()
+                            .borders(Borders::ALL)
+                            .border_style(theme::border())
+                            .title(follow_hint),
+                    )
                     .wrap(Wrap { trim: false });
                 frame.render_widget(transcript_widget, panes.transcript);
 
                 // ----- input box -----
+                // A GOLD cursor marker; the typed answer reads in the user color.
+                // trace:STORY-171 | ai:claude
                 let input_widget = Paragraph::new(Line::from(vec![
-                    Span::styled("> ", Style::default().fg(Color::Cyan)),
-                    Span::raw(editing),
+                    Span::styled("> ", theme::input_marker()),
+                    Span::styled(editing.to_string(), theme::role_style(theme::Role::User)),
                 ]))
                 .block(
                     Block::default()
                         .borders(Borders::ALL)
+                        .border_style(theme::border())
                         .title(" your answer "),
                 );
                 frame.render_widget(input_widget, panes.input);
@@ -419,11 +431,14 @@ impl<R: BufRead> TuiFrontEnd<R> {
                 ));
 
                 // ----- status bar -----
-                let status_widget = Paragraph::new(Line::from(Span::styled(
-                    status_text.clone(),
-                    Style::default().fg(Color::DarkGray),
-                )))
-                .block(Block::default().borders(Borders::ALL).title(" status "));
+                // Colorized segments (goal/breadcrumb/roundedness/mode) distinct
+                // from the transcript palette. trace:STORY-171 | ai:claude
+                let status_widget = Paragraph::new(styled_status_line(&status_text)).block(
+                    Block::default()
+                        .borders(Borders::ALL)
+                        .border_style(theme::border())
+                        .title(" status "),
+                );
                 frame.render_widget(status_widget, panes.status);
 
                 // ----- palette overlay (drawn in place, on top) -----
@@ -436,6 +451,7 @@ impl<R: BufRead> TuiFrontEnd<R> {
                         .block(
                             Block::default()
                                 .borders(Borders::ALL)
+                                .border_style(theme::border())
                                 .title(" command palette "),
                         )
                         .wrap(Wrap { trim: false });
@@ -673,6 +689,59 @@ fn parse_control(raw: &str, context: InputContext) -> Option<AnswerInput> {
     None
 }
 
+// trace:STORY-171 | ai:claude
+/// Build a styled ratatui [`Line`] for one transcript row: attribute the row to
+/// a voice ([`theme::classify_line`]) and split it into colored spans
+/// ([`theme::line_fragments`]) — applying QUOTE ATTRIBUTION inside the user's
+/// answer (a quoted span renders in the interrogator's color). Pure over the
+/// plain text the engine emitted, so the per-role coloring is testable without a
+/// terminal.
+fn styled_transcript_line(text: &str) -> Line<'static> {
+    let role = theme::classify_line(text);
+    let spans: Vec<Span<'static>> = theme::line_fragments(role, text)
+        .into_iter()
+        .map(|fragment| Span::styled(fragment.text, fragment.style))
+        .collect();
+    Line::from(spans)
+}
+
+// trace:STORY-171 | ai:claude
+/// Colorize the status bar: split the rendered status text into `·`-separated
+/// segments and paint each `label: value` pair with the theme's label/value
+/// colors (a bare segment — e.g. the default hint — stays dim). Distinct from
+/// the transcript palette so the bar reads as chrome, not dialogue. Pure over
+/// the already-composed status string.
+fn styled_status_line(status_text: &str) -> Line<'static> {
+    let mut spans: Vec<Span<'static>> = Vec::new();
+    let segments: Vec<&str> = status_text.split('·').collect();
+    for (i, segment) in segments.iter().enumerate() {
+        if i > 0 {
+            spans.push(Span::styled(
+                "·".to_string(),
+                Style::default().fg(theme::STATUS_DIM),
+            ));
+        }
+        let seg = *segment;
+        match seg.split_once(':') {
+            Some((label, value)) if !value.trim().is_empty() => {
+                spans.push(Span::styled(
+                    format!("{label}:"),
+                    Style::default().fg(theme::STATUS_LABEL),
+                ));
+                spans.push(Span::styled(
+                    value.to_string(),
+                    Style::default().fg(theme::STATUS_VALUE),
+                ));
+            }
+            _ => spans.push(Span::styled(
+                seg.to_string(),
+                Style::default().fg(theme::STATUS_DIM),
+            )),
+        }
+    }
+    Line::from(spans)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -886,5 +955,71 @@ mod tests {
         // A plain answer is NOT a control, so it falls through to normalize_answer.
         assert!(parse_control("yes", InputContext::Frontier).is_none());
         assert!(parse_control("I think free will is real", InputContext::Frontier).is_none());
+    }
+
+    // ---- STORY-171: themed transcript + status spans -----------------------
+
+    // trace:STORY-171 | ai:claude
+    #[test]
+    fn styled_transcript_line_colors_by_role() {
+        // An interrogator line is one cyan span.
+        let line = styled_transcript_line("Is your will free?");
+        assert_eq!(line.spans.len(), 1);
+        assert_eq!(line.spans[0].style.fg, Some(theme::INTERROGATOR));
+
+        // The user's echoed answer is green.
+        let line = styled_transcript_line("> free will is an illusion");
+        assert_eq!(line.spans[0].style.fg, Some(theme::USER));
+
+        // The META voice keeps the bright-blue italic styling.
+        let line = styled_transcript_line("META (observer) — a reading:");
+        assert_eq!(line.spans[0].style.fg, Some(theme::META));
+
+        // The challenger is magenta.
+        let line = styled_transcript_line("Challenger (closing) — objection:");
+        assert_eq!(line.spans[0].style.fg, Some(theme::CHALLENGER));
+    }
+
+    // trace:STORY-171 | ai:claude
+    #[test]
+    fn styled_transcript_line_attributes_a_quote_to_the_interrogator() {
+        // A quoted span inside the user's answer renders in the interrogator's
+        // color; the surrounding answer stays the user color.
+        let line = styled_transcript_line(r#"> you said "it is free" but I disagree"#);
+        assert_eq!(line.spans.len(), 3);
+        assert_eq!(line.spans[0].style.fg, Some(theme::USER));
+        assert_eq!(line.spans[1].style.fg, Some(theme::INTERROGATOR));
+        assert_eq!(line.spans[1].content, r#""it is free""#);
+        assert_eq!(line.spans[2].style.fg, Some(theme::USER));
+    }
+
+    // trace:STORY-171 | ai:claude
+    #[test]
+    fn styled_status_line_colors_label_value_segments() {
+        let line = styled_status_line("topic: free will  ·  mode: debate");
+        // label + value spans for each segment, plus a dim separator.
+        let labels: Vec<_> = line
+            .spans
+            .iter()
+            .filter(|s| s.style.fg == Some(theme::STATUS_LABEL))
+            .map(|s| s.content.to_string())
+            .collect();
+        assert!(labels.iter().any(|l| l.trim_start().starts_with("topic:")));
+        assert!(labels.iter().any(|l| l.trim_start().starts_with("mode:")));
+        assert!(line
+            .spans
+            .iter()
+            .any(|s| s.style.fg == Some(theme::STATUS_VALUE)));
+    }
+
+    // trace:STORY-171 | ai:claude
+    #[test]
+    fn styled_status_line_default_hint_stays_dim() {
+        // The bare default hint has no `label: value`, so it stays dim chrome.
+        let line = styled_status_line("quizdom — / for commands");
+        assert!(line
+            .spans
+            .iter()
+            .all(|s| s.style.fg == Some(theme::STATUS_DIM)));
     }
 }
