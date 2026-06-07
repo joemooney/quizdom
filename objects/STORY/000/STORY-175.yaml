@@ -22,12 +22,12 @@ description: |-
   - '/judge' yields a belief-neutral SUSTAINED/OVERRULED ruling from the Observer + the resolving condition; clears the objection.
   - One-at-a-time guard; offline degrade for '/judge'; belief-neutral throughout.
   - Mocked-LLM tests cover: raise+pin, /resolved by objector, wrong-caller rejection, /judge sustained + overruled, one-at-a-time guard, offline degrade.
-status: InProgress
+status: Completed
 priority: High
 owner: ''
 feature: Uncategorized
 created_at: 2026-06-07T06:55:41.969073973Z
-modified_at: 2026-06-07T14:22:56.984210207Z
+modified_at: 2026-06-07T14:57:55.101472189Z
 req_type: Story
 tags:
 - court-case
