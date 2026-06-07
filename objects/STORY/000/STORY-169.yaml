@@ -3,12 +3,12 @@ spec_id: STORY-169
 agreed_id: STORY-169
 title: 'ratatui TUI shell: alternate screen, layout, event loop, live ''/'' palette'
 description: 'Build the ratatui TUI front-end (impl of the STORY seam): enter the alternate screen; layout = scrollable transcript pane + input box + status bar (goal/breadcrumb/roundedness/mode); an event loop driving the core dialogue (question -> typed/keyed answer). A LIVE ''/'' command palette OVERLAY that opens on the keystroke, filters as you type, arrow-navigates, Enter runs, ''?'' shows per-command detail, Esc cancels — redrawn IN PLACE (fixes the stacking + Enter-to-open). Default front-end for an interactive TTY; restore the terminal cleanly on exit/panic. ## Acceptance: interactive session runs in the TUI; ''/'' opens the palette on keystroke, in-place; answering + the controls work; clean terminal restore; non-TTY falls back to headless. Depends on the seam story.'
-status: Approved
+status: InProgress
 priority: High
 owner: ''
 feature: Uncategorized
 created_at: 2026-06-07T05:11:24.613720457Z
-modified_at: 2026-06-07T05:11:24.613720457Z
+modified_at: 2026-06-07T06:06:33.926054256Z
 req_type: Story
 tags:
 - event-loop
