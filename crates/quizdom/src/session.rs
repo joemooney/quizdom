@@ -2620,6 +2620,23 @@ fn run_session_from_current(
     // without duplicating the loop below.
     let mut fe_box = build_session_front_end(config, input, output)?;
     let fe: &mut dyn crate::frontend::FrontEnd = fe_box.as_mut();
+    // trace:STORY-191 | ai:claude
+    // HYDRATE a resumed session's prior conversation into the front-end as the
+    // CLEAN STYLED transcript. A resume reaches here with `write_start_event ==
+    // false` and the full prior path in `recent_path`; the TUI front-end turns
+    // those Q/A turns into the same role-colored, markdown-rendered lines the live
+    // loop produces (so scroll/re-read span the ENTIRE history back to turn 1,
+    // follow-mode landing at the newest exchange). The HEADLESS front-end's
+    // `hydrate_resume` is a NO-OP: it already wrote the byte-exact debug replay
+    // (`replay.render`) the piped tests assert, so only the TUI restyles. A fresh
+    // start (`write_start_event == true`) has no backlog and skips this.
+    if !write_start_event && !recent_path.is_empty() {
+        let turns: Vec<(String, String)> = recent_path
+            .iter()
+            .map(|answered| (answered.question_text.clone(), answered.raw_answer.clone()))
+            .collect();
+        fe.hydrate_resume(&turns);
+    }
     // trace:STORY-82 | ai:claude
     // Mark this session active for its whole lifetime; the guard clears the
     // marker on clean end so concurrent bare-resume never picks a live session.
