@@ -27,12 +27,12 @@ description: |-
   - Mouse: wheel scrolls the transcript, click focuses a pane (per the on/off/toggle decision); capture is enabled and restored cleanly on exit/panic/$EDITOR-suspend without corrupting the terminal.
   - Cheat-sheet documents the focus keys; headless degrade unaffected.
   - Tests: focus routing (a key reaches the focused pane only), scrollbar state math, mouse-wheel->scroll mapping and click->focus (where testable), capture restored on suspend.
-status: InProgress
+status: Completed
 priority: High
 owner: ''
 feature: Uncategorized
 created_at: 2026-06-07T21:34:02.003798481Z
-modified_at: 2026-06-07T22:13:16.397718738Z
+modified_at: 2026-06-07T22:14:53.788527518Z
 req_type: Story
 tags:
 - focus
