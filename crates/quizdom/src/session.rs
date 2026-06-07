@@ -49,7 +49,8 @@ use serde_json::json;
 use serde_json::Value;
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs::{self, File, OpenOptions};
-use std::io::{BufRead, BufReader, Read, Write};
+// trace:STORY-169 | ai:claude — `IsTerminal` drives the front-end selection.
+use std::io::{BufRead, BufReader, IsTerminal, Read, Write};
 use std::path::{Path, PathBuf};
 
 const DEFAULT_SEED: &str = "Q-23";
@@ -88,6 +89,13 @@ pub(crate) struct CliConfig {
     // trace:STORY-161 | ai:claude — whether `--mode` was passed explicitly, so a
     // resume restores the logged mode only when the user did not override it.
     pub(crate) mode_provided: bool,
+    // trace:STORY-169 | ai:claude
+    /// Force the HEADLESS line front-end even on an interactive TTY (`--no-tui`).
+    /// EPIC-167 / ADR-166 make the ratatui TUI the default for interactive
+    /// `start`/`resume`/`fork`; this escape hatch keeps the old line UI for
+    /// scripting-adjacent interactive use, demos, or a terminal the TUI misreads.
+    /// Non-TTY streams already auto-select headless regardless of this flag.
+    pub(crate) no_tui: bool,
 }
 
 #[derive(Debug, Clone, Copy, Eq, PartialEq)]
@@ -133,6 +141,8 @@ impl CliConfig {
         // trace:STORY-161 | ai:claude
         let mut mode = SessionMode::default();
         let mut mode_provided = false;
+        // trace:STORY-169 | ai:claude — default off: interactive sessions get the TUI.
+        let mut no_tui = false;
         let mut args = args.into_iter().peekable();
 
         if matches!(args.peek().map(String::as_str), Some("session")) {
@@ -193,6 +203,10 @@ impl CliConfig {
                     })?;
                     mode_provided = true;
                 }
+                // trace:STORY-169 | ai:claude — `--no-tui` forces the headless line
+                // front-end even on a TTY (the TUI is otherwise the interactive
+                // default). A bare flag, no value.
+                "--no-tui" => no_tui = true,
                 "--proposition" => proposition = Some(next_arg(&mut args, "--proposition")?),
                 "--agree-seed" => agree_seed = Some(next_arg(&mut args, "--agree-seed")?),
                 "--disagree-seed" => disagree_seed = Some(next_arg(&mut args, "--disagree-seed")?),
@@ -235,7 +249,23 @@ impl CliConfig {
             goal,
             mode,
             mode_provided,
+            // trace:STORY-169 | ai:claude
+            no_tui,
         })
+    }
+}
+
+impl CliConfig {
+    // trace:STORY-169 | ai:claude
+    /// Whether this command runs an INTERACTIVE session (so the ratatui TUI is a
+    /// candidate front-end). `start`/`resume`/`fork` are interactive; `list` (and
+    /// the standalone commands routed elsewhere) are not. Used by the front-end
+    /// selection so only the interactive paths can pick up the TUI.
+    pub(crate) fn is_interactive(&self) -> bool {
+        matches!(
+            self.command,
+            SessionCommand::Start | SessionCommand::Resume | SessionCommand::Fork
+        )
     }
 }
 
@@ -346,6 +376,7 @@ fn usage() -> String {
         "  --seed Q-23                         Seed question for start",
         "  --goal text                         Goal/thesis to orient the session",
         "  --mode socratic|debate              Questioning mode (debate steelmans the opposing side)",
+        "  --no-tui                            Force the headless line UI (skip the ratatui TUI)",
         "  --branch main                       Session branch to read/write",
         "  --strategy deterministic|weighted|llm  Follow-up selection strategy",
         "  --user local-user                   User id for session logs",
@@ -1768,6 +1799,41 @@ pub(crate) fn run_session_with_question_reweighter(
     )
 }
 
+// trace:STORY-169 | ai:claude
+/// Select + build the session front-end (ADR-166 / EPIC-167).
+///
+/// Returns a boxed [`FrontEnd`] over the supplied `input`/`output` so the engine
+/// loop talks to ONE binding regardless of which impl backs it. The choice is
+/// [`crate::tui::select_front_end`]'s policy: an interactive command on a real
+/// TTY (and not `--no-tui`) gets the ratatui [`crate::tui::TuiFrontEnd`];
+/// otherwise the [`crate::frontend::LineFrontEnd`] reproduces today's line
+/// behavior over `input`/`output` (the path every test, pipe, and `--no-tui` run
+/// takes). The TUI ignores `input`/`output` (it drives the real terminal through
+/// crossterm) and reads its nested quick-add from an empty line source.
+fn build_session_front_end<'a, R: Read + 'a>(
+    config: &CliConfig,
+    input: R,
+    output: &'a mut dyn Write,
+) -> Result<Box<dyn crate::frontend::FrontEnd + 'a>> {
+    let choice = crate::tui::select_front_end(
+        config.is_interactive(),
+        config.no_tui,
+        std::io::stdin().is_terminal(),
+        std::io::stdout().is_terminal(),
+    );
+    match choice {
+        crate::tui::FrontEndChoice::Tui => {
+            // The TUI owns the real terminal; the nested quick-add core reads from
+            // an empty line source (its in-TUI authoring UI is a STORY-170 concern).
+            let empty = std::io::BufReader::new(std::io::empty());
+            Ok(Box::new(crate::tui::TuiFrontEnd::new(empty)?))
+        }
+        crate::tui::FrontEndChoice::Headless => {
+            Ok(Box::new(crate::frontend::LineFrontEnd::new(input, output)?))
+        }
+    }
+}
+
 #[allow(clippy::too_many_arguments)]
 fn run_session_from_current(
     config: &CliConfig,
@@ -1785,13 +1851,18 @@ fn run_session_from_current(
     mut recent_path: Vec<AnsweredQuestion>,
 ) -> Result<()> {
     // trace:STORY-168 | ai:claude
-    // Build the HEADLESS LINE front-end at the engine boundary and route ALL
-    // session I/O through it: the engine below renders via `fe.out()` and
-    // requests input/control via `fe.read_answer` / `fe.read_line`. The line
-    // front-end owns the `BufReader` + `FreeTextInput` and reproduces today's
-    // byte-for-byte behavior, so the ~336 piped/byte tests stay green.
-    let mut fe = crate::frontend::LineFrontEnd::new(input, output)?;
-    let fe: &mut dyn crate::frontend::FrontEnd = &mut fe;
+    // Build the front-end at the engine boundary and route ALL session I/O through
+    // it: the engine below renders via `fe.out()` and requests input/control via
+    // `fe.read_answer` / `fe.read_line`. The engine is front-end-agnostic.
+    //
+    // trace:STORY-169 | ai:claude — SELECT the front-end here (ADR-166 / EPIC-167):
+    // an interactive TTY (and not `--no-tui`) gets the ratatui TUI; everything else
+    // — a non-TTY stream, `--no-tui`, the ~336 piped/byte tests, scripted runs —
+    // gets the HEADLESS LINE front-end, which reproduces today's byte-for-byte
+    // behavior over `input`/`output`. The box lets one binding hold either impl
+    // without duplicating the loop below.
+    let mut fe_box = build_session_front_end(config, input, output)?;
+    let fe: &mut dyn crate::frontend::FrontEnd = fe_box.as_mut();
     // trace:STORY-82 | ai:claude
     // Mark this session active for its whole lifetime; the guard clears the
     // marker on clean end so concurrent bare-resume never picks a live session.
@@ -3095,13 +3166,16 @@ fn resume_session_with_term_persister(
         Some(next) => next,
         None => {
             let observer = ObserverEngine::for_config(config);
-            // trace:STORY-168 | ai:claude — the resume dead-end menu now runs
-            // against a headless line front-end built over the SAME input stream;
-            // it is dropped before `run_session_from_current` builds its own front
-            // end over the remaining bytes (reproducing the prior split: the menu
-            // and the resumed loop shared one reader).
+            // trace:STORY-168 | ai:claude — the resume dead-end menu runs against a
+            // front-end built over the SAME input stream; it is dropped before
+            // `run_session_from_current` builds its own over the remaining bytes
+            // (reproducing the prior split: the menu and the resumed loop shared
+            // one reader).
+            // trace:STORY-169 | ai:claude — the menu is interactive, so it goes
+            // through the SAME front-end selection as the loop: a TTY gets the TUI,
+            // a piped/`--no-tui` run gets the headless line front-end over `input`.
             let outcome = {
-                let mut fe = crate::frontend::LineFrontEnd::new(&mut input, &mut *output)?;
+                let mut fe = build_session_front_end(config, &mut input, &mut *output)?;
                 dead_end_menu(
                     bank,
                     strategy,
@@ -3112,7 +3186,7 @@ fn resume_session_with_term_persister(
                     &last_question,
                     &context,
                     &prior_path,
-                    &mut fe,
+                    fe.as_mut(),
                 )?
             };
             match outcome {

@@ -2680,6 +2680,8 @@ fn start_end_resume_round_trip_replays_path_and_finishes() {
         // trace:STORY-161 | ai:claude
         mode: SessionMode::Socratic,
         mode_provided: false,
+        // trace:STORY-169 | ai:claude
+        no_tui: false,
     };
     let mut start_output = Vec::new();
 
@@ -2985,6 +2987,8 @@ fn forked_agree_and_disagree_branches_are_recoverable_independently() {
         // trace:STORY-161 | ai:claude
         mode: SessionMode::Socratic,
         mode_provided: false,
+        // trace:STORY-169 | ai:claude
+        no_tui: false,
     };
     let mut fork_output = Vec::new();
     fork_session(&fork_config, &mut fork_output).unwrap();
@@ -3193,6 +3197,8 @@ fn test_config(path: &Path, seed: &str) -> CliConfig {
         // trace:STORY-161 | ai:claude
         mode: SessionMode::Socratic,
         mode_provided: false,
+        // trace:STORY-169 | ai:claude
+        no_tui: false,
     }
 }
 
