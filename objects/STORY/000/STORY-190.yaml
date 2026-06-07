@@ -18,12 +18,12 @@ description: |-
   - Disabled commands are shown dimmed, navigable for '?'-detail, and Enter on them is a no-op that shows the reason — never executes.
   - Availability rules live with the command registry; both TUI and line palettes honor them; STORY-177 filter modes still work over the full (incl. greyed) list.
   - Belief-neutral; headless degrade unaffected; tests cover each predicate (enabled/disabled by state) and that Enter on a disabled command does not return it.
-status: Approved
+status: InProgress
 priority: High
 owner: ''
 feature: Uncategorized
 created_at: 2026-06-07T21:28:26.036889056Z
-modified_at: 2026-06-07T21:29:01.103281580Z
+modified_at: 2026-06-07T21:29:02.404167411Z
 req_type: Story
 tags:
 - context
