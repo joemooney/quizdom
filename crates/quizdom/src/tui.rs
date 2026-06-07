@@ -125,18 +125,37 @@ pub(crate) struct TuiLayout {
     pub(crate) status: Rect,
 }
 
-/// Split the terminal area into the transcript / input / status panes.
+/// The default input-box height: one content row plus the top/bottom border.
+pub(crate) const INPUT_MIN_HEIGHT: u16 = 3;
+
+/// Split the terminal area into the transcript / input / status panes with a
+/// FIXED 3-row input box (single-line input paths).
 ///
 /// The status bar and the input box are fixed-height (3 rows each: one content
 /// row plus the border), and the transcript pane takes the rest — so it grows
 /// with the window and never starves the input or status. Pure over `area`.
 pub(crate) fn layout(area: Rect) -> TuiLayout {
+    layout_with_input(area, INPUT_MIN_HEIGHT)
+}
+
+// trace:BUG-183 | ai:claude
+/// Split the area with a DYNAMIC input-box height (`input_height`, borders
+/// included). The status bar stays fixed at 3 rows; the input box takes
+/// `input_height`; the transcript pane takes the rest and shrinks as the input
+/// box grows. `input_height` is clamped so the status bar and at least one
+/// transcript row always survive — pure over `area` so the geometry is unit
+/// testable without a terminal.
+pub(crate) fn layout_with_input(area: Rect, input_height: u16) -> TuiLayout {
+    // Reserve the status bar (3) plus one transcript row; the input box may take
+    // the remaining height but never less than its single-row minimum.
+    let max_input = area.height.saturating_sub(INPUT_MIN_HEIGHT + 1);
+    let input_height = input_height.clamp(INPUT_MIN_HEIGHT, max_input.max(INPUT_MIN_HEIGHT));
     let chunks = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
-            Constraint::Min(1),    // transcript (grows)
-            Constraint::Length(3), // input box (1 row + borders)
-            Constraint::Length(3), // status bar (1 row + borders)
+            Constraint::Min(1),               // transcript (grows / shrinks)
+            Constraint::Length(input_height), // input box (dynamic)
+            Constraint::Length(3),            // status bar (1 row + borders)
         ])
         .split(area);
     TuiLayout {
@@ -144,6 +163,23 @@ pub(crate) fn layout(area: Rect) -> TuiLayout {
         input: chunks[1],
         status: chunks[2],
     }
+}
+
+// trace:BUG-183 | ai:claude
+/// Compute the DYNAMIC input-box height (borders included) for a free-text
+/// answer of `content_rows` wrapped rows inside a screen `screen_height` tall.
+///
+/// The box grows with the wrapped content (`content_rows + 2` for the borders),
+/// starting from the single-row minimum and clamped to a maximum of ~1/3 of the
+/// screen. Beyond the clamp the box scrolls internally (tui-textarea keeps the
+/// cursor visible) rather than eating the transcript. Pure — unit tested
+/// directly; the live layout feeds it `content_rows` from the wrapped measure.
+pub(crate) fn input_pane_height(content_rows: u16, screen_height: u16) -> u16 {
+    // Borders add two rows. Clamp the OUTER height to one third of the screen
+    // (at least the single-row minimum, so tiny terminals still get a box).
+    let max_height = (screen_height / 3).max(INPUT_MIN_HEIGHT);
+    let desired = content_rows.saturating_add(2);
+    desired.clamp(INPUT_MIN_HEIGHT, max_height)
 }
 
 /// The scrollable transcript model: the wrapped dialogue lines plus the current
@@ -967,7 +1003,14 @@ impl<R: BufRead, B: Backend> TuiFrontEnd<R, B> {
         let title = editor_box_title(editor);
         self.terminal
             .draw(|frame| {
-                let panes = layout(frame.area());
+                let area = frame.area();
+                // trace:BUG-183 | ai:claude — the input box GROWS VERTICALLY as the
+                // soft-wrapped answer accumulates rows: measure the wrapped content
+                // for the current width, then take min(max≈⅓ screen, wrapped+borders)
+                // as the dynamic input height. The transcript pane shrinks to match.
+                let content_rows = editor.wrapped_content_rows(area.width);
+                let input_height = input_pane_height(content_rows, area.height);
+                let panes = layout_with_input(area, input_height);
 
                 // ----- transcript pane (same as draw) -----
                 let inner_height = panes.transcript.height.saturating_sub(2) as usize;
@@ -1002,6 +1045,9 @@ impl<R: BufRead, B: Backend> TuiFrontEnd<R, B> {
                 frame.render_widget(transcript_widget, panes.transcript);
 
                 // ----- input box: the tui-textarea editor widget -----
+                // The cloned widget keeps the WrapMode set on the live editor, so it
+                // soft-wraps to `panes.input` and scrolls internally once the box is
+                // clamped at its max height (cursor stays visible).
                 let mut textarea = editor.textarea().clone();
                 textarea.set_block(
                     Block::default()
@@ -1504,6 +1550,63 @@ mod tests {
         for pane in [panes.transcript, panes.input, panes.status] {
             assert_eq!(pane.width, 80);
         }
+    }
+
+    // trace:BUG-183 | ai:claude — the dynamic input-box height GROWS with wrapped
+    // rows (content + borders), starts at the single-row minimum, and clamps to
+    // ~1/3 of the screen so a runaway answer never eats the transcript.
+    #[test]
+    fn input_pane_height_grows_with_wrapped_rows_then_clamps() {
+        // One content row → minimum box (1 row + 2 borders).
+        assert_eq!(input_pane_height(1, 24), 3);
+        // Three wrapped rows → 3 + 2 borders = 5, well under the 1/3 clamp (8).
+        assert_eq!(input_pane_height(3, 24), 5);
+        // A huge answer clamps to floor(24/3) = 8 (scrolls internally past that).
+        assert_eq!(input_pane_height(100, 24), 8);
+        // Monotonic: more rows never shrink the box.
+        let mut prev = 0;
+        for rows in 0..50u16 {
+            let h = input_pane_height(rows, 30);
+            assert!(h >= prev, "height must be monotonic in rows");
+            prev = h;
+        }
+    }
+
+    // trace:BUG-183 | ai:claude — the layout reflects the dynamic input height:
+    // the input box takes the requested rows and the transcript shrinks to match
+    // (status bar stays fixed at 3).
+    #[test]
+    fn layout_with_input_reflects_dynamic_input_height() {
+        let area = Rect::new(0, 0, 80, 24);
+        let panes = layout_with_input(area, 6);
+        assert_eq!(panes.input.height, 6);
+        assert_eq!(panes.status.height, 3);
+        // Transcript = total - input - status; complementary shrink.
+        assert_eq!(panes.transcript.height, 24 - 6 - 3);
+        // Still stacked contiguously, full width, no overlap.
+        assert_eq!(panes.input.y, panes.transcript.bottom());
+        assert_eq!(panes.status.y, panes.input.bottom());
+        assert_eq!(panes.status.bottom(), 24);
+        // A taller input box leaves a smaller transcript.
+        let taller = layout_with_input(area, 10);
+        assert!(taller.transcript.height < panes.transcript.height);
+    }
+
+    // trace:BUG-183 | ai:claude — the clamp protects the status bar + at least one
+    // transcript row even when asked for an absurd input height.
+    #[test]
+    fn layout_with_input_clamps_to_protect_status_and_transcript() {
+        let area = Rect::new(0, 0, 80, 24);
+        let panes = layout_with_input(area, 100);
+        assert_eq!(panes.status.height, 3, "status bar always survives");
+        assert!(panes.transcript.height >= 1, "≥1 transcript row survives");
+        assert_eq!(
+            panes.transcript.height + panes.input.height + panes.status.height,
+            24
+        );
+        // Never below the single-row minimum either.
+        let tiny = layout_with_input(area, 0);
+        assert_eq!(tiny.input.height, INPUT_MIN_HEIGHT);
     }
 
     // trace:STORY-169 | ai:claude

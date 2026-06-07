@@ -34,7 +34,7 @@ use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use std::env;
 use std::ffi::OsStr;
 use std::path::Path;
-use tui_textarea::{CursorMove, Input, Key, Scrolling, TextArea};
+use tui_textarea::{CursorMove, Input, Key, Scrolling, TextArea, WrapMode};
 
 /// Which editing model the free-text box presents, inferred from `$EDITOR`.
 ///
@@ -125,6 +125,10 @@ impl TextEditor {
         let mut textarea = TextArea::default();
         // A free-text answer has no line-number gutter; keep it a bare text box.
         textarea.set_cursor_line_style(ratatui::style::Style::default());
+        // trace:BUG-183 | ai:claude — SOFT-WRAP the single logical answer line to
+        // the box width instead of horizontally scrolling it off the right edge.
+        // Word boundaries with a grapheme fallback for over-long tokens (URLs).
+        textarea.set_wrap_mode(WrapMode::WordOrGlyph);
         let vim = match model {
             // Vim starts in INSERT so a user can just type (and reach normal mode
             // with Esc) — the least surprising default for a quick free-text box.
@@ -166,6 +170,24 @@ impl TextEditor {
         self.textarea.is_empty()
     }
 
+    // trace:BUG-183 | ai:claude
+    /// How many CONTENT rows the buffer occupies when soft-wrapped to a box of
+    /// `outer_width` columns (i.e. excluding the box borders). Drives the dynamic
+    /// input-pane height so the box grows downward as the answer wraps. Measures
+    /// on a clone so the live editor's measure cache / cursor are untouched (the
+    /// clone has no block, so `measure` adds no chrome and returns pure content
+    /// rows for the inner width).
+    pub(crate) fn wrapped_content_rows(&self, outer_width: u16) -> u16 {
+        // The rendered box has 1-column borders on each side, so the wrap width is
+        // the inner width. Measure a borderless clone at that inner width.
+        let inner_width = outer_width.saturating_sub(2);
+        if inner_width == 0 {
+            return 1;
+        }
+        let mut probe = self.textarea.clone();
+        probe.measure(inner_width).content_rows.max(1)
+    }
+
     /// Replace the entire buffer (used after the external-editor round-trip).
     pub(crate) fn set_text(&mut self, text: &str) {
         let lines: Vec<String> = if text.is_empty() {
@@ -175,6 +197,9 @@ impl TextEditor {
         };
         let mut textarea = TextArea::new(lines);
         textarea.set_cursor_line_style(ratatui::style::Style::default());
+        // trace:BUG-183 | ai:claude — preserve soft-wrap across the external-editor
+        // round-trip (set_text rebuilds the whole TextArea).
+        textarea.set_wrap_mode(WrapMode::WordOrGlyph);
         textarea.move_cursor(CursorMove::Bottom);
         textarea.move_cursor(CursorMove::End);
         self.textarea = textarea;
@@ -944,5 +969,42 @@ mod tests {
         // Typing now appends at the end (cursor parked at end).
         type_str(&mut ed, "!");
         assert_eq!(ed.text(), "new\nlines!");
+    }
+
+    // ---- BUG-183: soft-wrap + wrapped-row measurement -----------------------
+
+    // trace:BUG-183 | ai:claude — the editor soft-wraps (no horizontal scroll):
+    // the wrap mode is enabled so a long single logical line measures as MULTIPLE
+    // content rows for the box width instead of one over-long row.
+    #[test]
+    fn wrapped_content_rows_grows_with_a_long_single_line() {
+        let mut ed = TextEditor::new(EditorModel::Emacs);
+        // Empty buffer is a single row regardless of width.
+        assert_eq!(ed.wrapped_content_rows(40), 1);
+        // A ~60-char single logical line wrapped to a 22-col box (20 inner cols)
+        // occupies several rows. Still ONE logical line (Enter would submit).
+        type_str(
+            &mut ed,
+            "the quick brown fox jumps over the lazy dog and keeps running far",
+        );
+        assert_eq!(ed.text().lines().count(), 1, "stays one logical line");
+        let rows = ed.wrapped_content_rows(22);
+        assert!(rows >= 3, "long answer wraps to multiple rows, got {rows}");
+        // A WIDER box needs fewer rows for the same text.
+        let wide = ed.wrapped_content_rows(80);
+        assert!(
+            wide < rows,
+            "wider box wraps to fewer rows: {wide} < {rows}"
+        );
+    }
+
+    // trace:BUG-183 | ai:claude — a degenerate width (narrower than the borders)
+    // still reports a single row rather than panicking or returning zero.
+    #[test]
+    fn wrapped_content_rows_clamps_tiny_width_to_one_row() {
+        let mut ed = TextEditor::new(EditorModel::Emacs);
+        type_str(&mut ed, "anything");
+        assert_eq!(ed.wrapped_content_rows(2), 1);
+        assert_eq!(ed.wrapped_content_rows(0), 1);
     }
 }
