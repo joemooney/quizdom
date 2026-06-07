@@ -1,0 +1,24 @@
+id: 019e9f74-c6bd-7b42-8c3a-4e11a5d0fe0e
+spec_id: Q-153
+agreed_id: Q-153
+prefix_override: Q
+title: 'Grant the correction: believe, not know — I''ll hold to it. Then take your newest words, the ones the climb hasn''t touched: the doubt-dissolving final note ''ends a life well lived.'' But to call a life *well lived* is itself a verdict — a grasp — and by your own rule every increment of grasp spends freedom, while doubt is freedom''s lifeblood. So the free climber, still soaked in doubt, can never truthfully say ''I have lived well'': to render that verdict would be to play the very note that ends his freedom. Only the finished self at the summit could say it — and that self, you''ve granted, is ''not a self to be praised,'' its answerability moot. So which self gets to call the life well lived — the free one who by your own terms may never pass that judgment, or the spent one to whom no credit can accrue? And if neither can truly say it while living it, is ''a life well lived'' the crown of the climb you''re describing, or only the epitaph the summit carves once no one is left to wear it?'
+description: |-
+  LLM-generated quizdom question.
+
+  answer: free-text
+  origin: Q-152
+
+  Generated from origin question: You answer the fork cleanly: orienting toward belief is wise *because belief is true* — prudence only governs the foggy business of which note to play next. But hold that answer against two things you said in the same breath as your last turn: that 'not knowing the ultimate truth is part of what it means to have free will,' and that on this side of the climb 'we can never know completely — there is always doubt, always room to view believers as fools.' Put them together. If the truth were graspable enough to be your *reason* — to genuinely move you 'because it's true' — then the doubt would already be lifting. And lifting doubt is, by your own constitutive rule, the final note that drains freedom's lifeblood. So to *know* it true enough to act on its truth is to have begun playing the very note that ends free will. Which strands the climbing self — the free one, still soaked in doubt — unable to orient 'because it's true' at all: while he is free he can move only on the weight and the danger, the prudential ground you just refused. So which do you keep? Either 'because it's true' is a reason only the finished self at the summit could honestly give — the self whose freedom is already spent — in which case no *free* being ever orients by truth, only ever by the wager you fled, and 'because it's true' was never available to the one doing the orienting. Or a being still in constitutive doubt can somehow orient 'because it's true' anyway — and then tell me what he grasps the truth *of*, when by your own terms the not-knowing is the very thing keeping him free, so that every increment of 'grasp' is an increment of freedom surrendered.
+status: Draft
+priority: Medium
+owner: ''
+feature: Uncategorized
+created_at: 2026-06-07T00:21:30.941525405Z
+modified_at: 2026-06-07T00:21:30.941525405Z
+req_type: Functional
+tags:
+- answer:free-text
+- seed
+- topic:free-will
+- weight:50
