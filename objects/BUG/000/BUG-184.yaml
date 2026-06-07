@@ -20,12 +20,12 @@ description: |-
   - The next question/rebuttal then renders normally.
   - No frozen filled-answer-box frame between submit and the next prompt.
   - Tests: read_answer draws a thinking/working frame after a parsed Answer (assert the status reflects thinking and the answer is in the transcript) using the mocked terminal/back-end.
-status: Approved
+status: InProgress
 priority: High
 owner: ''
 feature: Uncategorized
 created_at: 2026-06-07T16:24:48.882025198Z
-modified_at: 2026-06-07T16:25:00.184825508Z
+modified_at: 2026-06-07T16:25:20.130545163Z
 req_type: Bug
 tags:
 - bug
