@@ -23,7 +23,7 @@ priority: High
 owner: ''
 feature: Uncategorized
 created_at: 2026-06-07T21:28:26.036889056Z
-modified_at: 2026-06-07T21:28:26.036889056Z
+modified_at: 2026-06-07T21:28:58.423715505Z
 req_type: Story
 tags:
 - context
@@ -31,3 +31,8 @@ tags:
 - story
 - tui
 - ux
+relationships:
+- rel_type: Parent
+  target_id: 019ea07d-90fc-7b53-ad38-d8979d58a26f
+  created_at: 2026-06-07T21:28:58.423710936Z
+  created_by: joe
