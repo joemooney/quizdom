@@ -54,7 +54,7 @@ priority: High
 owner: ''
 feature: Uncategorized
 created_at: 2026-06-07T02:27:16.703193777Z
-modified_at: 2026-06-07T02:27:16.703193777Z
+modified_at: 2026-06-07T02:27:51.853432906Z
 req_type: Epic
 tags:
 - crossterm
@@ -64,3 +64,8 @@ tags:
 - palette
 - tui
 - tutor
+relationships:
+- rel_type: Child
+  target_id: 019e7e5d-0eb9-7fa1-be4e-c457b30f2289
+  created_at: 2026-06-07T02:27:51.853427972Z
+  created_by: joe
