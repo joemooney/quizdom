@@ -50,12 +50,12 @@ description: |
     summary + ends; below threshold it shows the gap to close.
   - Two opposite well-formed positions both score high (belief-neutral); mocked-LLM
     tests cover scoring + the conclude-offer + offline degrade.
-status: Approved
+status: Completed
 priority: High
 owner: ''
 feature: Uncategorized
 created_at: 2026-06-07T00:54:09.600747169Z
-modified_at: 2026-06-07T00:55:00.860181741Z
+modified_at: 2026-06-07T01:58:56.100470420Z
 req_type: Epic
 tags:
 - convergence
