@@ -195,6 +195,72 @@ pub fn arc_from_session_log(reader: impl Read, branch: Option<&str>) -> Result<S
     Ok(arc)
 }
 
+// trace:STORY-155 | ai:claude
+/// A belief-neutral ROUNDEDNESS assessment of a whole [`SessionArc`].
+///
+/// This measures STRUCTURE — never belief-correctness. Two opposite, equally
+/// well-formed positions score comparably: the score reads how *consistent*,
+/// *clear*, *complete*, and *coherent* the arc is, not whether the belief at its
+/// centre is "right". Each sub-score is a 0–100 percentage; [`composite`] folds
+/// them into a single roundedness %, and [`limiting_gap`] names the single
+/// dimension holding the score back — the pull-based "steer toward a conclusion"
+/// (EPIC-154).
+///
+/// The score is only ever produced by the LLM. Offline, there is no fabricated
+/// score — the synopsis carries a structural-only "needs LLM" note instead (see
+/// [`SessionSynopsis::roundedness`]).
+#[derive(Debug, Clone, Eq, PartialEq)]
+pub struct Roundedness {
+    /// Consistency: no internal contradictions across the arc (ties EPIC-9).
+    pub consistency: u8,
+    /// Definitional clarity: the key terms are pinned (ties EPIC-8).
+    pub definitional_clarity: u8,
+    /// Completeness: the position addresses the live objections raised.
+    pub completeness: u8,
+    /// Coherence: the parts follow — the arc hangs together.
+    pub coherence: u8,
+    /// The single LIMITING GAP holding the composite back, named
+    /// belief-neutrally (e.g. "you haven't addressed whether determinism
+    /// undermines responsibility"). Never advocates a belief.
+    pub limiting_gap: String,
+}
+
+impl Roundedness {
+    /// The four belief-neutral structural dimensions, lowest-first won't matter
+    /// here — order is fixed (consistency, clarity, completeness, coherence) so
+    /// the breakdown renders stably.
+    fn dimensions(&self) -> [(&'static str, u8); 4] {
+        [
+            ("consistency", self.consistency),
+            ("definitional clarity", self.definitional_clarity),
+            ("completeness", self.completeness),
+            ("coherence", self.coherence),
+        ]
+    }
+
+    /// The composite roundedness %, the mean of the four sub-scores rounded to
+    /// the nearest whole percent. Belief-neutral: it folds STRUCTURE, never
+    /// belief-correctness.
+    pub fn composite(&self) -> u8 {
+        let sum = self.consistency as u16
+            + self.definitional_clarity as u16
+            + self.completeness as u16
+            + self.coherence as u16;
+        // Round-to-nearest over four dimensions.
+        ((sum + 2) / 4) as u8
+    }
+
+    /// The dimension dragging the composite down the most, as a
+    /// `(label, score)` pair. Ties break toward the fixed dimension order
+    /// (consistency first), so the breakdown and the limiting line agree.
+    pub fn weakest_dimension(&self) -> (&'static str, u8) {
+        self.dimensions()
+            .into_iter()
+            .min_by_key(|(_, score)| *score)
+            .unwrap_or(("consistency", 0))
+    }
+}
+
 /// A belief-neutral, clarify-only synopsis of a whole [`SessionArc`].
 ///
 /// Every field is descriptive, never prescriptive: it names the shape of the
@@ -216,6 +282,12 @@ pub struct SessionSynopsis {
     /// A short belief-neutral engagement read (clarity / consistency /
     /// precision) — NOT a grade of which belief is right.
     pub engagement: String,
+    // trace:STORY-155 | ai:claude
+    /// The belief-neutral roundedness assessment — a composite % over the
+    /// structural dimensions plus the limiting gap. `Some` only when the LLM
+    /// produced a usable score; `None` when offline / degraded, in which case
+    /// the synopsis carries a "needs LLM" note rather than a fabricated number.
+    pub roundedness: Option<Roundedness>,
     /// True when this synopsis was synthesized structurally (offline / degraded)
     /// rather than by the LLM.
     pub degraded: bool,
@@ -224,7 +296,7 @@ pub struct SessionSynopsis {
 /// System prompt pinning the synopsis to its belief-neutral, clarify-only
 /// contract. Mirrors the per-exchange observer's contract, scaled to a whole
 /// session.
-const SYNOPSIS_SYSTEM_PROMPT: &str = "You are quizdom's session Synopsis observer. You are STRICTLY belief-neutral and clarify-only. You read a WHOLE session — the positions the user took across many questions — and summarize the ARC so the user can see their own thinking more clearly. You MUST NOT supply the user's answer, take a side, assert which belief is correct, advocate a position, or grade which belief is better. Assess ENGAGEMENT only: clarity, internal consistency, and precision — never belief correctness. Only: list the positions taken, describe how they evolved, name the internal tensions (without resolving them), summarize where the user now stands, and list what is still unresolved. Stay descriptive, not prescriptive.";
+const SYNOPSIS_SYSTEM_PROMPT: &str = "You are quizdom's session Synopsis observer. You are STRICTLY belief-neutral and clarify-only. You read a WHOLE session — the positions the user took across many questions — and summarize the ARC so the user can see their own thinking more clearly. You MUST NOT supply the user's answer, take a side, assert which belief is correct, advocate a position, or grade which belief is better. Assess ENGAGEMENT only: clarity, internal consistency, and precision — never belief correctness. Only: list the positions taken, describe how they evolved, name the internal tensions (without resolving them), summarize where the user now stands, and list what is still unresolved. You ALSO score the ROUNDEDNESS of the arc on four STRUCTURAL dimensions, each 0-100: consistency (no internal contradictions), definitional_clarity (key terms pinned), completeness (addresses the live objections raised), coherence (the parts follow). This score measures STRUCTURE ONLY — never belief-correctness: two OPPOSITE well-formed positions must score COMPARABLY. A confident, clearly-defined, internally-consistent position that has met its objections scores HIGH whatever it concludes. Also name the single LIMITING GAP holding the score back, belief-neutrally (the one dimension to shore up), NEVER advocating a belief. Stay descriptive, not prescriptive.";
 
 /// Build the synopsis prompt for one [`SessionArc`].
 fn synopsis_prompt(arc: &SessionArc) -> String {
@@ -256,7 +328,8 @@ fn synopsis_prompt(arc: &SessionArc) -> String {
     }
     format!(
         "Here is the session arc (the user's own recorded positions):\n{log}\n\
-         Return only JSON with these fields: {{\"positions\":[\"a position the user took, in their terms\"],\"evolution\":\"how the positions evolved across the session\",\"consistency\":\"the internal tensions, named neutrally and NOT resolved\",\"standing\":\"where the user now stands\",\"open_threads\":[\"a question the session left unresolved\"],\"engagement\":\"short read of clarity/consistency/precision — NOT which belief is right\"}}. \
+         Return only JSON with these fields: {{\"positions\":[\"a position the user took, in their terms\"],\"evolution\":\"how the positions evolved across the session\",\"consistency\":\"the internal tensions, named neutrally and NOT resolved\",\"standing\":\"where the user now stands\",\"open_threads\":[\"a question the session left unresolved\"],\"engagement\":\"short read of clarity/consistency/precision — NOT which belief is right\",\"roundedness\":{{\"consistency\":0-100,\"definitional_clarity\":0-100,\"completeness\":0-100,\"coherence\":0-100,\"limiting_gap\":\"the one structural dimension to shore up, named belief-neutrally — NOT a belief to adopt\"}}}}. \
+         The roundedness scores measure STRUCTURE only (consistency/clarity/completeness/coherence), NEVER belief-correctness: two opposite well-formed positions must score comparably. \
          Do NOT supply an answer, take a side, advocate a position, or grade which belief is right."
     )
 }
@@ -331,6 +404,8 @@ pub fn parse_synopsis(text: &str, arc: &SessionArc) -> Option<SessionSynopsis> {
     let standing = field("standing");
     let open_threads = list("open_threads");
     let engagement = field("engagement");
+    // trace:STORY-155 | ai:claude
+    let roundedness = value.get("roundedness").and_then(parse_roundedness);
 
     // A synopsis with no usable content is no better than the structural
     // summary; let the caller degrade instead of rendering an empty box.
@@ -340,6 +415,7 @@ pub fn parse_synopsis(text: &str, arc: &SessionArc) -> Option<SessionSynopsis> {
         && standing.is_empty()
         && open_threads.is_empty()
         && engagement.is_empty()
+        && roundedness.is_none()
     {
         return None;
     }
@@ -351,7 +427,47 @@ pub fn parse_synopsis(text: &str, arc: &SessionArc) -> Option<SessionSynopsis> {
         standing,
         open_threads,
         engagement,
+        roundedness,
         degraded: false,
+    })
+}
+
+// trace:STORY-155 | ai:claude
+/// Parse the `roundedness` object from the synopsis JSON into a [`Roundedness`].
+///
+/// Returns `None` when the payload is missing the four numeric sub-scores, so a
+/// model that omits the score (or returns junk) never yields a fabricated number
+/// — the synopsis carries the structural "needs LLM" note instead. Sub-scores
+/// are clamped to 0–100. The `limiting_gap` is optional text (a score with no
+/// stated gap is still usable).
+fn parse_roundedness(value: &Value) -> Option<Roundedness> {
+    if !value.is_object() {
+        return None;
+    }
+    let score = |key: &str| -> Option<u8> {
+        value
+            .get(key)
+            .and_then(Value::as_i64)
+            .map(|n| n.clamp(0, 100) as u8)
+    };
+    // All four structural dimensions are required — a partial score is not a
+    // roundedness reading, so degrade rather than invent the missing axes.
+    let consistency = score("consistency")?;
+    let definitional_clarity = score("definitional_clarity")?;
+    let completeness = score("completeness")?;
+    let coherence = score("coherence")?;
+    let limiting_gap = value
+        .get("limiting_gap")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .unwrap_or_default()
+        .to_string();
+    Some(Roundedness {
+        consistency,
+        definitional_clarity,
+        completeness,
+        coherence,
+        limiting_gap,
     })
 }
 
@@ -447,6 +563,9 @@ pub fn structural_synopsis(arc: &SessionArc) -> SessionSynopsis {
         engagement:
             "Offline reading: re-read your positions and check each one is clear, consistent, and precise."
                 .to_string(),
+        // trace:STORY-155 | ai:claude — no fabricated score offline; the render
+        // surfaces a "needs LLM" note in its place.
+        roundedness: None,
         degraded: true,
     }
 }
@@ -514,6 +633,59 @@ pub fn render_synopsis(synopsis: &SessionSynopsis, output: &mut impl Write) -> R
     line("Where you stand", &synopsis.standing, output)?;
     bullets("Still unresolved", &synopsis.open_threads, output)?;
     line("Engagement", &synopsis.engagement, output)?;
+    render_roundedness(synopsis, output)?;
+    Ok(())
+}
+
+// trace:STORY-155 | ai:claude
+/// Render the belief-neutral roundedness block: the composite %, the
+/// per-dimension breakdown, and the single limiting gap. When the synopsis
+/// carries no score (offline / degraded), surfaces a "needs LLM" note in its
+/// place rather than a fabricated number. Pure over the synopsis, so the score
+/// rendering is unit-testable without a live LLM.
+fn render_roundedness(synopsis: &SessionSynopsis, output: &mut impl Write) -> Result<()> {
+    let meta = crate::style::meta();
+    let Some(rounded) = &synopsis.roundedness else {
+        // Belief-neutral, no fabricated score: structural-only sessions get a
+        // note pointing at why no percentage is shown.
+        let note = if synopsis.degraded {
+            "  Roundedness: needs an LLM to score — offline, no structural % is fabricated."
+        } else {
+            "  Roundedness: not scored for this session."
+        };
+        writeln!(output, "{}", crate::style::paint(meta, note))?;
+        return Ok(());
+    };
+
+    writeln!(
+        output,
+        "{}",
+        crate::style::paint(
+            meta,
+            &format!(
+                "  Roundedness: {}% (belief-neutral — structure, not correctness):",
+                rounded.composite()
+            )
+        )
+    )?;
+    for (label, score) in rounded.dimensions() {
+        writeln!(
+            output,
+            "{}",
+            crate::style::paint(meta, &format!("    - {label}: {score}%"))
+        )?;
+    }
+    let (weakest_label, _) = rounded.weakest_dimension();
+    let gap = if rounded.limiting_gap.trim().is_empty() {
+        format!("the {weakest_label} dimension is the one to shore up.")
+    } else {
+        rounded.limiting_gap.trim().to_string()
+    };
+    writeln!(
+        output,
+        "{}",
+        crate::style::paint(meta, &format!("    Limiting gap: {gap}"))
+    )?;
     Ok(())
 }
 
@@ -992,6 +1164,175 @@ mod tests {
     fn log_path_without_id_is_a_usage_error() {
         let config = SynopsisConfig::parse(strings(["session", "synopsis"])).unwrap();
         assert!(matches!(config.log_path(), Err(QuizdomError::Usage(_))));
+    }
+
+    // ---- STORY-155: belief-neutral roundedness score ----------------------
+
+    /// A synopsis JSON body carrying a full roundedness object, parameterized by
+    /// the four sub-scores and the limiting gap, so the belief-neutrality test
+    /// can vary the *position* text while holding the structural shape fixed.
+    fn synopsis_body(
+        standing: &str,
+        consistency: u8,
+        clarity: u8,
+        completeness: u8,
+        coherence: u8,
+        gap: &str,
+    ) -> String {
+        format!(
+            r#"{{"positions":["a position"],"evolution":"e","consistency":"c","standing":"{standing}","open_threads":[],"engagement":"x","roundedness":{{"consistency":{consistency},"definitional_clarity":{clarity},"completeness":{completeness},"coherence":{coherence},"limiting_gap":"{gap}"}}}}"#
+        )
+    }
+
+    #[test]
+    fn synopsis_carries_the_roundedness_score_and_limiting_gap() {
+        let client = MockClient::ok(&synopsis_body(
+            "determinism is true",
+            90,
+            80,
+            60,
+            70,
+            "you have not addressed whether determinism undermines responsibility",
+        ));
+        let synopsis = synopsize(&client, &arc(None));
+        assert!(!synopsis.degraded);
+        let rounded = synopsis.roundedness.expect("roundedness scored");
+        assert_eq!(rounded.consistency, 90);
+        assert_eq!(rounded.definitional_clarity, 80);
+        assert_eq!(rounded.completeness, 60);
+        assert_eq!(rounded.coherence, 70);
+        // Composite is the rounded mean: (90+80+60+70)/4 = 75.
+        assert_eq!(rounded.composite(), 75);
+        // The limiting gap names the weakest dimension (completeness, 60).
+        assert_eq!(rounded.weakest_dimension(), ("completeness", 60));
+        assert!(rounded.limiting_gap.contains("responsibility"));
+    }
+
+    #[test]
+    fn the_prompt_pins_roundedness_to_structure_not_correctness() {
+        let client = MockClient::ok(r#"{"standing":"s"}"#);
+        let _ = synopsize(&client, &arc(None));
+        let prompt = client.last_prompt.borrow().clone().unwrap();
+        assert!(prompt.contains("roundedness"));
+        assert!(prompt.contains("two opposite well-formed positions must score comparably"));
+        assert!(prompt.contains("STRUCTURE only"));
+    }
+
+    #[test]
+    fn roundedness_is_belief_neutral_opposite_positions_score_comparably() {
+        // The SAME structural quality (identical sub-scores) on OPPOSITE
+        // positions must yield the SAME composite — the score reads STRUCTURE,
+        // never which belief is "right".
+        let pro = MockClient::ok(&synopsis_body(
+            "free will is real",
+            85,
+            85,
+            85,
+            85,
+            "edge cases on coercion",
+        ));
+        let con = MockClient::ok(&synopsis_body(
+            "free will is an illusion",
+            85,
+            85,
+            85,
+            85,
+            "edge cases on coercion",
+        ));
+        let pro = synopsize(&pro, &arc(None)).roundedness.expect("pro scored");
+        let con = synopsize(&con, &arc(None)).roundedness.expect("con scored");
+        assert_eq!(pro.composite(), con.composite());
+        assert_eq!(pro.composite(), 85);
+    }
+
+    #[test]
+    fn roundedness_clamps_out_of_range_scores() {
+        let client = MockClient::ok(
+            r#"{"standing":"s","roundedness":{"consistency":150,"definitional_clarity":-20,"completeness":100,"coherence":0,"limiting_gap":"g"}}"#,
+        );
+        let rounded = synopsize(&client, &arc(None)).roundedness.expect("scored");
+        assert_eq!(rounded.consistency, 100);
+        assert_eq!(rounded.definitional_clarity, 0);
+        assert_eq!(rounded.completeness, 100);
+        assert_eq!(rounded.coherence, 0);
+    }
+
+    #[test]
+    fn roundedness_is_none_when_the_score_object_is_partial() {
+        // A score missing a dimension is not a roundedness reading — degrade to
+        // no score rather than fabricate the missing axis.
+        let client = MockClient::ok(
+            r#"{"standing":"s","roundedness":{"consistency":80,"completeness":80}}"#,
+        );
+        let synopsis = synopsize(&client, &arc(None));
+        // The rest of the synopsis still parsed (standing present), so it is not
+        // degraded — but the partial score yields no number.
+        assert!(!synopsis.degraded);
+        assert!(synopsis.roundedness.is_none());
+    }
+
+    #[test]
+    fn offline_synopsis_fabricates_no_score() {
+        let synopsis = structural_synopsis(&arc(None));
+        assert!(synopsis.degraded);
+        assert!(
+            synopsis.roundedness.is_none(),
+            "offline must not fabricate a roundedness score"
+        );
+    }
+
+    #[test]
+    fn render_shows_the_composite_breakdown_and_limiting_gap() {
+        let client = MockClient::ok(&synopsis_body(
+            "determinism is true",
+            90,
+            80,
+            60,
+            70,
+            "address whether determinism undermines responsibility",
+        ));
+        let synopsis = synopsize(&client, &arc(None));
+        let mut out = Vec::new();
+        render_synopsis(&synopsis, &mut out).expect("render");
+        let rendered = String::from_utf8(out).expect("utf8");
+        assert!(rendered.contains("Roundedness: 75%"));
+        assert!(rendered.contains("consistency: 90%"));
+        assert!(rendered.contains("definitional clarity: 80%"));
+        assert!(rendered.contains("completeness: 60%"));
+        assert!(rendered.contains("coherence: 70%"));
+        assert!(rendered
+            .contains("Limiting gap: address whether determinism undermines responsibility"));
+        // Belief-neutral: it never tells the user which side is right.
+        assert!(!rendered.to_lowercase().contains("you should believe"));
+    }
+
+    #[test]
+    fn render_offline_shows_needs_llm_note_not_a_number() {
+        let synopsis = structural_synopsis(&arc(None));
+        let mut out = Vec::new();
+        render_synopsis(&synopsis, &mut out).expect("render");
+        let rendered = String::from_utf8(out).expect("utf8");
+        assert!(rendered.contains("needs an LLM to score"));
+        // No fabricated roundedness percentage offline: the score line never
+        // carries a "NN%" composite the way the LLM-scored render does.
+        assert!(!rendered.contains("Roundedness: 0%"));
+        for n in 0..=100u8 {
+            assert!(
+                !rendered.contains(&format!("Roundedness: {n}%")),
+                "offline render must not fabricate a roundedness percentage"
+            );
+        }
+    }
+
+    #[test]
+    fn render_falls_back_to_weakest_dimension_when_gap_is_blank() {
+        let client = MockClient::ok(&synopsis_body("s", 90, 50, 80, 80, ""));
+        let synopsis = synopsize(&client, &arc(None));
+        let mut out = Vec::new();
+        render_synopsis(&synopsis, &mut out).expect("render");
+        let rendered = String::from_utf8(out).expect("utf8");
+        // definitional clarity (50) is weakest, so the gap line names it.
+        assert!(rendered.contains("Limiting gap: the definitional clarity dimension"));
     }
 
     /// Write `contents` to a unique temp file and return its path.
