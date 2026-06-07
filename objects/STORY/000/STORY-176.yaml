@@ -26,7 +26,7 @@ priority: High
 owner: ''
 feature: Uncategorized
 created_at: 2026-06-07T06:59:35.368196989Z
-modified_at: 2026-06-07T06:59:45.126946442Z
+modified_at: 2026-06-07T14:22:48.241774471Z
 req_type: Story
 tags:
 - keyboard
@@ -39,3 +39,9 @@ relationships:
   target_id: 019ea07d-90fc-7b53-ad38-d8979d58a26f
   created_at: 2026-06-07T06:59:45.126940134Z
   created_by: joe
+comments:
+- id: 019ea276-ffb1-7591-a76a-287e2b78efc6
+  author: joe
+  content: 'DECIDED (user): (1) ''?'' = keyboard CHEAT-SHEET (adopt the convention); move observe-this-exchange to the ''o'' key (still /observe in the palette). Update the cheat-sheet + any help text accordingly. (2) Ctrl-Left/Ctrl-Right = SCROLL-TO-VIEW only — move a highlight up/down the transcript to re-read earlier exchanges, NON-destructive; ''B''/back remains the way to actually revise a previous answer. Navigation must clamp at first/last exchange.'
+  created_at: 2026-06-07T14:22:48.241774471Z
+  modified_at: 2026-06-07T14:22:48.241774471Z
