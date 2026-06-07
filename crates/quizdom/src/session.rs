@@ -40,8 +40,8 @@ use crate::strategy::{
     WeightedNextQuestionStrategy,
 };
 use crate::synopsis::{
-    arc_from_session_log, render_synopsis, structural_synopsis, synopsize, SessionArc,
-    SessionSynopsis,
+    arc_from_session_log, render_synopsis, structural_synopsis, synopsize, ScoreGauge, SessionArc,
+    SessionSynopsis, SCORE_GATE_TURNS,
 };
 use chrono::Utc;
 use llm::{AnthropicClient, ClaudeCliClient};
@@ -970,6 +970,75 @@ fn render_session_synopsis(
     // threshold. Callers that don't conclude (the dead-end menu, the review
     // pane) simply ignore the return.
     Ok(Some((synopsis, arc)))
+}
+
+// trace:STORY-174 | ai:claude
+/// Compute a fresh [`ScoreGauge`] reading at a GATE: read the session arc from
+/// the log (scoped to the branch + the live goal), run the synopsis LLM pass, and
+/// derive the gauge. The synopsis already scores roundedness WITH RESPECT TO the
+/// goal when one is set (STORY-159), so a goal in the arc yields a distance-to-goal
+/// reading; no goal yields general roundedness. Offline / not-logged-in the
+/// synopsis degrades and the gauge reads "needs LLM" rather than a fabricated %.
+/// Belief-neutral: the score reads STRUCTURE / progress, never belief-correctness.
+fn compute_score_gauge(
+    observer: &ObserverEngine,
+    log_path: &Path,
+    branch: Option<&str>,
+    goal: Option<&str>,
+) -> ScoreGauge {
+    let mut arc = match File::open(log_path) {
+        Ok(file) => arc_from_session_log(file, branch).unwrap_or_default(),
+        Err(_) => SessionArc::default(),
+    };
+    // The live goal (set this run via `/goal`, perhaps not yet flushed/visible in
+    // the arc the same way) wins, so the gauge scopes to exactly what the
+    // breadcrumb shows. Belief-neutral: the goal is the question being resolved.
+    if let Some(goal) = goal.map(str::trim).filter(|g| !g.is_empty()) {
+        arc.goal = Some(goal.to_string());
+    }
+    let synopsis = {
+        let _spinner = crate::spinner::Spinner::start("scoring");
+        observer.synopsize(&arc)
+    };
+    ScoreGauge::from_synopsis(&synopsis)
+}
+
+// trace:STORY-174 | ai:claude
+/// Render the persistent score gauge to the front-end output. Emits TWO things:
+///
+/// 1. A machine-readable `[score: <body>]` line the TUI status bar mirrors into
+///    its gauge segment (the same out-of-band channel the breadcrumb uses).
+/// 2. A human-readable META footer line for the HEADLESS path, so a non-TTY /
+///    `--no-tui` run shows the gauge in its footer (the TUI hides the raw bracket
+///    line via the status bar; the footer reads naturally either way).
+///
+/// `fresh` marks a live (gate) computation vs a cached value shown between gates.
+/// Belief-neutral throughout: the gauge reads STRUCTURE / distance-to-goal.
+fn render_score_gauge(gauge: &ScoreGauge, fresh: bool, output: &mut dyn Write) -> Result<()> {
+    let segment = gauge.status_segment(fresh);
+    // The bracketed line the TUI parses (mirrors the `[topic: …]` breadcrumb
+    // channel). It is plain structural chrome, not a voice.
+    writeln!(output, "[{segment}]")?;
+    // The headless-facing footer: the same reading in the META voice.
+    writeln!(
+        output,
+        "{}",
+        crate::style::paint(crate::style::meta(), &format!("  {segment}"))
+    )?;
+    Ok(())
+}
+
+// trace:STORY-174 | ai:claude
+/// Emit the gauge-OFF marker so the TUI status bar clears its score segment when
+/// `/score` toggles the gauge off, plus a headless confirmation line.
+fn render_score_gauge_off(output: &mut dyn Write) -> Result<()> {
+    writeln!(output, "[score: off]")?;
+    writeln!(
+        output,
+        "{}",
+        crate::style::paint(crate::style::meta(), "  Score gauge off.")
+    )?;
+    Ok(())
 }
 
 // trace:STORY-156 | ai:claude
@@ -2083,6 +2152,17 @@ fn run_session_from_current(
     // and resume read the same mode. Belief-neutral: debate argues craft, never
     // which belief is true.
     let mut mode: SessionMode = config.mode;
+    // trace:STORY-174 | ai:claude
+    // The persistent SCORE GAUGE state. `score_gauge_on` is the `/score` toggle —
+    // DEFAULT OFF (even with a goal set), flipped only by `/score`. `last_gauge`
+    // caches the most recent computed reading so it can be shown with a "cached"
+    // freshness marker BETWEEN gates (the EPIC-154 cost guard — scoring needs an
+    // LLM pass, so it recomputes only at gates, never every turn).
+    // `turns_since_score` counts answered turns since the last recompute; at
+    // `SCORE_GATE_TURNS` it triggers a fresh recompute at the next frontier.
+    let mut score_gauge_on = false;
+    let mut last_gauge: Option<ScoreGauge> = None;
+    let mut turns_since_score: u64 = 0;
     let mut current = bank.load_question(&config.seed)?;
     let mut settled_terms = Vec::new();
     let mut surfaced_contradictions = BTreeSet::new();
@@ -2158,6 +2238,30 @@ fn run_session_from_current(
                 goal.as_deref(),
                 fe.out(),
             )?;
+            // trace:STORY-174 | ai:claude — when the persistent gauge is ON, show
+            // it under the breadcrumb each frontier turn. COST GUARD: recompute
+            // only at GATES (every `SCORE_GATE_TURNS` answered turns); between
+            // gates show the LAST computed value with a "cached" marker. The
+            // toggle itself (and the start of the loop after a recompute) resets
+            // `turns_since_score` to 0, so the first turn after toggling shows the
+            // fresh value.
+            if score_gauge_on {
+                let fresh = if turns_since_score >= SCORE_GATE_TURNS || last_gauge.is_none() {
+                    last_gauge = Some(compute_score_gauge(
+                        &observer,
+                        &config.log_path,
+                        Some(&config.branch_id),
+                        goal.as_deref(),
+                    ));
+                    turns_since_score = 0;
+                    true
+                } else {
+                    false
+                };
+                if let Some(gauge) = &last_gauge {
+                    render_score_gauge(gauge, fresh, fe.out())?;
+                }
+            }
             let probed_terms = load_probed_terms(bank, &current);
             if let Some(settled) = settled_definition_for(&probed_terms, &settled_terms) {
                 render_settled_term_definition(settled, fe.out())?;
@@ -2282,6 +2386,34 @@ fn run_session_from_current(
                     continue;
                 }
                 AnswerInput::Forward => continue,
+                AnswerInput::Score => {
+                    // trace:STORY-174 | ai:claude
+                    // Toggle the persistent score gauge. `/score` is the SOLE
+                    // toggle and the gauge defaults OFF. Turning it ON computes the
+                    // score IMMEDIATELY (a gate) and shows it; turning it OFF emits
+                    // the gauge-off marker (the TUI clears its segment) and stops
+                    // showing it. Non-destructive: the SAME question is then
+                    // re-presented (the loop redraws the breadcrumb + gauge).
+                    // Belief-neutral: the gauge reads structure / distance-to-goal.
+                    score_gauge_on = !score_gauge_on;
+                    if score_gauge_on {
+                        let gauge = compute_score_gauge(
+                            &observer,
+                            &config.log_path,
+                            Some(&config.branch_id),
+                            goal.as_deref(),
+                        );
+                        render_score_gauge(&gauge, true, fe.out())?;
+                        last_gauge = Some(gauge);
+                        // The toggle is itself a gate, so the next frontier turn
+                        // shows this fresh value without recomputing.
+                        turns_since_score = 0;
+                    } else {
+                        last_gauge = None;
+                        render_score_gauge_off(fe.out())?;
+                    }
+                    continue;
+                }
                 AnswerInput::Goal(text) => {
                     // trace:STORY-159 | ai:claude
                     // In-session goal (way 2 of 3): the user states the
@@ -2546,6 +2678,13 @@ fn run_session_from_current(
         )?;
         // trace:STORY-81 | ai:claude
         answer_recorded = true;
+        // trace:STORY-174 | ai:claude — count this answered turn toward the score
+        // gauge's recompute GATE (the cost guard): only at `SCORE_GATE_TURNS` does
+        // the next frontier turn re-run the LLM-backed score. Counted once per
+        // answered turn regardless of whether the gauge is currently on, so
+        // turning the gauge on mid-session re-gates from a clean start (the toggle
+        // resets the counter anyway).
+        turns_since_score = turns_since_score.saturating_add(1);
         if answer.normalized == "punt" {
             // trace:STORY-53 | ai:codex
             let _updated =
@@ -2939,6 +3078,9 @@ fn ask_contradiction_follow_up(
         | AnswerInput::Forward
         | AnswerInput::Observe
         | AnswerInput::Synopsis
+        // trace:STORY-174 | ai:claude — a stray `/score` on a transient
+        // contradiction follow-up is a no-op (no gauge state in scope here).
+        | AnswerInput::Score
         | AnswerInput::Goal(_)
         // trace:STORY-173 | ai:claude — a stray `/request-goal` on a transient
         // contradiction follow-up is a no-op here (no loop goal state in scope).
@@ -3218,6 +3360,11 @@ fn browse_answered_path(
                 )?;
                 continue;
             }
+            // trace:STORY-174 | ai:claude — the `/score` gauge toggle takes effect
+            // at the FRONTIER (where the live gauge state + goal are in scope), so
+            // a stray `/score` in the review pane is a no-op; the user returns to
+            // the frontier to toggle the gauge.
+            AnswerInput::Score => continue,
             // trace:STORY-159 | ai:claude — the goal command is frontier-only in
             // effect: the review pane re-walks the saved path, so a stray `/goal`
             // here is a no-op rather than re-orienting from inside review. (The

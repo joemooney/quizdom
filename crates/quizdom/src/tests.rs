@@ -1481,9 +1481,10 @@ fn renders_all_question_kinds() {
         // trace:STORY-163 | ai:claude — `/` (palette), `/help`, and `/tutor` join
         // the advertised free-text control set.
         // trace:STORY-173 | ai:claude — `/request-goal` joins the advertised set.
+        // trace:STORY-174 | ai:claude — `/score` (the gauge toggle) joins the set.
         (
             AnswerKind::FreeText,
-            "Answer in your own words, or / (palette), /help, /tutor, /observe, /synopsis, /goal, /request-goal, /mode, /rest, /explore, /add, /punt, /back, /quit",
+            "Answer in your own words, or / (palette), /help, /tutor, /observe, /synopsis, /score, /goal, /request-goal, /mode, /rest, /explore, /add, /punt, /back, /quit",
         ),
     ];
 
@@ -2476,6 +2477,21 @@ fn request_goal_command_parses_the_on_demand_alias() {
     // The `/request-goal` keyword is NOT swallowed by the bare-`goal` recognizer
     // (which only matches a leading `goal`/`/goal` token) — they stay distinct.
     assert!(goal_command_text("/request-goal").is_none());
+}
+
+// trace:STORY-174 | ai:claude — the `/score` gauge toggle is recognized in its
+// `/score` and bare-`score` forms (case-insensitively); an ordinary answer that
+// merely mentions "score" mid-sentence is NOT a command.
+#[test]
+fn score_command_parses_the_gauge_toggle() {
+    assert!(is_score_command("/score"));
+    assert!(is_score_command("score"));
+    assert!(is_score_command("/SCORE"));
+    assert!(is_score_command("  /score  "));
+    // Not the toggle: a mid-sentence "score" or noise stays an ordinary answer.
+    assert!(!is_score_command("keep score of the argument"));
+    assert!(!is_score_command("my score is high"));
+    assert!(!is_score_command("yes"));
 }
 
 // trace:STORY-159 | ai:claude — once a goal is set, the breadcrumb shows it so
@@ -4038,6 +4054,137 @@ fn in_session_goal_command_sets_goal_and_shows_it_in_the_breadcrumb() {
     assert!(log.contains(r#""event_type":"goal_set""#), "log:\n{log}");
     assert!(log.contains(r#""source":"user""#));
     assert!(log.contains("can libertarian free will be held consistently?"));
+
+    let _ = fs::remove_file(path);
+}
+
+// trace:STORY-174 | ai:claude — the persistent score gauge defaults OFF: a fresh
+// session never shows the `[score: …]` gauge line until `/score` is typed, even
+// when a goal is set. Then `/score` toggles it ON (shows the gauge), and a second
+// `/score` toggles it OFF (emits the gauge-off marker). Offline (no LLM in tests)
+// the gauge reads a belief-neutral "needs LLM" note rather than a fabricated %.
+#[test]
+fn score_gauge_defaults_off_and_toggles_on_then_off() {
+    let path = std::env::temp_dir().join(format!(
+        "quizdom-story-174-score-toggle-{}.jsonl",
+        std::process::id()
+    ));
+    let _ = fs::remove_file(&path);
+    let bank = FakeBank::new([question_with_tags(
+        "Q-1",
+        70,
+        AnswerKind::YesNo,
+        ["topic:free-will", "answer:yes-no", "weight:70"],
+    )]);
+    let mut config = test_config(&path, "Q-1");
+    config.goal = Some("is free will real?".to_string());
+    let mut output = Vec::new();
+
+    // Turn 1 frontier: gauge OFF by default. Then `/score` ON (re-presents Q-1
+    // with the gauge), `/score` OFF (re-presents again), then answer + quit.
+    run_session(
+        &config,
+        &bank,
+        &DeterministicNextQuestionStrategy,
+        "/score\n/score\nyes\nq\n".as_bytes(),
+        &mut output,
+    )
+    .unwrap();
+
+    let rendered = String::from_utf8(output).unwrap();
+    // The FIRST frontier render (before any `/score`) carries the breadcrumb but
+    // NO gauge line — default off even though a goal is set.
+    let first_breadcrumb = rendered
+        .find("[topic:")
+        .expect("a breadcrumb should render");
+    let first_score = rendered.find("[score:");
+    assert!(
+        first_score.map(|s| s > first_breadcrumb).unwrap_or(true),
+        "the gauge must not appear before the first /score:\n{rendered}"
+    );
+    // After `/score` ON the gauge line appears, offline => a "needs LLM" note
+    // (no fabricated %), with a live freshness marker (a gate computation).
+    assert!(
+        rendered.contains("[score: needs LLM to score (live)]"),
+        "gauge-on line missing:\n{rendered}"
+    );
+    // The second `/score` turns it OFF (emits the off marker the TUI clears on).
+    assert!(
+        rendered.contains("[score: off]"),
+        "gauge-off marker missing:\n{rendered}"
+    );
+
+    let _ = fs::remove_file(path);
+}
+
+// trace:STORY-174 | ai:claude — the cost guard: with the gauge ON, the LLM-backed
+// score recomputes only at GATES (every SCORE_GATE_TURNS answered turns), NOT
+// every turn. Between gates the status bar shows the LAST value with a "cached"
+// freshness marker. Offline the body is the "needs LLM" note either way, but the
+// live/cached MARKER still distinguishes a gate recompute from a cached render,
+// which is exactly the gate logic under test.
+#[test]
+fn score_gauge_recomputes_only_at_gates_not_every_turn() {
+    use crate::SCORE_GATE_TURNS;
+    let path = std::env::temp_dir().join(format!(
+        "quizdom-story-174-score-gate-{}.jsonl",
+        std::process::id()
+    ));
+    let _ = fs::remove_file(&path);
+    // A CHAIN of distinct questions (Q-1 -> Q-2 -> … ) so several turns can be
+    // answered in a row, accumulating answered turns toward the gate. One more
+    // than the gate so the gate boundary is actually crossed.
+    let chain_len = SCORE_GATE_TURNS + 2;
+    let questions: Vec<Question> = (1..=chain_len)
+        .map(|n| {
+            question_with_tags(
+                &format!("Q-{n}"),
+                70,
+                AnswerKind::YesNo,
+                ["topic:free-will", "answer:yes-no", "weight:70"],
+            )
+        })
+        .collect();
+    let mut bank = FakeBank::new(questions);
+    for n in 1..chain_len {
+        let from = format!("Q-{n}");
+        let to: &'static str = Box::leak(format!("Q-{}", n + 1).into_boxed_str());
+        bank = bank.with_edges(&from, [to]);
+    }
+    let config = test_config(&path, "Q-1");
+    let mut output = Vec::new();
+
+    // Turn on the gauge, then answer down the chain. The toggle is a gate (live),
+    // the FIRST few post-toggle frontier renders are cached until the gate at
+    // SCORE_GATE_TURNS answered turns triggers a fresh (live) recompute.
+    let mut script = String::from("/score\n");
+    for _ in 0..chain_len {
+        script.push_str("yes\n");
+    }
+    script.push('q');
+    script.push('\n');
+    run_session(
+        &config,
+        &bank,
+        &DeterministicNextQuestionStrategy,
+        script.as_bytes(),
+        &mut output,
+    )
+    .unwrap();
+
+    let rendered = String::from_utf8(output).unwrap();
+    // At least one CACHED render appears between gates — proof the gauge does NOT
+    // recompute (live) every turn.
+    assert!(
+        rendered.contains("(cached)"),
+        "expected a cached render between gates:\n{rendered}"
+    );
+    // And at least one LIVE render appears at the gate boundaries (the toggle +
+    // the next gate after SCORE_GATE_TURNS answers).
+    assert!(
+        rendered.matches("(live)").count() >= 2,
+        "expected at least two live (gate) recomputes:\n{rendered}"
+    );
 
     let _ = fs::remove_file(path);
 }

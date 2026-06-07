@@ -74,6 +74,18 @@ far and reflects it back belief-neutrally — the ground you have covered and wh
 Use it to get oriented in a long session. Never supplies a belief. Non-destructive: returns to \
 the same question.",
         },
+        // trace:STORY-174 | ai:claude — the persistent score-gauge toggle.
+        PaletteCommand {
+            command: "/score",
+            description: "Toggle a persistent distance-to-goal / roundedness gauge",
+            detail: "Toggles a PERSISTENT gauge in the status bar (headless: the breadcrumb \
+footer). With a goal set it reads as estimated DISTANCE TO GOAL (how far the goal is settled \
+plus the remaining open thread); with no goal it reads general structural roundedness. \
+Default OFF until you type /score. It needs an LLM pass, so it recomputes at GATES (every few \
+answered turns), showing the last value with a freshness marker in between — never every turn. \
+Belief-neutral: it scores STRUCTURE / progress, never which belief is correct. Non-destructive: \
+returns to your question.",
+        },
         PaletteCommand {
             command: "/help",
             description: "Ask how the tool/dialogue works (process, belief-neutral)",
