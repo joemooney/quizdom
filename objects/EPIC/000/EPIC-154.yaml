@@ -55,7 +55,7 @@ priority: High
 owner: ''
 feature: Uncategorized
 created_at: 2026-06-07T00:54:09.600747169Z
-modified_at: 2026-06-07T01:58:56.100470420Z
+modified_at: 2026-06-07T01:59:17.603448196Z
 req_type: Epic
 tags:
 - convergence
@@ -79,3 +79,9 @@ relationships:
 - rel_type: Parent
   target_id: 019e9f93-d05a-7ef0-b09c-9a1dc9e48b72
   created_at: 2026-06-07T00:55:28.784379498Z
+comments:
+- id: 019e9fce-4b63-7b00-9526-a4a8f61af2de
+  author: joe
+  content: 'COMPLETE. STORY-155 (belief-neutral roundedness score in the synopsis: consistency/clarity/completeness/coherence -> composite % + limiting gap) + STORY-156 (offer-to-conclude at the 80% threshold + graceful conclude path summarizing the user''s OWN well-formed position). With BUG-136 (dead-end menu), a session now always has a meaningful close: convergence OR a graceful exit. 243 tests.'
+  created_at: 2026-06-07T01:59:17.603448196Z
+  modified_at: 2026-06-07T01:59:17.603448196Z
