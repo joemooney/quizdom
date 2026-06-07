@@ -1,0 +1,29 @@
+id: 019ea2d6-c076-7d23-8725-ace8ca1b0dd0
+spec_id: BUG-181
+agreed_id: BUG-181
+title: Test score_gauge_recomputes_only_at_gates_not_every_turn is slow/flaky (~60s) — likely hits a real LLM instead of a mock
+description: |-
+  On the combined main (post STORY-174/177), 'cargo test' reports: test tests::score_gauge_recomputes_only_at_gates_not_every_turn has been running for over 60 seconds. A unit test taking ~60s implies it is NOT using ObserverEngine::Mock and is shelling out to a real claude-cli backend for the roundedness/score computation (or has a network timeout/retry). The STORY-177 implementer also observed it flake once under parallel load while passing in isolation.
+
+  IMPACT: slows the suite (~79s total dominated by this one test), risks CI flakes/timeouts, and may incur LLM calls during 'cargo test'. VIS-2 dogfooding signal on test hygiene.
+
+  FIX: make the gauge-recompute gate test drive a MOCKED ObserverEngine (like the other STORY-174 score tests, e.g. score_gauge_marks_cached_readings_between_gates) so no real LLM/network is touched; assert the gate logic (recompute only every N turns) purely. Audit the other STORY-174/175 score+objection tests for the same real-LLM leak. Add a guard so score/synopsis computation in tests cannot reach a live backend (inject the engine; fail fast if a live call is attempted under test).
+
+  ## Acceptance
+  - The test runs in well under a second and never contacts a real LLM/network.
+  - The full suite no longer has any single test exceeding a few seconds.
+  - A regression guard prevents score/synopsis tests from reaching a live backend.
+  - No behavior change to the /score gauge itself.
+status: Approved
+priority: Medium
+owner: ''
+feature: Uncategorized
+created_at: 2026-06-07T16:07:23.510240040Z
+modified_at: 2026-06-07T16:07:23.510240040Z
+req_type: Bug
+tags:
+- bug
+- flaky
+- score
+- test
+- vis-2
