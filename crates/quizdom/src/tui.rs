@@ -36,9 +36,10 @@ use crate::error::{QuizdomError, Result};
 use crate::frontend::FrontEnd;
 use crate::input::{
     goal_command_text, help_command_text, is_add_command, is_back_command, is_end_command,
-    is_forward_command, is_observe_command, is_request_goal_command, is_rest_command,
-    is_score_command, is_synopsis_command, is_terminate_command, is_verdict_command,
-    mode_command_text, normalize_answer, tutor_command_text, AnswerInput, InputContext,
+    is_forward_command, is_judge_command, is_observe_command, is_request_goal_command,
+    is_resolved_command, is_rest_command, is_score_command, is_synopsis_command,
+    is_terminate_command, is_verdict_command, mode_command_text, normalize_answer,
+    objection_command_text, tutor_command_text, AnswerInput, InputContext,
 };
 use crate::model::{Answer, AnswerKind};
 use crate::palette::{command_registry, PaletteState};
@@ -224,6 +225,11 @@ pub(crate) struct StatusLine {
     // from the `[score: …]` line the engine emits when the gauge is ON. `None`
     // until `/score` turns it on; cleared again when `/score` turns it off.
     pub(crate) score: Option<String>,
+    // trace:STORY-175 | ai:claude — the open-objection GAVEL segment, mirrored from
+    // the `[objection: …]` line the engine emits when a `/objection` pins the
+    // exchange. `None` until one is raised; cleared when `/resolved` or `/judge`
+    // emits `[objection: clear]`. Belief-neutral chrome: it marks a contested point.
+    pub(crate) objection: Option<String>,
 }
 
 impl StatusLine {
@@ -238,6 +244,21 @@ impl StatusLine {
             .filter(|s| !s.is_empty())
         {
             segments.push(breadcrumb.to_string());
+        }
+        // trace:STORY-175 | ai:claude — the open-objection GAVEL segment leads the
+        // metrics (it is the most salient: the exchange is pinned) when an objection
+        // is open. Belief-neutral chrome: it marks a contested point, never a belief.
+        if let Some(objection) = self
+            .objection
+            .as_deref()
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+        {
+            segments.push(format!(
+                "{} objection: {}",
+                crate::style::OBJECTION_GAVEL,
+                objection
+            ));
         }
         // trace:STORY-174 | ai:claude — the score gauge segment sits beside the
         // mode segment when the gauge is on; it is already a `score: …` pair.
@@ -286,6 +307,19 @@ impl StatusLine {
                     self.score = None;
                 } else {
                     self.score = Some(format!("score: {}", inner.trim()));
+                }
+            }
+            // trace:STORY-175 | ai:claude — the engine emits `[objection: <text> (<party>)]`
+            // when a `/objection` PINS the exchange, and `[objection: clear]` when it is
+            // `/resolved` or `/judge`-d. Mirror it into the gavel segment; a clear drops it.
+            if let Some(inner) = trimmed
+                .strip_prefix("[objection: ")
+                .and_then(|rest| rest.strip_suffix(']'))
+            {
+                if inner.trim() == "clear" {
+                    self.objection = None;
+                } else {
+                    self.objection = Some(inner.trim().to_string());
                 }
             }
             // A `/mode` confirmation echoes "Mode set: <mode>"; mirror it.
@@ -719,6 +753,19 @@ fn parse_control(raw: &str, context: InputContext) -> Option<AnswerInput> {
     if let Some(text) = tutor_command_text(raw) {
         return Some(AnswerInput::Tutor(text));
     }
+    // trace:STORY-175 | ai:claude — the court-case `/objection` controls. `/resolved`
+    // and `/judge` are exact keywords checked before the objection-text recognizer,
+    // mirroring the line front-end recognizer order EXACTLY so the TUI routes them
+    // identically (the front-end-agnostic-engine contract).
+    if is_resolved_command(raw) {
+        return Some(AnswerInput::Resolved);
+    }
+    if is_judge_command(raw) {
+        return Some(AnswerInput::Judge);
+    }
+    if let Some(text) = objection_command_text(raw) {
+        return Some(AnswerInput::Objection(text));
+    }
     if context == InputContext::Frontier && is_add_command(raw) {
         return Some(AnswerInput::Add);
     }
@@ -933,6 +980,32 @@ mod tests {
         assert!(!status.render().contains("score:"), "{}", status.render());
     }
 
+    // trace:STORY-175 | ai:claude — the open-objection GAVEL motif mirrors the
+    // engine's `[objection: …]` line into the status bar, and `[objection: clear]`
+    // (emitted on /resolved or /judge) drops it.
+    #[test]
+    fn status_line_mirrors_the_open_objection_and_clears_on_resolve() {
+        let mut status = StatusLine::default();
+        status.observe_block("[topic: free will | depth: 1 | branch: main]\n");
+        status.observe_block("[objection: you never defined free (user)]\n");
+        let rendered = status.render();
+        assert!(
+            rendered.contains(crate::style::OBJECTION_GAVEL),
+            "{rendered}"
+        );
+        assert!(
+            rendered.contains("objection: you never defined free (user)"),
+            "{rendered}"
+        );
+        // /resolved or /judge emits `[objection: clear]`, which drops the segment.
+        status.observe_block("[objection: clear]\n");
+        assert!(
+            !status.render().contains("objection:"),
+            "{}",
+            status.render()
+        );
+    }
+
     // trace:STORY-174 | ai:claude — the gauge routes to the same AnswerInput::Score
     // through the TUI parser as the line front-end, the front-end-agnostic contract.
     #[test]
@@ -999,6 +1072,20 @@ mod tests {
         assert!(matches!(
             parse_control("/tutor x", InputContext::Frontier),
             Some(AnswerInput::Tutor(_))
+        ));
+        // trace:STORY-175 | ai:claude — the court-case objection controls route to
+        // the same AnswerInput variants as the line front-end's recognizers.
+        assert!(matches!(
+            parse_control("/objection you never defined free", InputContext::Frontier),
+            Some(AnswerInput::Objection(_))
+        ));
+        assert!(matches!(
+            parse_control("/resolved", InputContext::Frontier),
+            Some(AnswerInput::Resolved)
+        ));
+        assert!(matches!(
+            parse_control("/judge", InputContext::Frontier),
+            Some(AnswerInput::Judge)
         ));
     }
 

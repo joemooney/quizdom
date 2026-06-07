@@ -445,6 +445,30 @@ impl ScoreGauge {
         }
     }
 
+    // trace:STORY-175 | ai:claude
+    /// Fold a SUSTAINED objection's tracked OPEN THREAD into the gauge: it WIDENS
+    /// the distance-to-goal (lowers the composite by a fixed structural penalty,
+    /// floored at 0) and names the resolving condition as the LIMITING GAP, so the
+    /// gauge reflects the open thread until it is addressed. DECIDED (STORY-175): a
+    /// sustained objection is NOT binding — the dialogue proceeds — but it pulls the
+    /// gauge down so the gap is visible and future questions are drawn toward it.
+    /// Belief-neutral: the open thread is a STRUCTURAL gap, never a belief.
+    ///
+    /// A degraded gauge (no LLM-scored composite) only adopts the open thread as its
+    /// gap — there is no number to lower.
+    pub fn with_open_thread(mut self, open_thread: &str) -> Self {
+        const SUSTAINED_OBJECTION_PENALTY: u8 = 15;
+        let open_thread = open_thread.trim();
+        if open_thread.is_empty() {
+            return self;
+        }
+        if let Some(composite) = self.composite {
+            self.composite = Some(composite.saturating_sub(SUSTAINED_OBJECTION_PENALTY));
+        }
+        self.limiting_gap = open_thread.to_string();
+        self
+    }
+
     // trace:STORY-174 | ai:claude
     /// Render the gauge as a compact, single-line status SEGMENT in the shape the
     /// status bar / breadcrumb footer share: `score: <body>`. `fresh` marks
@@ -1724,6 +1748,40 @@ mod tests {
         assert!(segment.contains("(live)"), "{segment}");
         // It NEVER asserts which belief is true — only structure / progress.
         assert!(!segment.to_lowercase().contains("you should"), "{segment}");
+    }
+
+    // trace:STORY-175 | ai:claude
+    // A SUSTAINED objection's tracked OPEN THREAD WIDENS the distance-to-goal: it
+    // lowers the composite (the structural penalty) and names the resolving
+    // condition as the limiting gap, so the gauge reflects the open thread until it
+    // is addressed. The dialogue proceeds — this only pulls the gauge down.
+    #[test]
+    fn a_sustained_objection_widens_the_gauge_gap() {
+        let synopsis = synopsis_with(
+            Some("whether free will is compatible with determinism"),
+            [90, 80, 60, 70], // composite 75
+            "whether determinism undermines responsibility",
+        );
+        let base = ScoreGauge::from_synopsis(&synopsis);
+        let base_composite = base.composite.unwrap();
+        let widened = base
+            .clone()
+            .with_open_thread("define whether a caused choice can be free");
+        // The composite drops (the open thread widens the gap)...
+        assert!(
+            widened.composite.unwrap() < base_composite,
+            "sustained objection must lower the composite: {:?} -> {:?}",
+            base_composite,
+            widened.composite
+        );
+        // ...and the open thread becomes the named limiting gap.
+        let segment = widened.status_segment(true);
+        assert!(
+            segment.contains("the open thread is define whether a caused choice can be free"),
+            "{segment}"
+        );
+        // An empty thread is a no-op (nothing to track).
+        assert_eq!(base.clone().with_open_thread("   "), base);
     }
 
     // trace:STORY-174 | ai:claude

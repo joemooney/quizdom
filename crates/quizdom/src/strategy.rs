@@ -162,6 +162,14 @@ pub struct StrategyContext {
     /// side. Belief-neutral throughout: debate mode argues the opposing case's
     /// CRAFT, never asserts the opposing belief is true.
     pub mode: SessionMode,
+    // trace:STORY-175 | ai:claude
+    /// The OPEN OBJECTION the exchange is PINNED on, if one is active. While set it
+    /// NARROWS the next-question prompt to the contested point (a mini-goal that
+    /// reuses the STORY-159 goal-narrow path), taking PRIORITY over the session goal
+    /// so questions probe the objection until it is `/resolved` or `/judge`-d.
+    /// `None` = no pin (normal flow). Belief-neutral: the objection is a STRUCTURAL
+    /// tension to probe, never a belief to advocate.
+    pub objection: Option<String>,
 }
 
 #[derive(Debug, Clone, Eq, PartialEq)]
@@ -494,6 +502,22 @@ fn strategy_prompt(
         prompt.push_str(
             "DEBATE MODE: steelman the OPPOSING position to the user's. Pick or generate the follow-up that best advances the STRONGEST case AGAINST the user's stated view — its best evidence, its sharpest objection — so they must argue two-sided. Stay belief-neutral on truth: argue the opposing side's CRAFT to test the user, never assert the opposing belief is actually true.\n\n",
         );
+    }
+    // trace:STORY-175 | ai:claude
+    // An OPEN OBJECTION PINS the exchange: narrow the next question to the contested
+    // point so the questioner probes it (a mini-goal). It leads the prompt and takes
+    // PRIORITY over the session goal — while pinned, every follow-up presses the
+    // objection until it is resolved or judged. Belief-neutral: the objection is a
+    // STRUCTURAL tension to probe, never a belief to advocate.
+    if let Some(objection) = context
+        .objection
+        .as_deref()
+        .map(str::trim)
+        .filter(|o| !o.is_empty())
+    {
+        prompt.push_str(&format!(
+            "OPEN OBJECTION (the exchange is PINNED on this contested point): {objection}\nNarrow the next question to this objection — pick or generate the follow-up that best PROBES the contested point so it can be settled. This takes priority over any session goal until the objection is resolved. Stay belief-neutral: probe the structural tension, never advocate which answer is true.\n\n"
+        ));
     }
     // trace:STORY-159 | ai:claude
     // When a session GOAL/thesis is set, lead the prompt with it so the model
@@ -1128,6 +1152,8 @@ mod goal_orientation_tests {
             recent_path: Vec::<AnsweredQuestion>::new(),
             goal: goal.map(str::to_string),
             mode: SessionMode::Socratic,
+            // trace:STORY-175 | ai:claude — no pinned objection by default.
+            objection: None,
         }
     }
 
@@ -1153,6 +1179,34 @@ mod goal_orientation_tests {
         // Belief-neutral: it aims at resolving the QUESTION, never at a belief.
         assert!(prompt.to_lowercase().contains("belief-neutral"));
         assert!(!prompt.to_lowercase().contains("which answer is true\","));
+    }
+
+    #[test]
+    fn an_open_objection_narrows_the_prompt_and_takes_priority_over_the_goal() {
+        // trace:STORY-175 | ai:claude — while an objection is pinned, the next-question
+        // prompt narrows to the contested point and that preamble leads (priority over
+        // the goal), so questions probe the objection until it is resolved/judged.
+        let mut ctx = context(Some("can free will survive causation?"));
+        ctx.objection = Some("you never defined what 'free' means".to_string());
+        let prompt = strategy_prompt(&question(), &ctx, &[]);
+        assert!(
+            prompt.contains("OPEN OBJECTION"),
+            "must name the pin: {prompt}"
+        );
+        assert!(prompt.contains("you never defined what 'free' means"));
+        assert!(prompt.contains("Narrow the next question to this objection"));
+        // The objection preamble PRECEDES the goal preamble (priority).
+        let obj_at = prompt.find("OPEN OBJECTION").unwrap();
+        let goal_at = prompt.find("Session goal").unwrap();
+        assert!(obj_at < goal_at, "objection must lead the goal: {prompt}");
+        assert!(prompt.to_lowercase().contains("belief-neutral"));
+    }
+
+    #[test]
+    fn no_objection_leaves_the_prompt_unnarrowed() {
+        // trace:STORY-175 | ai:claude — no pin → no objection preamble.
+        let prompt = strategy_prompt(&question(), &context(None), &[]);
+        assert!(!prompt.contains("OPEN OBJECTION"));
     }
 
     #[test]

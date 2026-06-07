@@ -145,6 +145,33 @@ questioning) and debate (the questioner steelmans the OPPOSING side's craft). Be
 debate challenges the strength of your case, it never asserts which belief is true. A bare \
 /mode shows the current mode.",
         },
+        // trace:STORY-175 | ai:claude — the court-case objection mechanic.
+        PaletteCommand {
+            command: "/objection",
+            description: "Object — pin the exchange on a contested point",
+            detail: "Raises a court-style OBJECTION (either party may), PINNING the exchange on a \
+contested point: the questioner narrows its next questions to it and normal advancement pauses \
+until it is cleared. Clear it with /resolved (only the party who raised it) or /judge (only the \
+OTHER party, who hands it to the Observer to rule on). One objection at a time. Belief-neutral: \
+an objection names a STRUCTURAL tension, never a counter-belief.",
+        },
+        PaletteCommand {
+            command: "/resolved",
+            description: "Resolve YOUR open objection (objector only)",
+            detail: "Clears the open objection by WITHDRAWING or ACCEPTING its resolution — only \
+the party who RAISED the objection may call it. Returns the dialogue to normal flow and logs the \
+resolution. If you are the other party, use /judge instead.",
+        },
+        PaletteCommand {
+            command: "/judge",
+            description: "Have the Observer rule on the other party's objection",
+            detail: "Escalates the open objection to the OBSERVER for a BELIEF-NEUTRAL ruling — \
+only the party who did NOT raise it may call it. The Observer rules SUSTAINED (the point is \
+material and unaddressed) or OVERRULED (immaterial or already addressed) and names the resolving \
+condition; a sustained objection becomes a tracked open thread that widens the distance-to-goal \
+until addressed, while the dialogue proceeds. It judges STRUCTURE, never which belief is true. \
+Needs an LLM backend (degrades to a note offline).",
+        },
         PaletteCommand {
             command: "/rest",
             description: "Rest your case — begin the closing ritual",
@@ -505,12 +532,18 @@ mod tests {
 
     #[test]
     fn filter_narrows_by_name_substring() {
+        // trace:STORY-175 | ai:claude — "synopsis" uniquely names /synopsis (it does
+        // not appear in any other command's name or one-line description), so the
+        // filter narrows to exactly it. (The broader "ob" / "obs" now also match the
+        // court-case /objection / /judge family, by design — a name substring still
+        // narrows, just to whatever genuinely contains it.)
         let mut state = state();
-        state.push_filter('o');
-        state.push_filter('b');
+        for character in "synopsis".chars() {
+            state.push_filter(character);
+        }
         let visible = state.visible();
         assert_eq!(visible.len(), 1);
-        assert_eq!(visible[0].command, "/observe");
+        assert_eq!(visible[0].command, "/synopsis");
     }
 
     #[test]

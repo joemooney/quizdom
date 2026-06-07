@@ -198,11 +198,11 @@ fn free_text_controls(context: InputContext) -> String {
         // trace:STORY-174 | ai:claude — `/score` toggles the persistent gauge;
         // it mirrors the typed control set alongside `/synopsis`.
         InputContext::Frontier => {
-            "/ (palette), /help, /tutor, /observe, /synopsis, /score, /goal, /request-goal, /mode, /rest, /explore, /add, /punt, /back, /quit to navigate."
+            "/ (palette), /help, /tutor, /observe, /synopsis, /score, /goal, /request-goal, /mode, /objection, /resolved, /judge, /rest, /explore, /add, /punt, /back, /quit to navigate."
                 .to_string()
         }
         InputContext::Review => {
-            "/ (palette), /help, /tutor, /observe, /synopsis, /score, /goal, /request-goal, /mode, /rest, /explore, /punt, /back, /forward, /quit to navigate."
+            "/ (palette), /help, /tutor, /observe, /synopsis, /score, /goal, /request-goal, /mode, /objection, /resolved, /judge, /rest, /explore, /punt, /back, /forward, /quit to navigate."
                 .to_string()
         }
     }
@@ -290,6 +290,27 @@ pub(crate) enum AnswerInput {
     // point, surface the missing nuance, never supply the belief) lives in
     // observer.rs (STORY-165); session.rs wires it to this variant.
     Tutor(String),
+    // trace:STORY-175 | ai:claude
+    // EITHER party raised a court-style `/objection <text>`: PIN the exchange on the
+    // contested point. Carries the objection text. The session enters an OBJECTION
+    // state — the questioner NARROWS to the point (reusing the STORY-159 goal-narrow
+    // path), normal advancement pauses, and a gavel status motif shows it open. A
+    // bare `/objection` (empty text) SHOWS the current open objection (or notes none).
+    // One active objection at a time. Belief-neutral: the objection names a
+    // STRUCTURAL tension, never asserts a belief.
+    Objection(String),
+    // trace:STORY-175 | ai:claude
+    // The OBJECTING party calls `/resolved`: withdraw/accept the objection -> clear
+    // it and return to normal flow (logged). ASYMMETRIC — only the objector may call
+    // it; a wrong-caller is rejected with a helpful note. Recognised in every context.
+    Resolved,
+    // trace:STORY-175 | ai:claude
+    // The OTHER (non-objecting) party calls `/judge`: escalate to the Observer, which
+    // renders a BELIEF-NEUTRAL ruling (SUSTAINED / OVERRULED + resolving condition),
+    // then clears the objection. ASYMMETRIC — only the non-objecting party may call
+    // it. Offline degrades to a "needs an LLM backend" note. Recognised in every
+    // context. Belief-neutral: the ruling judges STRUCTURE, never which belief is true.
+    Judge,
     End,
 }
 
@@ -480,6 +501,20 @@ pub(crate) fn read_answer_or_end(
         }
         if let Some(text) = tutor_command_text(&raw) {
             return Ok(AnswerInput::Tutor(text));
+        }
+        // trace:STORY-175 | ai:claude — the court-style objection controls. `/resolved`
+        // and `/judge` are exact-keyword commands checked before `objection_command_text`
+        // so the bare-keyword objection recognizer never swallows them. All three are
+        // recognized in every context (the session enforces the asymmetric caller guards
+        // + the one-at-a-time / offline rules), like the other out-of-band controls.
+        if is_resolved_command(&raw) {
+            return Ok(AnswerInput::Resolved);
+        }
+        if is_judge_command(&raw) {
+            return Ok(AnswerInput::Judge);
+        }
+        if let Some(text) = objection_command_text(&raw) {
+            return Ok(AnswerInput::Objection(text));
         }
         // trace:STORY-88 | ai:claude — quick-add is a frontier-only control.
         if context == InputContext::Frontier && is_add_command(&raw) {
@@ -790,6 +825,38 @@ fn leading_keyword_text(raw: &str, keywords: &[&str]) -> Option<String> {
     None
 }
 
+// trace:STORY-175 | ai:claude
+/// The court-style objection command: PIN the exchange on a contested point.
+/// Recognised ONLY as a leading `/objection` keyword (slash-prefixed), like
+/// `/mode` / `/tutor`, since the bare word "objection" is plausible mid-answer.
+/// Returns the objection TEXT (trimmed) when the line is an objection command — an
+/// empty string for a bare `/objection` (the session treats that as "show the open
+/// objection"). Returns `None` otherwise, so a free-text answer that merely
+/// mentions "objection" mid-sentence is left as an answer.
+pub(crate) fn objection_command_text(raw: &str) -> Option<String> {
+    leading_keyword_text(raw, &["/objection", "/object"])
+}
+
+// trace:STORY-175 | ai:claude
+/// The OBJECTOR-only `/resolved` control: withdraw/accept the open objection.
+/// Recognised as `/resolved`, `/resolve`, or the word `resolved` (case-insensitive,
+/// exact line). The session enforces that ONLY the objecting party may call it.
+pub(crate) fn is_resolved_command(raw: &str) -> bool {
+    matches!(
+        raw.trim().to_ascii_lowercase().as_str(),
+        "/resolved" | "/resolve" | "resolved"
+    )
+}
+
+// trace:STORY-175 | ai:claude
+/// The NON-OBJECTOR-only `/judge` control: escalate the open objection to the
+/// Observer for a belief-neutral SUSTAINED/OVERRULED ruling. Recognised as
+/// `/judge` or the word `judge` (case-insensitive, exact line). The session
+/// enforces that ONLY the non-objecting party may call it, and degrades offline.
+pub(crate) fn is_judge_command(raw: &str) -> bool {
+    matches!(raw.trim().to_ascii_lowercase().as_str(), "/judge" | "judge")
+}
+
 // trace:STORY-163 | ai:claude
 /// The palette trigger: a line that is exactly `/` (the first character `/` with
 /// nothing after it) opens the slash-command palette overlay. Only a BARE `/`
@@ -969,5 +1036,52 @@ mod tests {
             normalize_answer(&AnswerKind::YesNo, "/punt"),
             Some("punt".to_string())
         );
+    }
+
+    // ---- STORY-175: the /objection court-mechanic recognizers --------------
+
+    #[test]
+    fn objection_command_is_slash_only_and_carries_its_text() {
+        // trace:STORY-175 | ai:claude — a leading `/objection <text>` is a command
+        // carrying the contested point; a bare `/objection` carries an empty string
+        // (the session shows the open objection).
+        assert_eq!(objection_command_text("/objection"), Some(String::new()));
+        assert_eq!(
+            objection_command_text("/objection you never defined free"),
+            Some("you never defined free".to_string())
+        );
+        // `/object` is an accepted shorthand.
+        assert_eq!(
+            objection_command_text("/object that begs the question"),
+            Some("that begs the question".to_string())
+        );
+        // Bare word / mid-sentence mentions are ordinary answers, not commands.
+        assert_eq!(objection_command_text("objection"), None);
+        assert_eq!(objection_command_text("I have no objection to that"), None);
+        assert_eq!(objection_command_text("/objections"), None);
+    }
+
+    #[test]
+    fn resolved_and_judge_are_exact_keyword_commands() {
+        // trace:STORY-175 | ai:claude — `/resolved` (objector) and `/judge` (other
+        // party) are exact-line keywords; the session enforces WHO may call each.
+        assert!(is_resolved_command("/resolved"));
+        assert!(is_resolved_command("/resolve"));
+        assert!(is_resolved_command("resolved"));
+        assert!(is_judge_command("/judge"));
+        assert!(is_judge_command("judge"));
+        // Not commands: mid-sentence mentions / partials.
+        assert!(!is_resolved_command("I resolved to keep going"));
+        assert!(!is_judge_command("do not judge me"));
+        assert!(!is_judge_command("/judgement"));
+    }
+
+    #[test]
+    fn resolved_and_judge_win_over_the_bare_objection_recognizer() {
+        // trace:STORY-175 | ai:claude — `/resolved` / `/judge` are recognized BEFORE
+        // the objection text recognizer, so they never get swallowed as objection
+        // text (they are not `/objection`-prefixed anyway, but order is the contract).
+        assert!(objection_command_text("/resolved").is_none());
+        assert!(objection_command_text("/judge").is_none());
     }
 }

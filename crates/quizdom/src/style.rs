@@ -94,6 +94,14 @@ pub(crate) fn breadcrumb() -> Style {
     Style::new().fg_color(Some(AnsiColor::BrightBlack.into()))
 }
 
+// trace:STORY-175 | ai:claude
+/// The GAVEL motif for an open court-case `/objection` — the status glyph shown
+/// while the exchange is PINNED on a contested point, and on the Observer's
+/// `/judge` ruling. A single source of truth so the headless footer and the TUI
+/// status bar render the same court motif. Belief-neutral chrome: it marks that a
+/// point is contested, never which belief is true.
+pub(crate) const OBJECTION_GAVEL: &str = "[gavel]";
+
 // trace:STORY-127 | ai:claude
 /// The Observer's META voice — the belief-neutral exchange reading surfaced by
 /// the `?` key. Styled distinctly (dimmed italic blue) so it reads as a
