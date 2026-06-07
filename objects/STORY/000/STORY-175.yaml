@@ -27,7 +27,7 @@ priority: High
 owner: ''
 feature: Uncategorized
 created_at: 2026-06-07T06:55:41.969073973Z
-modified_at: 2026-06-07T06:55:51.287612989Z
+modified_at: 2026-06-07T06:58:18.189761308Z
 req_type: Story
 tags:
 - court-case
@@ -40,3 +40,9 @@ relationships:
   target_id: 019e9fd5-af66-7663-abe9-9c0e4792940f
   created_at: 2026-06-07T06:55:51.287608700Z
   created_by: joe
+comments:
+- id: 019ea0e0-0bcd-78e3-ab7e-71ec1967c688
+  author: joe
+  content: 'DECIDED (user): (1) SUSTAINED -> TRACKED GAP: a sustained objection is logged as an open thread that lowers roundedness / widens distance-to-goal until addressed; the dialogue proceeds and the gap pulls future questions (NOT binding, NOT advisory-only). This ties directly into STORY-174''s distance-to-goal gauge + open-thread tracking. (2) Interrogator raises its own /objection RARELY, only when a genuine material unaddressed tension exists — sparse, never per-turn (same bounded posture as the goal-offer). DEPENDENCY: build AFTER STORY-174 (reuses its open-thread/scoring tracking).'
+  created_at: 2026-06-07T06:58:18.189761308Z
+  modified_at: 2026-06-07T06:58:18.189761308Z
