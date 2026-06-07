@@ -37,8 +37,8 @@ use crate::frontend::FrontEnd;
 use crate::input::{
     goal_command_text, help_command_text, is_add_command, is_back_command, is_end_command,
     is_forward_command, is_observe_command, is_request_goal_command, is_rest_command,
-    is_synopsis_command, is_terminate_command, is_verdict_command, mode_command_text,
-    normalize_answer, tutor_command_text, AnswerInput, InputContext,
+    is_score_command, is_synopsis_command, is_terminate_command, is_verdict_command,
+    mode_command_text, normalize_answer, tutor_command_text, AnswerInput, InputContext,
 };
 use crate::model::{Answer, AnswerKind};
 use crate::palette::{command_registry, PaletteState};
@@ -220,6 +220,10 @@ impl TranscriptPane {
 pub(crate) struct StatusLine {
     pub(crate) breadcrumb: Option<String>,
     pub(crate) mode: Option<String>,
+    // trace:STORY-174 | ai:claude — the persistent `/score` gauge segment, mirrored
+    // from the `[score: …]` line the engine emits when the gauge is ON. `None`
+    // until `/score` turns it on; cleared again when `/score` turns it off.
+    pub(crate) score: Option<String>,
 }
 
 impl StatusLine {
@@ -234,6 +238,16 @@ impl StatusLine {
             .filter(|s| !s.is_empty())
         {
             segments.push(breadcrumb.to_string());
+        }
+        // trace:STORY-174 | ai:claude — the score gauge segment sits beside the
+        // mode segment when the gauge is on; it is already a `score: …` pair.
+        if let Some(score) = self
+            .score
+            .as_deref()
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+        {
+            segments.push(score.to_string());
         }
         if let Some(mode) = self
             .mode
@@ -259,6 +273,20 @@ impl StatusLine {
             let trimmed = line.trim();
             if trimmed.starts_with("[topic:") && trimmed.ends_with(']') {
                 self.breadcrumb = Some(trimmed.trim_matches(['[', ']']).to_string());
+            }
+            // trace:STORY-174 | ai:claude — the engine emits a `[score: …]` line
+            // when the gauge is ON (the same `score: …` segment the headless
+            // footer shows). Mirror it into the status bar. A `[score: off]` line
+            // (emitted when `/score` toggles the gauge off) CLEARS the segment.
+            if let Some(inner) = trimmed
+                .strip_prefix("[score: ")
+                .and_then(|rest| rest.strip_suffix(']'))
+            {
+                if inner.trim() == "off" {
+                    self.score = None;
+                } else {
+                    self.score = Some(format!("score: {}", inner.trim()));
+                }
             }
             // A `/mode` confirmation echoes "Mode set: <mode>"; mirror it.
             if let Some(rest) = trimmed.strip_prefix("Mode set: ") {
@@ -659,6 +687,11 @@ fn parse_control(raw: &str, context: InputContext) -> Option<AnswerInput> {
     if is_synopsis_command(raw) {
         return Some(AnswerInput::Synopsis);
     }
+    // trace:STORY-174 | ai:claude — `/score` toggles the persistent gauge; mirrors
+    // the line front-end recognizer order so the TUI routes it identically.
+    if is_score_command(raw) {
+        return Some(AnswerInput::Score);
+    }
     // trace:STORY-173 | ai:claude — `/request-goal` checked before `/goal` so the
     // on-demand alias routes to the direct-propose path (mirrors the line
     // front-end recognizer order exactly).
@@ -881,6 +914,37 @@ mod tests {
         assert!(rendered.contains("topic: free will"));
         assert!(rendered.contains("goal: is it real?"));
         assert!(rendered.contains("mode: debate"));
+    }
+
+    // trace:STORY-174 | ai:claude — the status bar mirrors the `[score: …]` gauge
+    // line the engine emits when `/score` is on, and CLEARS it on `[score: off]`.
+    #[test]
+    fn status_line_mirrors_the_score_gauge_and_clears_on_off() {
+        let mut status = StatusLine::default();
+        status.observe_block("[topic: free will | depth: 1 | branch: main]\n");
+        status.observe_block("[score: ~70% of the way to settling X (live)]\n");
+        let rendered = status.render();
+        assert!(
+            rendered.contains("score: ~70% of the way to settling X (live)"),
+            "{rendered}"
+        );
+        // `/score` off emits `[score: off]`, which clears the segment.
+        status.observe_block("[score: off]\n");
+        assert!(!status.render().contains("score:"), "{}", status.render());
+    }
+
+    // trace:STORY-174 | ai:claude — the gauge routes to the same AnswerInput::Score
+    // through the TUI parser as the line front-end, the front-end-agnostic contract.
+    #[test]
+    fn parse_control_routes_score_toggle() {
+        assert!(matches!(
+            parse_control("/score", InputContext::Frontier),
+            Some(AnswerInput::Score)
+        ));
+        assert!(matches!(
+            parse_control("/score", InputContext::Review),
+            Some(AnswerInput::Score)
+        ));
     }
 
     // trace:STORY-169 | ai:claude

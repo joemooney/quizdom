@@ -195,12 +195,14 @@ fn free_text_controls(context: InputContext) -> String {
         // trace:STORY-163 | ai:claude — a bare `/` opens the slash-command PALETTE
         // (a discoverable menu of these same commands with descriptions + `?` help);
         // `/help` and `/tutor` join the typed control set.
+        // trace:STORY-174 | ai:claude — `/score` toggles the persistent gauge;
+        // it mirrors the typed control set alongside `/synopsis`.
         InputContext::Frontier => {
-            "/ (palette), /help, /tutor, /observe, /synopsis, /goal, /request-goal, /mode, /rest, /explore, /add, /punt, /back, /quit to navigate."
+            "/ (palette), /help, /tutor, /observe, /synopsis, /score, /goal, /request-goal, /mode, /rest, /explore, /add, /punt, /back, /quit to navigate."
                 .to_string()
         }
         InputContext::Review => {
-            "/ (palette), /help, /tutor, /observe, /synopsis, /goal, /request-goal, /mode, /rest, /explore, /punt, /back, /forward, /quit to navigate."
+            "/ (palette), /help, /tutor, /observe, /synopsis, /score, /goal, /request-goal, /mode, /rest, /explore, /punt, /back, /forward, /quit to navigate."
                 .to_string()
         }
     }
@@ -227,6 +229,15 @@ pub(crate) enum AnswerInput {
     // belief-neutral reading of the WHOLE session so far. Non-destructive: the
     // session shows the synopsis, then re-presents the SAME question.
     Synopsis,
+    // trace:STORY-174 | ai:claude
+    // The user toggled the persistent SCORE GAUGE via `/score`. Non-destructive:
+    // it flips the gauge ON/OFF (a status-bar / breadcrumb-footer segment) and
+    // re-presents the SAME question. When turning ON the session computes the
+    // score immediately (a gate); when ON, it recomputes at gates (every N
+    // answered turns), showing the last value with a freshness marker in between.
+    // Default OFF until `/score` is typed, even with a goal set. Belief-neutral:
+    // the gauge reads STRUCTURE / distance-to-goal, never belief-correctness.
+    Score,
     // trace:STORY-159 | ai:claude
     // The user stated the session GOAL/thesis in-session via `/goal <text>`
     // (way 2 of 3). Carries the goal text. Non-destructive: the session records
@@ -420,6 +431,13 @@ pub(crate) fn read_answer_or_end(
         if is_synopsis_command(&raw) {
             return Ok(AnswerInput::Synopsis);
         }
+        // trace:STORY-174 | ai:claude — the `/score` gauge toggle is
+        // non-destructive (it flips the status-bar gauge, then re-presents the
+        // same question), so it is recognized in every context like the other
+        // meta controls.
+        if is_score_command(&raw) {
+            return Ok(AnswerInput::Score);
+        }
         // trace:STORY-159 | ai:claude — the `/goal <text>` command is
         // non-destructive (it sets the orienting thesis, then re-presents the
         // same question), so it is recognized in every context.
@@ -609,6 +627,18 @@ pub(crate) fn is_synopsis_command(raw: &str) -> bool {
         raw.trim().to_ascii_lowercase().as_str(),
         "s" | "/s" | "/synopsis" | "synopsis"
     )
+}
+
+// trace:STORY-174 | ai:claude
+/// The persistent score-gauge TOGGLE: `/score` flips a distance-to-goal /
+/// roundedness gauge ON/OFF in the status bar (headless: the breadcrumb footer).
+/// Recognised as `/score` or the bare word `score` (case-insensitive). It is the
+/// SOLE toggle — the gauge defaults OFF until `/score` is typed, even when a goal
+/// is set. Non-destructive: it never changes the session, only the gauge
+/// visibility. A free-text answer that merely contains "score" mid-sentence is
+/// NOT a command — only the exact leading keyword triggers.
+pub(crate) fn is_score_command(raw: &str) -> bool {
+    matches!(raw.trim().to_ascii_lowercase().as_str(), "/score" | "score")
 }
 
 // trace:STORY-159 | ai:claude

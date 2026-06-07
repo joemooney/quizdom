@@ -70,9 +70,12 @@ pub use strategy::{
     WeightSampler, WeightedNextQuestionStrategy, XorShiftWeightSampler,
 };
 // trace:STORY-128 | ai:claude
+// trace:STORY-174 | ai:claude — the persistent `/score` gauge (ScoreGauge) +
+// its gate cadence (SCORE_GATE_TURNS) join the synopsis surface.
 pub use synopsis::{
     arc_from_session_log, parse_synopsis, render_synopsis, run_session_synopsis,
-    structural_synopsis, synopsize, SessionArc, SessionSynopsis, SessionTurn,
+    structural_synopsis, synopsize, ScoreGauge, SessionArc, SessionSynopsis, SessionTurn,
+    SCORE_GATE_TURNS,
 };
 // trace:STORY-77 | ai:claude
 pub use transcript::{render_transcript, run_session_show};

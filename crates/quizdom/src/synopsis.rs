@@ -380,6 +380,118 @@ impl Roundedness {
     }
 }
 
+// trace:STORY-174 | ai:claude
+/// How many answered turns may pass between recomputes of the persistent score
+/// gauge (the `/score` toggle, EPIC-154 cost guard). Scoring needs an LLM pass
+/// (the synopsis), so the gauge does NOT recompute every turn — it recomputes at
+/// GATES (every `SCORE_GATE_TURNS` answered turns, or on the toggle) and shows
+/// the LAST computed score with a freshness marker in between. Belief-neutral:
+/// the gate is a cost knob, never a belief judgement.
+pub const SCORE_GATE_TURNS: u64 = 3;
+
+// trace:STORY-174 | ai:claude
+/// A single computed reading of the persistent score gauge (`/score`).
+///
+/// Captures everything the status bar / breadcrumb footer needs to render the
+/// gauge between gates WITHOUT another LLM pass: the composite %, the limiting
+/// gap (which doubles as the remaining DISTANCE TO GOAL when a goal is set), and
+/// whether the underlying synopsis was an LLM score or an offline "needs LLM"
+/// degrade. Belief-neutral: every field reads STRUCTURE / progress, never
+/// belief-correctness.
+#[derive(Debug, Clone, Eq, PartialEq)]
+pub struct ScoreGauge {
+    /// The goal-scoped composite roundedness %, if the LLM scored it. `None`
+    /// offline / degraded — the gauge then reads "needs LLM" rather than a
+    /// fabricated number.
+    pub composite: Option<u8>,
+    /// The single limiting gap holding the composite back, named
+    /// belief-neutrally. When a goal is set this IS the remaining distance to
+    /// the goal ("the open thread is whether …"). Empty when none was named.
+    pub limiting_gap: String,
+    /// The goal this gauge was scored against, if one is set — drives the
+    /// distance-to-goal phrasing vs general roundedness. Belief-neutral: the
+    /// question being resolved, never a belief.
+    pub goal: Option<String>,
+    /// True when the underlying synopsis was synthesized structurally (offline /
+    /// degraded) rather than scored by the LLM — the gauge shows a "needs LLM"
+    /// note in that case.
+    pub degraded: bool,
+}
+
+impl ScoreGauge {
+    // trace:STORY-174 | ai:claude
+    /// Derive a gauge reading from a freshly computed [`SessionSynopsis`]. The
+    /// synopsis already scores roundedness WITH RESPECT TO the goal when one is
+    /// set (STORY-159), so the gauge just lifts the composite + limiting gap and
+    /// carries the goal through to drive the distance-to-goal phrasing.
+    pub fn from_synopsis(synopsis: &SessionSynopsis) -> Self {
+        let (composite, limiting_gap) = match &synopsis.roundedness {
+            Some(rounded) => (
+                Some(rounded.composite()),
+                rounded.limiting_gap.trim().to_string(),
+            ),
+            None => (None, String::new()),
+        };
+        Self {
+            composite,
+            limiting_gap,
+            goal: synopsis
+                .goal
+                .as_deref()
+                .map(str::trim)
+                .filter(|g| !g.is_empty())
+                .map(str::to_string),
+            degraded: synopsis.degraded || synopsis.roundedness.is_none(),
+        }
+    }
+
+    // trace:STORY-174 | ai:claude
+    /// Render the gauge as a compact, single-line status SEGMENT in the shape the
+    /// status bar / breadcrumb footer share: `score: <body>`. `fresh` marks
+    /// whether this reading was computed at the CURRENT gate (`live`) or is a
+    /// CACHED last-computed value shown between gates (`cached`), so the user can
+    /// tell a stale number from a fresh one. Belief-neutral throughout.
+    ///
+    /// Goal SET -> distance-to-goal ("~70% to settling X; open thread: …").
+    /// No goal  -> general roundedness ("~70% rounded; limiting gap: …").
+    /// Offline  -> a "needs LLM" note (never a fabricated %).
+    pub fn status_segment(&self, fresh: bool) -> String {
+        format!("score: {}", self.body(fresh))
+    }
+
+    // trace:STORY-174 | ai:claude
+    /// The gauge body (everything after the `score:` label), shared by the TUI
+    /// status segment and the headless footer line so both surfaces read the same.
+    fn body(&self, fresh: bool) -> String {
+        let marker = if fresh { "live" } else { "cached" };
+        let Some(composite) = self.composite else {
+            // No fabricated score offline — point the user at why.
+            return format!("needs LLM to score ({marker})");
+        };
+        match &self.goal {
+            // GOAL set: the gauge reads as estimated DISTANCE TO GOAL — the
+            // composite is "how far settled", the limiting gap is the remaining
+            // distance. Belief-neutral: progress toward RESOLVING the question,
+            // never which answer is true.
+            Some(goal) => {
+                let mut body = format!("~{composite}% of the way to settling {goal}");
+                if !self.limiting_gap.is_empty() {
+                    body.push_str(&format!("; the open thread is {}", self.limiting_gap));
+                }
+                format!("{body} ({marker})")
+            }
+            // No goal: general structural roundedness.
+            None => {
+                let mut body = format!("~{composite}% rounded");
+                if !self.limiting_gap.is_empty() {
+                    body.push_str(&format!("; limiting gap: {}", self.limiting_gap));
+                }
+                format!("{body} ({marker})")
+            }
+        }
+    }
+}
+
 /// A belief-neutral, clarify-only synopsis of a whole [`SessionArc`].
 ///
 /// Every field is descriptive, never prescriptive: it names the shape of the
@@ -1557,6 +1669,104 @@ mod tests {
         // The limiting gap names the weakest dimension (completeness, 60).
         assert_eq!(rounded.weakest_dimension(), ("completeness", 60));
         assert!(rounded.limiting_gap.contains("responsibility"));
+    }
+
+    // trace:STORY-174 | ai:claude
+    /// Build a non-degraded synopsis carrying a roundedness score + (optional)
+    /// goal, so the score-gauge tests can vary the goal/score without a live LLM.
+    fn synopsis_with(goal: Option<&str>, composite_dims: [u8; 4], gap: &str) -> SessionSynopsis {
+        let [consistency, definitional_clarity, completeness, coherence] = composite_dims;
+        SessionSynopsis {
+            positions: vec!["a position".to_string()],
+            evolution: String::new(),
+            consistency: String::new(),
+            standing: String::new(),
+            open_threads: vec![],
+            engagement: String::new(),
+            roundedness: Some(Roundedness {
+                consistency,
+                definitional_clarity,
+                completeness,
+                coherence,
+                limiting_gap: gap.to_string(),
+            }),
+            goal: goal.map(str::to_string),
+            mode: crate::strategy::SessionMode::Socratic,
+            degraded: false,
+        }
+    }
+
+    // trace:STORY-174 | ai:claude
+    // With a GOAL set, the gauge reads as estimated DISTANCE TO GOAL: the
+    // composite is "how far the way to settling X", and the limiting gap is the
+    // remaining open thread. Belief-neutral: progress toward resolving the
+    // QUESTION, never which answer is true.
+    #[test]
+    fn score_gauge_reads_distance_to_goal_when_a_goal_is_set() {
+        let synopsis = synopsis_with(
+            Some("whether free will is compatible with determinism"),
+            [90, 80, 60, 70], // composite 75
+            "whether determinism undermines responsibility",
+        );
+        let gauge = ScoreGauge::from_synopsis(&synopsis);
+        let segment = gauge.status_segment(true);
+        assert!(
+            segment.contains(
+                "~75% of the way to settling whether free will is compatible with determinism"
+            ),
+            "{segment}"
+        );
+        assert!(
+            segment.contains("the open thread is whether determinism undermines responsibility"),
+            "{segment}"
+        );
+        // The live freshness marker distinguishes a gate computation from a cache.
+        assert!(segment.contains("(live)"), "{segment}");
+        // It NEVER asserts which belief is true — only structure / progress.
+        assert!(!segment.to_lowercase().contains("you should"), "{segment}");
+    }
+
+    // trace:STORY-174 | ai:claude
+    // With NO goal, the gauge reads GENERAL structural roundedness (not a
+    // distance-to-goal phrasing) — composite % + the limiting gap to shore up.
+    #[test]
+    fn score_gauge_reads_general_roundedness_when_no_goal_is_set() {
+        let synopsis = synopsis_with(None, [90, 80, 60, 70], "the completeness dimension");
+        let gauge = ScoreGauge::from_synopsis(&synopsis);
+        let segment = gauge.status_segment(true);
+        assert!(segment.contains("~75% rounded"), "{segment}");
+        assert!(
+            segment.contains("limiting gap: the completeness dimension"),
+            "{segment}"
+        );
+        // No goal => no distance-to-goal phrasing.
+        assert!(!segment.contains("of the way to settling"), "{segment}");
+    }
+
+    // trace:STORY-174 | ai:claude
+    // Between gates the gauge shows the LAST computed value with a CACHED marker,
+    // so a stale number is distinguishable from a fresh one.
+    #[test]
+    fn score_gauge_marks_cached_readings_between_gates() {
+        let synopsis = synopsis_with(None, [80, 80, 80, 80], "");
+        let gauge = ScoreGauge::from_synopsis(&synopsis);
+        assert!(gauge.status_segment(true).contains("(live)"));
+        assert!(gauge.status_segment(false).contains("(cached)"));
+    }
+
+    // trace:STORY-174 | ai:claude
+    // Offline / degraded (no LLM score) the gauge shows a "needs LLM" note rather
+    // than a fabricated percentage — belief-neutral and honest about the gap.
+    #[test]
+    fn score_gauge_shows_needs_llm_when_offline() {
+        let arc = arc(Some("can libertarian free will be held?"));
+        let structural = structural_synopsis(&arc);
+        assert!(structural.roundedness.is_none());
+        let gauge = ScoreGauge::from_synopsis(&structural);
+        let segment = gauge.status_segment(true);
+        assert!(segment.contains("needs LLM to score"), "{segment}");
+        // No fabricated percentage leaks in.
+        assert!(!segment.contains('%'), "{segment}");
     }
 
     #[test]
