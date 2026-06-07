@@ -3,12 +3,12 @@ spec_id: STORY-163
 agreed_id: STORY-163
 title: Slash-command palette overlay ('/' -> menu + descriptions + '?'-per-command help)
 description: 'A self-contained crossterm OVERLAY (no ratatui rewrite): typing ''/'' as the first char at a prompt opens a popup listing the available commands each with a one-line description. Filter-as-you-type narrows; arrows navigate; Enter selects/runs the highlighted command; Esc cancels back to the prompt; ''?'' on the highlighted command shows its DETAILED help + rationale. Drive the command list from a single registry (so /help, /tutor, /observe, /synopsis, etc. all appear). Take over the terminal for the menu, render, handle keys, return the choice, restore the prompt. Degrade on non-TTY (typed slash-commands still work). Lane: input.rs + a new palette/overlay module (crossterm). ## Acceptance: ''/'' opens the palette; filter/arrow/Enter/Esc work; ''?'' shows per-command detailed help; running a command routes to the same action as the typed form; non-TTY unaffected; tests cover the registry + selection logic.'
-status: InProgress
+status: Completed
 priority: High
 owner: ''
 feature: Uncategorized
 created_at: 2026-06-07T02:27:54.078536699Z
-modified_at: 2026-06-07T03:20:57.129045268Z
+modified_at: 2026-06-07T03:22:24.108361071Z
 req_type: Story
 tags:
 - crossterm
