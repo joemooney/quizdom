@@ -1,0 +1,42 @@
+id: 019ea291-7b83-7e11-a7aa-06d13c974717
+spec_id: STORY-179
+agreed_id: STORY-179
+title: Render simple inline markdown in the TUI transcript (emphasis/strong/code), composed with role + quote colors
+description: |-
+  The interrogator/observer emit light markdown — e.g. "If instead it hopes only to keep *going toward* 'well lived'" — but the TUI shows the LITERAL markers (* and backticks) instead of styling the text.
+
+  SCOPE (see decision comment): INLINE markdown only — *emph*/_emph_ -> italic, **strong**/__strong__ -> bold, `code` -> a code style (dim/reverse). Markers are HIDDEN. Block markdown (headings, lists, blockquotes, fenced code) is OUT for now.
+
+  CO-IMPLEMENT WITH BUG-178: same code path. BUG-178 rewrites style.rs line_fragments into an inline SPAN SCANNER for quote-yellow; markdown adds more span types (text / quote / emph / strong / code) to that SAME scanner. Build them TOGETHER (one agent, one rewrite) to avoid double-touching the function and churning tests.
+
+  STYLE LAYERING: emphasis/strong/code are MODIFIERS applied ON TOP OF the line's role base color (STORY-171 — interrogator cyan, etc.); the quote-yellow rule (BUG-178) recolors quoted spans. So '*going toward*' in an interrogator line = cyan + italic; a quoted span = yellow.
+
+  PARSE RULES (CommonMark-ish, conservative):
+  - '*'/'**' open when immediately followed by a non-space and close when immediately preceded by a non-space (so '2 * 3' is literal).
+  - intraword '_' does NOT emphasize (snake_case stays literal); '*' may be intraword.
+  - `code` is literal inside (no nested parsing).
+  - '\*' (backslash-escaped) renders a literal '*'. Unterminated markers run as literal text.
+
+  HEADLESS UNCHANGED: the LineFrontEnd path keeps the literal markers (the ~336 piped byte-tests assert exact output) — ONLY the TuiFrontEnd renders styling.
+
+  Lane: style.rs (extend the BUG-178 span scanner to emit text/quote/emph/strong/code tokens) + tui.rs (map tokens to ratatui Style modifiers over the role color). Hand-rolled for this inline subset (no new dep); pulldown-cmark is the noted upgrade path for full/block markdown later.
+
+  ## Acceptance
+  - '*going toward*' renders ITALIC with markers hidden, in the interrogator's cyan; '**x**' bold; '`x`' code-styled.
+  - 'snake_case' and '2 * 3' do NOT get styled; '\*' renders a literal '*'; unterminated markers stay literal.
+  - Inline markdown COMPOSES with quote-yellow (BUG-178) and the role base color (STORY-171) in one line.
+  - Block markdown is left literal (no crash, no reflow).
+  - Headless/LineFrontEnd output is byte-unchanged (literal markers); existing piped tests still pass.
+  - Tests: emph, strong, code, intraword-underscore-safe, spaced-asterisk-literal, escaped-asterisk, unterminated, and a line mixing role color + a quoted span + an emphasized span.
+status: Approved
+priority: High
+owner: ''
+feature: Uncategorized
+created_at: 2026-06-07T14:51:43.875515782Z
+modified_at: 2026-06-07T14:51:43.875515782Z
+req_type: Story
+tags:
+- markdown
+- story
+- style
+- tui
