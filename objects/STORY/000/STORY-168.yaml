@@ -8,7 +8,7 @@ priority: High
 owner: ''
 feature: Uncategorized
 created_at: 2026-06-07T05:11:19.359207235Z
-modified_at: 2026-06-07T05:51:28.856094148Z
+modified_at: 2026-06-07T05:51:30.174443026Z
 req_type: Story
 tags:
 - foundation
@@ -20,3 +20,9 @@ relationships:
 - rel_type: Child
   target_id: 019ea07d-90fc-7b53-ad38-d8979d58a26f
   created_at: 2026-06-07T05:11:21.358987909Z
+comments:
+- id: 019ea0a2-e37e-7c22-a73b-43bd5a4f737f
+  author: joe
+  content: 'Front-end seam landed: new crate::frontend::{FrontEnd trait, LineFrontEnd headless impl}. Engine I/O (session.rs, honing.rs) routes through fe.out()/read_answer/read_line/read_raw_line/author_io; render helpers + palette + question_add authoring core switched to &mut dyn Write. Pure refactor, no behavior change: all 339 quizdom + 7 llm tests pass unchanged. No new clippy warnings.'
+  created_at: 2026-06-07T05:51:30.174443026Z
+  modified_at: 2026-06-07T05:51:30.174443026Z
