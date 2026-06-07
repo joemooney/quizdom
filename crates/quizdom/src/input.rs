@@ -196,11 +196,11 @@ fn free_text_controls(context: InputContext) -> String {
         // (a discoverable menu of these same commands with descriptions + `?` help);
         // `/help` and `/tutor` join the typed control set.
         InputContext::Frontier => {
-            "/ (palette), /help, /tutor, /observe, /synopsis, /goal, /mode, /rest, /explore, /add, /punt, /back, /quit to navigate."
+            "/ (palette), /help, /tutor, /observe, /synopsis, /goal, /request-goal, /mode, /rest, /explore, /add, /punt, /back, /quit to navigate."
                 .to_string()
         }
         InputContext::Review => {
-            "/ (palette), /help, /tutor, /observe, /synopsis, /goal, /mode, /rest, /explore, /punt, /back, /forward, /quit to navigate."
+            "/ (palette), /help, /tutor, /observe, /synopsis, /goal, /request-goal, /mode, /rest, /explore, /punt, /back, /forward, /quit to navigate."
                 .to_string()
         }
     }
@@ -234,6 +234,13 @@ pub(crate) enum AnswerInput {
     // bare `/goal` with no text carries an empty string, which the session
     // treats as "show the current goal" rather than clearing it.
     Goal(String),
+    // trace:STORY-173 | ai:claude
+    // The user asked the Observer to PROPOSE a goal directly via `/request-goal`
+    // (the on-demand alias). Unlike bare `/goal` (which first confirms with
+    // `[y/N]`), this skips the confirm and proposes straight away, then offers
+    // accept / edit / decline. Recognised in every context. Belief-neutral: the
+    // proposed goal is the QUESTION being resolved, never a belief.
+    RequestGoal,
     // trace:STORY-161 | ai:claude
     // The user toggled the session MODE in-session via `/mode <socratic|debate>`
     // (the EPIC-158 toggle). Carries the raw mode token (trimmed). Non-destructive:
@@ -416,6 +423,14 @@ pub(crate) fn read_answer_or_end(
         // trace:STORY-159 | ai:claude — the `/goal <text>` command is
         // non-destructive (it sets the orienting thesis, then re-presents the
         // same question), so it is recognized in every context.
+        // trace:STORY-173 | ai:claude — `/request-goal` is the on-demand alias
+        // that proposes a goal directly (skipping the bare-`/goal` `[y/N]`
+        // confirm). Checked BEFORE `goal_command_text` so the longer keyword wins
+        // (a bare-`/goal` recognizer would otherwise swallow `/request-goal` only
+        // if it led with `goal`, but ordering it first keeps the intent explicit).
+        if is_request_goal_command(&raw) {
+            return Ok(AnswerInput::RequestGoal);
+        }
         if let Some(goal) = goal_command_text(&raw) {
             return Ok(AnswerInput::Goal(goal));
         }
@@ -621,6 +636,20 @@ pub(crate) fn goal_command_text(raw: &str) -> Option<String> {
         }
     }
     None
+}
+
+// trace:STORY-173 | ai:claude
+/// The on-demand goal-request command: ask the Observer to PROPOSE a session goal
+/// directly. Recognised as `/request-goal`, `/request goal`, or `request-goal`
+/// (case-insensitive, leading keyword only). Unlike bare `/goal`, this skips the
+/// `[y/N]` confirm and proposes straight away. A free-text answer that merely
+/// contains "request" mid-sentence is NOT a command — only the exact leading
+/// keyword triggers, so ordinary answers are unaffected.
+pub(crate) fn is_request_goal_command(raw: &str) -> bool {
+    matches!(
+        raw.trim().to_ascii_lowercase().as_str(),
+        "/request-goal" | "/request goal" | "request-goal" | "/requestgoal"
+    )
 }
 
 // trace:STORY-161 | ai:claude
@@ -897,6 +926,8 @@ mod tests {
         assert!(is_end_command("/quit"));
         assert!(is_rest_command("/rest"));
         assert!(goal_command_text("/goal").is_some());
+        // trace:STORY-173 | ai:claude — `/request-goal` routes to its own variant.
+        assert!(is_request_goal_command("/request-goal"));
         assert!(mode_command_text("/mode").is_some());
         assert!(help_command_text("/help").is_some());
         assert!(tutor_command_text("/tutor").is_some());
