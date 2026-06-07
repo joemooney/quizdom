@@ -21,12 +21,12 @@ description: |-
   - The '?'-vs-observe binding conflict is resolved per the decision and documented in the cheat-sheet.
   - Non-TTY/headless degrade gracefully; existing single-key controls + editing keys unchanged.
   - Tests: key-dispatch table, cheat-sheet is generated from the registry (no drift), navigation bounds (can't go before the first / past the last question).
-status: InProgress
+status: Completed
 priority: High
 owner: ''
 feature: Uncategorized
 created_at: 2026-06-07T06:59:35.368196989Z
-modified_at: 2026-06-07T14:22:58.103409380Z
+modified_at: 2026-06-07T15:19:38.929630506Z
 req_type: Story
 tags:
 - keyboard
