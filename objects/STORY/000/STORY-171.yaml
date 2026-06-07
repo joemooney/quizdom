@@ -12,12 +12,12 @@ description: |-
   (5) QUOTE-ATTRIBUTION: a quoted span (text inside "...") within the USER's answer renders in the INTERROGATOR's color (a quote attributes to the interrogator). Heuristic is fine for v1 (any quoted span -> interrogator color); a future refinement could match the quote to the interrogator's actual prior text.
 
   Lane: tui.rs (rendering) + style.rs (the centralized theme/palette). ## Acceptance: pane borders + gold cursor + colorized status render in the TUI; each role's transcript text uses its themed color; a quoted span in the user's answer renders in the interrogator's color; the theme lives in one place; non-TTY/NO_COLOR + the headless line front-end are unaffected; tests pass.
-status: InProgress
+status: Completed
 priority: High
 owner: ''
 feature: Uncategorized
 created_at: 2026-06-07T06:31:58.875310462Z
-modified_at: 2026-06-07T06:38:51.589266143Z
+modified_at: 2026-06-07T06:40:06.849003747Z
 req_type: Story
 tags:
 - color
