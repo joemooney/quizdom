@@ -1,0 +1,35 @@
+id: 019ea2e6-b3f2-7b01-bab8-20d5af90aedc
+spec_id: BUG-184
+agreed_id: BUG-184
+title: After submitting a free-text answer the TUI freezes on the answer box — no 'thinking' state, answer/next question don't paint until the next prompt
+description: |-
+  OBSERVED: press Enter on a free-text answer; the screen stays frozen showing the filled answer box during the engine's LLM call; the submitted answer and the new question do not appear, and the status keeps showing the answer box instead of a 'thinking' indicator.
+
+  ROOT CAUSE: tui.rs read_free_text() Submit branch pushes '> answer' into the transcript MODEL but does NOT redraw; it returns immediately to the engine, which then makes a SYNCHRONOUS multi-second LLM call with no front-end draw in between. The screen is last-drawn as the editor box, so it appears frozen; the echoed answer + the next question only paint when the NEXT read_answer calls flush_pending()+draw.
+
+  DESIRED:
+  1. On submit, IMMEDIATELY redraw a frame BEFORE returning to the engine: the transcript now shows the echoed '> answer', the editor box COLLAPSES/clears (not showing the just-typed text), and the STATUS bar shows a 'thinking…' / working indicator (reuse the existing spinner.rs if practical, or a static 'thinking…' segment) so the user sees their answer land and the system working during the blocking call.
+  2. Ensure the subsequent question/rebuttal renders (flush_pending already pushes engine out()-text on the next read; the missing piece is the post-submit draw + the thinking state).
+
+  This is the FREE-TEXT path specifically; the single-key path draws each loop so it is less affected, but apply the same 'thinking after a submitted Answer' treatment there too.
+
+  IMPLEMENTATION NOTE: the front-end cannot see the engine's internal LLM call, so draw the 'thinking' frame at the END of read_answer (right after a valid Answer is parsed, before returning) — for control commands that return instantly the engine's next output replaces it harmlessly.
+
+  ## Acceptance
+  - Submitting a free-text answer immediately shows the answer in the transcript and a 'thinking…' status, with the editor box collapsed, during the LLM call.
+  - The next question/rebuttal then renders normally.
+  - No frozen filled-answer-box frame between submit and the next prompt.
+  - Tests: read_answer draws a thinking/working frame after a parsed Answer (assert the status reflects thinking and the answer is in the transcript) using the mocked terminal/back-end.
+status: Approved
+priority: High
+owner: ''
+feature: Uncategorized
+created_at: 2026-06-07T16:24:48.882025198Z
+modified_at: 2026-06-07T16:24:48.882025198Z
+req_type: Bug
+tags:
+- bug
+- editor
+- redraw
+- thinking
+- tui
