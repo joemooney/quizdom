@@ -1,0 +1,66 @@
+id: 019e9f92-a9c0-7d51-9105-8610d6e3810c
+spec_id: EPIC-154
+agreed_id: EPIC-154
+title: 'Convergence: belief-neutral roundedness score + offer-to-conclude'
+description: |
+  Give a belief exploration a meaningful FINISH LINE: a belief-neutral ROUNDEDNESS
+  score the user can request anytime, and — when the position is well-rounded — an
+  OFFER to conclude. Reframes "the end" from EXHAUSTION (bank empty / dead-end,
+  BUG-136) to CONVERGENCE (the argument is coherent, consistent, complete).
+  Extends the Observer (EPIC-126). ON-DEMAND only (no proactive interjection, per
+  the chosen design). Belief-neutral throughout.
+
+  ## Roundedness score
+
+  A composite % over belief-neutral STRUCTURAL dimensions — **consistency** (no
+  internal contradictions; ties EPIC-9), **definitional clarity** (terms pinned;
+  ties EPIC-8), **completeness** (addresses the live objections), **coherence**
+  (the parts follow) — NOT belief-correctness (two opposite positions can both
+  score high). Surfaced in the synopsis (`S` key / `quizdom session synopsis`)
+  with the dimensional breakdown and, crucially, the **limiting gap**: "~75% — the
+  gap is you haven't addressed whether determinism undermines responsibility."
+  That gap is the pull-based "steer toward a conclusion."
+
+  ## Offer to conclude
+
+  When roundedness crosses a "well-rounded" threshold, the on-demand synopsis
+  OFFERS to conclude: "Your position on X is ~N% rounded (coherent, consistent,
+  addresses the main objections) — conclude with a summary, or keep probing edge
+  cases?" The user decides (preserves agency). Concluding prints a final
+  belief-neutral summary of the user's OWN well-formed position and ends
+  gracefully (with the resume footer). Below threshold, the synopsis just shows
+  the score + gap.
+
+  ## Notes
+
+  - ON-DEMAND only — the score + offer surface when the user requests the synopsis;
+    no proactive interjection (chosen design; a minimal one-line threshold nudge at
+    the prompt could be a future tweak).
+  - Computed on request, not per-turn — no continuous LLM cost.
+  - Belief-neutral: never advocates a belief; "conclude" summarizes the user's own
+    well-formed position.
+  - Complements BUG-136: convergence is the GOOD terminal; the dead-end menu is the
+    exhaustion terminal.
+
+  ## Acceptance
+
+  - The synopsis includes a belief-neutral roundedness % + dimensional breakdown +
+    the limiting gap.
+  - At/above threshold the synopsis offers to conclude; concluding prints a final
+    summary + ends; below threshold it shows the gap to close.
+  - Two opposite well-formed positions both score high (belief-neutral); mocked-LLM
+    tests cover scoring + the conclude-offer + offline degrade.
+status: Approved
+priority: High
+owner: ''
+feature: Uncategorized
+created_at: 2026-06-07T00:54:09.600747169Z
+modified_at: 2026-06-07T00:54:09.600747169Z
+req_type: Epic
+tags:
+- convergence
+- epic
+- observer
+- roundedness
+- score
+- terminal
