@@ -82,6 +82,19 @@ pub(crate) trait FrontEnd {
     /// through the seam. The line front-end hands back its own channels; a future
     /// TUI front-end implements this by feeding the core from its own input source.
     fn author_io(&mut self) -> (&mut dyn BufRead, &mut dyn Write);
+
+    // trace:STORY-191 | ai:claude
+    /// HYDRATE a resumed session's prior conversation into the front-end as the
+    /// CLEAN STYLED transcript (the same role-colored, markdown-rendered Q/A the
+    /// live session shows), so the resumed pane scrolls back through the ENTIRE
+    /// history to turn 1.
+    ///
+    /// `turns` is the prior conversation in order: each entry is `(question_text,
+    /// raw_answer)`. The default impl is a NO-OP: the headless [`LineFrontEnd`]
+    /// already emitted the byte-exact DEBUG replay (`replay.render`) the ~336
+    /// piped tests assert, so it must NOT also inject the styled hydration. Only
+    /// the ratatui TUI overrides this to build the clean styled transcript.
+    fn hydrate_resume(&mut self, _turns: &[(String, String)]) {}
 }
 
 /// The HEADLESS LINE front-end: today's behavior, behind the seam.
@@ -188,6 +201,25 @@ mod tests {
         // The prompt is written to the sink each call (plain, non-TTY mode).
         let out = String::from_utf8(fe.into_output()).unwrap();
         assert_eq!(out, "> > ");
+    }
+
+    // trace:STORY-191 | ai:claude
+    // The HEADLESS front-end's `hydrate_resume` is a NO-OP: it writes NOTHING to
+    // the output sink, so the byte-exact debug replay (`SessionReplay::render`)
+    // the ~336 piped tests assert is never perturbed by the TUI-only styled
+    // hydration. Only the ratatui TUI front-end restyles the resumed transcript.
+    #[test]
+    fn line_front_end_hydrate_resume_writes_nothing() {
+        let mut fe = LineFrontEnd::new(Cursor::new(Vec::new()), Vec::new()).unwrap();
+        fe.hydrate_resume(&[
+            ("Is the will free?".to_string(), "yes".to_string()),
+            ("What is causation?".to_string(), "necessity".to_string()),
+        ]);
+        let out = fe.into_output();
+        assert!(
+            out.is_empty(),
+            "headless hydrate_resume must not touch the byte-exact replay output"
+        );
     }
 
     // trace:STORY-168 | ai:claude

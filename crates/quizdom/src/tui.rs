@@ -692,6 +692,41 @@ impl<R: BufRead, B: Backend> TuiFrontEnd<R, B> {
         self.pending.clear();
     }
 
+    // trace:STORY-191 | ai:claude
+    /// Hydrate a RESUMED session's prior conversation into the transcript pane as
+    /// the CLEAN STYLED transcript — NOT the `[turn N]/question_ref:` debug replay
+    /// the headless front-end emits. Each prior turn is pushed as the same plain
+    /// text the LIVE loop emits (the question title, then the `> answer` echo), so
+    /// the per-line role coloring + markdown render (STORY-179) apply at draw time
+    /// IDENTICALLY to a freshly-asked exchange. A compact `resumed — N turns`
+    /// marker tops the backlog. The pane stays in FOLLOW mode (set at construction)
+    /// so the newest exchange shows on resume with the full history scrollable
+    /// above (STORY-176 scroll/re-read now span the whole hydrated buffer).
+    ///
+    /// The lines land in the SAME `lines: Vec<String>` the live loop appends to, so
+    /// scroll offsets / anchors / the re-read highlight all index the entire
+    /// transcript back to turn 1. Only the VISIBLE window is markdown-parsed per
+    /// frame (the draw call skips to the scroll offset and bounds the row count),
+    /// so a 150+ turn backlog stays smooth on every keystroke redraw.
+    fn hydrate_transcript(&mut self, turns: &[(String, String)]) {
+        if turns.is_empty() {
+            return;
+        }
+        // A compact backlog marker (the debug "Replaying previous session path…"
+        // dump is intentionally NOT shown in the TUI).
+        self.transcript
+            .push_block(&format!("resumed — {} turns", turns.len()));
+        for (question_text, raw_answer) in turns {
+            // Blank spacer + the question title mirror `render_question` (which
+            // emits a leading newline before the title); the `> answer` echo
+            // mirrors the live single-key / free-text answer echo. Role coloring
+            // + markdown are applied at draw via `styled_transcript_line`.
+            self.transcript.push_block("");
+            self.transcript.push_block(question_text);
+            self.transcript.push_block(&format!("> {raw_answer}"));
+        }
+    }
+
     // trace:BUG-184 | ai:claude
     /// Draw ONE post-submit "thinking" frame before control returns to the engine
     /// for its blocking LLM call: turn ON the status `thinking…` indicator and draw
@@ -738,19 +773,9 @@ impl<R: BufRead, B: Backend> TuiFrontEnd<R, B> {
                 // Ctrl-←/→) renders on a subtle highlight background so the user can
                 // see which earlier exchange they are re-reading.
                 let highlight = transcript.highlight();
-                let body: Vec<Line> = transcript
-                    .lines()
-                    .iter()
-                    .enumerate()
-                    .skip(offset)
-                    .map(|(index, line)| {
-                        let mut styled = styled_transcript_line(line);
-                        if Some(index) == highlight {
-                            styled = styled.style(theme::reread_highlight());
-                        }
-                        styled
-                    })
-                    .collect();
+                // trace:STORY-191 | ai:claude — render only the visible window
+                // through the markdown renderer (see `transcript_body`).
+                let body = transcript_body(transcript, offset, inner_height, highlight);
                 let follow_hint = if offset + inner_height < transcript.len() {
                     " (scrolled — ↓ to follow) "
                 } else {
@@ -1066,19 +1091,9 @@ impl<R: BufRead, B: Backend> TuiFrontEnd<R, B> {
                 let inner_height = panes.transcript.height.saturating_sub(2) as usize;
                 let offset = transcript.visible_offset(inner_height);
                 let highlight = transcript.highlight();
-                let body: Vec<Line> = transcript
-                    .lines()
-                    .iter()
-                    .enumerate()
-                    .skip(offset)
-                    .map(|(index, line)| {
-                        let mut styled = styled_transcript_line(line);
-                        if Some(index) == highlight {
-                            styled = styled.style(theme::reread_highlight());
-                        }
-                        styled
-                    })
-                    .collect();
+                // trace:STORY-191 | ai:claude — render only the visible window
+                // through the markdown renderer (see `transcript_body`).
+                let body = transcript_body(transcript, offset, inner_height, highlight);
                 let follow_hint = if offset + inner_height < transcript.len() {
                     " (scrolled — ↓ to follow) "
                 } else {
@@ -1352,6 +1367,11 @@ impl<R: BufRead, B: Backend> FrontEnd for TuiFrontEnd<R, B> {
         // this keeps the authoring core unchanged and the seam honest.
         (&mut self.author_input, &mut self.author_output)
     }
+
+    // trace:STORY-191 | ai:claude
+    fn hydrate_resume(&mut self, turns: &[(String, String)]) {
+        self.hydrate_transcript(turns);
+    }
 }
 
 /// The centered overlay rectangle for the palette, sized as a fraction of the
@@ -1498,6 +1518,40 @@ fn parse_control(raw: &str, context: InputContext) -> Option<AnswerInput> {
 /// renderer keeps a 1:1 source-line mapping, so the transcript pane's
 /// scroll/highlight indices are unaffected. Pure over the plain text the engine
 /// emitted, so the styling is testable without a terminal.
+// trace:STORY-191 | ai:claude
+/// Build the VISIBLE transcript rows for a `height`-row viewport starting at
+/// `offset`, styling ONLY the lines that can appear on screen.
+///
+/// The window is `height` source lines from `offset`: each source line renders
+/// to exactly one `Line` (STORY-179's 1:1 mapping), and a wrapped line only
+/// consumes MORE viewport rows, so `height` source lines always fill or overfill
+/// the pane — never under-fill it. Bounding the slice here means the markdown
+/// renderer runs over ~`height` lines per frame instead of the entire history,
+/// keeping a 150+ turn (hydrated) transcript smooth on every keystroke redraw.
+/// The `highlight` index (STORY-176 re-read cursor) is matched against the
+/// ABSOLUTE line index so the highlight survives the windowing.
+fn transcript_body(
+    transcript: &TranscriptPane,
+    offset: usize,
+    height: usize,
+    highlight: Option<usize>,
+) -> Vec<Line<'static>> {
+    transcript
+        .lines()
+        .iter()
+        .enumerate()
+        .skip(offset)
+        .take(height.max(1))
+        .map(|(index, line)| {
+            let mut styled = styled_transcript_line(line);
+            if Some(index) == highlight {
+                styled = styled.style(theme::reread_highlight());
+            }
+            styled
+        })
+        .collect()
+}
+
 fn styled_transcript_line(text: &str) -> Line<'static> {
     // Render this single source line through the message renderer and take its
     // one produced line (multi-line fenced blocks are not expressible in a lone
@@ -2266,5 +2320,192 @@ mod tests {
             .spans
             .iter()
             .all(|s| s.style.fg == Some(theme::STATUS_DIM)));
+    }
+
+    // ---- STORY-191: full styled scrollable transcript on resume ------------
+
+    // trace:STORY-191 | ai:claude — resume HYDRATES the full prior conversation
+    // into the pane as the CLEAN STYLED transcript: a compact `resumed — N turns`
+    // marker plus each turn's question + `> answer`, role-colored + markdown-
+    // rendered at draw. The `[turn N]/question_ref:` debug replay format never
+    // appears in the TUI.
+    #[test]
+    fn hydrate_resume_lays_the_full_conversation_into_the_styled_transcript() {
+        let mut tui = test_tui(80, 24);
+        let turns = vec![
+            ("Is the will *free*?".to_string(), "yes".to_string()),
+            ("What is `causation`?".to_string(), "necessity".to_string()),
+            ("Could it be otherwise?".to_string(), "no".to_string()),
+        ];
+        tui.hydrate_resume(&turns);
+
+        // A compact resumed marker tops the backlog (NOT the debug replay dump).
+        let lines = tui.transcript.lines();
+        assert!(
+            lines.iter().any(|l| l == "resumed — 3 turns"),
+            "missing compact resumed marker: {lines:?}"
+        );
+        // The DEBUG replay format is absent.
+        assert!(
+            !lines
+                .iter()
+                .any(|l| l.contains("Replaying previous session path")
+                    || l.starts_with("[turn ")
+                    || l.starts_with("question_ref:")),
+            "debug replay format leaked into the TUI transcript: {lines:?}"
+        );
+        // Every turn's question + echoed answer is present, in order.
+        assert!(lines.iter().any(|l| l == "Is the will *free*?"));
+        assert!(lines.iter().any(|l| l == "> yes"));
+        assert!(lines.iter().any(|l| l == "What is `causation`?"));
+        assert!(lines.iter().any(|l| l == "> necessity"));
+        assert!(lines.iter().any(|l| l == "Could it be otherwise?"));
+        assert!(lines.iter().any(|l| l == "> no"));
+
+        // The lines render as the STYLED transcript: the question is interrogator-
+        // colored with its markdown emphasis interpreted (markers hidden), and the
+        // echoed answer is user-colored.
+        let q = styled_transcript_line("Is the will *free*?");
+        assert_eq!(q.spans[0].style.fg, Some(theme::INTERROGATOR));
+        assert!(
+            q.spans.iter().all(|s| !s.content.contains('*')),
+            "emphasis markers should be hidden: {q:?}"
+        );
+        let a = styled_transcript_line("> yes");
+        assert_eq!(a.spans[0].style.fg, Some(theme::USER));
+    }
+
+    // trace:STORY-191 | ai:claude — follow-mode lands at the NEWEST exchange on
+    // resume (the freshest turn is in view), with the full backlog scrollable
+    // above it.
+    #[test]
+    fn hydrate_resume_follows_the_newest_exchange() {
+        let mut tui = test_tui(80, 24);
+        let turns: Vec<(String, String)> = (0..40)
+            .map(|i| (format!("Question {i}?"), format!("answer {i}")))
+            .collect();
+        tui.hydrate_resume(&turns);
+
+        // Still in follow mode: the visible window sits at the BOTTOM, so the
+        // newest exchange is on screen and the older history scrolls above.
+        let height = 20usize;
+        let offset = tui.transcript.visible_offset(height);
+        assert_eq!(
+            offset,
+            tui.transcript.len().saturating_sub(height),
+            "follow mode pins to the newest exchange after hydration"
+        );
+        let frame_top = offset;
+        // The newest turn's answer is within the visible window.
+        let newest_idx = tui
+            .transcript
+            .lines()
+            .iter()
+            .rposition(|l| l == "> answer 39")
+            .expect("newest answer present");
+        assert!(
+            newest_idx >= frame_top,
+            "newest exchange is visible on resume"
+        );
+    }
+
+    // trace:STORY-191 | ai:claude — scroll reaches turn 1: after hydration the
+    // user can scroll all the way up to the FIRST question, so the whole history
+    // is reachable (not just the recap).
+    #[test]
+    fn scroll_reaches_turn_one_after_hydration() {
+        let mut tui = test_tui(80, 24);
+        let turns: Vec<(String, String)> = (0..50)
+            .map(|i| (format!("Question {i}?"), format!("answer {i}")))
+            .collect();
+        tui.hydrate_resume(&turns);
+
+        let height = 18usize;
+        // Page up many times; offset must clamp at 0 (the very top of the buffer).
+        for _ in 0..200 {
+            tui.transcript.scroll_up(height, height);
+        }
+        assert_eq!(
+            tui.transcript.visible_offset(height),
+            0,
+            "scrolling up reaches the top of the hydrated history"
+        );
+        // Turn 1's question (Question 0) sits at the top of the buffer, in view.
+        let first_idx = tui
+            .transcript
+            .lines()
+            .iter()
+            .position(|l| l == "Question 0?")
+            .expect("first question present");
+        assert!(
+            first_idx < height,
+            "the first hydrated question is reachable in the top viewport"
+        );
+    }
+
+    // trace:STORY-191 | ai:claude — PERFORMANCE: only the VISIBLE window is parsed
+    // / rendered per frame. `transcript_body` slices to at most `height` source
+    // lines from the scroll offset, so a 150+ turn backlog never re-parses the
+    // whole history on a keystroke redraw.
+    #[test]
+    fn transcript_body_renders_only_the_visible_window() {
+        let mut pane = TranscriptPane::new();
+        // A long (200-line) transcript, far more than any viewport.
+        for i in 0..200 {
+            pane.push_block(&format!("line {i}"));
+        }
+        let height = 25usize;
+        let offset = pane.visible_offset(height);
+
+        let body = transcript_body(&pane, offset, height, None);
+        // Exactly the viewport's worth of lines is parsed/rendered — NOT all 200.
+        assert_eq!(
+            body.len(),
+            height,
+            "only the viewport ({height} rows) is rendered, not the full history"
+        );
+
+        // Scrolled to the TOP of a 200-line buffer, still only `height` lines are
+        // rendered (the regression the windowing fixes: a naive `.skip(offset)`
+        // with no bound would render all 200 here).
+        let body_top = transcript_body(&pane, 0, height, None);
+        assert_eq!(body_top.len(), height);
+    }
+
+    // trace:STORY-191 | ai:claude — the STORY-176 re-read highlight survives the
+    // windowing: a highlighted ABSOLUTE line index, when inside the visible
+    // window, still renders on the highlight background.
+    #[test]
+    fn transcript_body_keeps_the_reread_highlight_in_the_window() {
+        let mut pane = TranscriptPane::new();
+        for i in 0..40 {
+            pane.push_block(&format!("line {i}"));
+        }
+        let height = 10usize;
+        // Highlight a line and render a window that contains it.
+        let highlight = 5usize;
+        let body = transcript_body(&pane, 0, height, Some(highlight));
+        // The highlighted row carries the re-read style; the others do not.
+        let reread = theme::reread_highlight();
+        assert_eq!(
+            body[highlight].style, reread,
+            "the highlighted absolute index renders with the re-read style"
+        );
+        assert_ne!(body[highlight - 1].style, reread);
+    }
+
+    // trace:STORY-191 | ai:claude — an EMPTY resume (no prior turns) hydrates
+    // nothing extra: the pane keeps only its intro line, no resumed marker.
+    #[test]
+    fn hydrate_resume_with_no_turns_is_a_noop() {
+        let mut tui = test_tui(80, 24);
+        let before = tui.transcript.len();
+        tui.hydrate_resume(&[]);
+        assert_eq!(tui.transcript.len(), before, "no turns => no hydration");
+        assert!(!tui
+            .transcript
+            .lines()
+            .iter()
+            .any(|l| l.starts_with("resumed —")));
     }
 }
