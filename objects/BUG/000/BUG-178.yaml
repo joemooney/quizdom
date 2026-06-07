@@ -22,12 +22,12 @@ description: |-
   - Apostrophes in contractions/possessives (don't, it's, climber's) are NOT colorized and do NOT start a span.
   - Multiple quotes in one line each colorize; unterminated quote runs to line-end gracefully.
   - Tests: double-span, single-span, curly variants, contraction-apostrophe-NOT-colorized, meta-line quote colorized, multi-quote line, unterminated-quote.
-status: Approved
+status: InProgress
 priority: High
 owner: ''
 feature: Uncategorized
 created_at: 2026-06-07T14:27:53.809916311Z
-modified_at: 2026-06-07T14:28:53.571438955Z
+modified_at: 2026-06-07T15:20:18.907125107Z
 req_type: Bug
 tags:
 - bug
