@@ -20,12 +20,12 @@ description: |-
   - Yes/No & MC keep single-key no-Enter controls; '/' palette still opens from an empty free-text box.
   - Headless/LineFrontEnd editing unchanged (rustyline); existing piped tests pass.
   - Tests: editor motion wiring where testable, the $EDITOR round-trip (mocked command), free-text-vs-single-key routing by question type, '/'-from-empty still opens the palette.
-status: Approved
+status: InProgress
 priority: High
 owner: ''
 feature: Uncategorized
 created_at: 2026-06-07T15:09:09.292766841Z
-modified_at: 2026-06-07T15:11:06.298912828Z
+modified_at: 2026-06-07T15:20:22.562047185Z
 req_type: Story
 tags:
 - editor
