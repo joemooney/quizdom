@@ -239,36 +239,56 @@ pub(crate) mod theme {
         pub(crate) style: Style,
     }
 
-    /// Split one transcript line into styled fragments, applying QUOTE
-    /// ATTRIBUTION inside the USER's answer: any double-quoted span (`"…"`)
-    /// within a user line renders in the INTERROGATOR's color, attributing the
-    /// quote to the interrogator (the heuristic v1 of STORY-171 — a future
-    /// refinement could match the quote to the interrogator's actual prior
-    /// text). Every other role renders as a single fragment in its base style.
+    /// The OPPOSING role for quote-attribution within the interrogator<->user
+    /// pair: each party quotes the other, so a quoted span in a line renders in
+    /// the other party's color. Only the interrogator<->user pair participates;
+    /// every other role has no opposing voice (returns `None`), leaving its
+    /// lines un-reattributed.
+    // trace:BUG-172 | ai:claude
+    pub(crate) fn opposing_role(role: Role) -> Option<Role> {
+        match role {
+            Role::User => Some(Role::Interrogator),
+            Role::Interrogator => Some(Role::User),
+            Role::Challenger | Role::Meta | Role::Plain => None,
+        }
+    }
+
+    /// Split one transcript line into styled fragments, applying SYMMETRIC QUOTE
+    /// ATTRIBUTION across the interrogator<->user pair: any double-quoted span
+    /// (`"…"`) within a participating line renders in the OPPOSING role's color
+    /// (each party quotes the other). So a quote inside the USER's answer renders
+    /// in the INTERROGATOR's color, and a quote inside the INTERROGATOR's line
+    /// renders in the USER's color (BUG-172, extending STORY-171's one-directional
+    /// heuristic). Non-participating roles (meta / challenger / plain) and lines
+    /// without a quote render as a single fragment in the base style.
     ///
     /// Pure over `(role, line)` so the span model is testable without drawing.
+    // trace:BUG-172 | ai:claude
     pub(crate) fn line_fragments(role: Role, line: &str) -> Vec<StyledFragment> {
         let base = role_style(role);
-        if role != Role::User || !line.contains('"') {
+        let opposing = opposing_role(role);
+        if opposing.is_none() || !line.contains('"') {
             return vec![StyledFragment {
                 text: line.to_string(),
                 style: base,
             }];
         }
 
-        let quote_style = role_style(Role::Interrogator);
+        // The quoted span carries the OPPOSING role's color (the party being
+        // quoted). Safe to unwrap: the `opposing.is_none()` guard returned above.
+        let quote_style = role_style(opposing.expect("opposing role present"));
         let mut fragments: Vec<StyledFragment> = Vec::new();
         let mut current = String::new();
         let mut in_quote = false;
         for ch in line.chars() {
             if ch == '"' {
                 if in_quote {
-                    // Closing quote: include it in the quoted (interrogator) span.
+                    // Closing quote: include it in the quoted (opposing-role) span.
                     current.push(ch);
                     push_fragment(&mut fragments, &mut current, quote_style);
                     in_quote = false;
                 } else {
-                    // Opening quote: flush the user-colored run, then start the
+                    // Opening quote: flush the base-colored run, then start the
                     // quoted span WITH the opening quote char.
                     push_fragment(&mut fragments, &mut current, base);
                     current.push(ch);
@@ -278,8 +298,8 @@ pub(crate) mod theme {
                 current.push(ch);
             }
         }
-        // Trailing run: an unterminated quote stays attributed to the
-        // interrogator (the quote ran to end of line); otherwise it is the user.
+        // Trailing run: an unterminated quote stays attributed to the opposing
+        // role (the quote ran to end of line); otherwise it is the base role.
         let trailing_style = if in_quote { quote_style } else { base };
         push_fragment(&mut fragments, &mut current, trailing_style);
 
@@ -377,12 +397,47 @@ pub(crate) mod theme {
             assert_eq!(joined, r#"> you asked "is it free" and I say no"#);
         }
 
+        // trace:BUG-172 | ai:claude
         #[test]
-        fn quote_attribution_only_applies_to_the_user_voice() {
-            // A quoted span in the INTERROGATOR's own line is NOT re-attributed.
-            let frags = line_fragments(Role::Interrogator, r#"Do you mean "free"?"#);
-            assert_eq!(frags.len(), 1);
+        fn quoted_span_in_interrogator_line_takes_the_user_color() {
+            // SYMMETRIC complement of the user-quotes-interrogator case: the
+            // interrogator quotes the user, so the quoted run renders in GREEN
+            // (the user's color) while the framing stays CYAN.
+            let frags = line_fragments(Role::Interrogator, r#"You said "it is free" — did you?"#);
+            // Three runs: leading interrogator text, the quoted user span, trailing.
+            assert_eq!(frags.len(), 3);
             assert_eq!(frags[0].style.fg, Some(INTERROGATOR));
+            assert_eq!(frags[0].text, "You said ");
+            assert_eq!(frags[1].style.fg, Some(USER));
+            assert_eq!(frags[1].text, r#""it is free""#);
+            assert_eq!(frags[2].style.fg, Some(INTERROGATOR));
+            assert_eq!(frags[2].text, " — did you?");
+            // Reassembling the fragments reproduces the original line exactly.
+            let joined: String = frags.iter().map(|f| f.text.as_str()).collect();
+            assert_eq!(joined, r#"You said "it is free" — did you?"#);
+        }
+
+        // trace:BUG-172 | ai:claude
+        #[test]
+        fn opposing_role_is_only_defined_for_the_interrogator_user_pair() {
+            assert_eq!(opposing_role(Role::User), Some(Role::Interrogator));
+            assert_eq!(opposing_role(Role::Interrogator), Some(Role::User));
+            assert_eq!(opposing_role(Role::Challenger), None);
+            assert_eq!(opposing_role(Role::Meta), None);
+            assert_eq!(opposing_role(Role::Plain), None);
+        }
+
+        // trace:BUG-172 | ai:claude
+        #[test]
+        fn quote_attribution_skips_non_paired_voices() {
+            // A quoted span in a META / CHALLENGER line has no opposing voice,
+            // so it is NOT re-attributed and renders as a single base fragment.
+            let meta = line_fragments(Role::Meta, r#"META — they meant "free""#);
+            assert_eq!(meta.len(), 1);
+            assert_eq!(meta[0].style.fg, Some(META));
+            let challenger = line_fragments(Role::Challenger, r#"Challenger: "really?""#);
+            assert_eq!(challenger.len(), 1);
+            assert_eq!(challenger[0].style.fg, Some(CHALLENGER));
         }
 
         #[test]
@@ -392,6 +447,18 @@ pub(crate) mod theme {
             assert_eq!(frags.len(), 2);
             assert_eq!(frags[0].style.fg, Some(USER));
             assert_eq!(frags[1].style.fg, Some(INTERROGATOR));
+            assert_eq!(frags[1].text, r#""it is so"#);
+        }
+
+        // trace:BUG-172 | ai:claude
+        #[test]
+        fn unterminated_quote_in_interrogator_line_runs_to_end_as_user() {
+            let frags = line_fragments(Role::Interrogator, r#"You said "it is so"#);
+            // Leading interrogator run, then the unterminated quoted run to EOL
+            // in the user's color (the opposing role).
+            assert_eq!(frags.len(), 2);
+            assert_eq!(frags[0].style.fg, Some(INTERROGATOR));
+            assert_eq!(frags[1].style.fg, Some(USER));
             assert_eq!(frags[1].text, r#""it is so"#);
         }
     }
