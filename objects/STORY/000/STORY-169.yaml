@@ -8,7 +8,7 @@ priority: High
 owner: ''
 feature: Uncategorized
 created_at: 2026-06-07T05:11:24.613720457Z
-modified_at: 2026-06-07T06:08:58.616149888Z
+modified_at: 2026-06-07T06:09:00.375193685Z
 req_type: Story
 tags:
 - event-loop
@@ -21,3 +21,9 @@ relationships:
 - rel_type: Child
   target_id: 019ea07d-90fc-7b53-ad38-d8979d58a26f
   created_at: 2026-06-07T05:11:26.647816700Z
+comments:
+- id: 019ea0b2-e9d7-77e0-9e06-d50f93a25fdc
+  author: joe
+  content: 'Implemented + merged via PR #58 (origin/main 534460a). ratatui TUI front-end behind the STORY-168 FrontEnd seam: alternate screen, transcript/input/status layout, live ''/'' palette overlay (open-on-keystroke, filter/arrow/Enter/?/Esc, redrawn in place), event loop, RAII + panic-hook terminal restore, --no-tui flag, front-end selection (interactive TTY -> TUI, else headless). All ~336 existing piped/byte tests unchanged + 12 new unit tests; no new clippy warnings. Interactive look pending human review per acceptance.'
+  created_at: 2026-06-07T06:09:00.375193685Z
+  modified_at: 2026-06-07T06:09:00.375193685Z
