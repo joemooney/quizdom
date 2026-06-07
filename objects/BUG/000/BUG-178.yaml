@@ -1,0 +1,36 @@
+id: 019ea27b-a951-7493-b80d-5d4a03a0bbd1
+spec_id: BUG-178
+agreed_id: BUG-178
+title: Quotes not colorized — single-quote spans + meta/observer lines uncovered; replace role-attribution with one always-on quote color
+description: |-
+  OBSERVED: a META/observer line like "You've replaced the verdict with a hope: not 'I pronounce my life well lived' but 'I hope that verdict is within reach'" shows NO colorized quotes. Two root causes in style.rs line_fragments (STORY-171 + BUG-172):
+  1. The gate only re-attributes quotes on the interrogator<->user PAIR (opposing_role(role).is_none() skips Meta/Challenger/Plain) — so META/observer lines never colorize.
+  2. Detection keys on the DOUBLE quote char only (line.contains('"')) — SINGLE-quoted spans ('...') are never detected. The example uses single quotes.
+
+  DECISION (user): stop attributing quotes to a speaker. ALWAYS colorize any quoted span in ONE dedicated QUOTE color, ROLE-AGNOSTIC (every voice, incl. META). Retire the opposing_role/attribution heuristic from BUG-172/STORY-171 (keep history; change the rule).
+
+  DETECTION (must be apostrophe-safe):
+  - DOUBLE quotes — straight " " and curly “ ”: colorize the span between matched pairs (safe; no ambiguity).
+  - SINGLE quotes — straight ' ' and curly ‘ ’: treat as a quote span ONLY when the OPENING quote is at line-start or preceded by whitespace / ( [ { : , and a matching CLOSING quote is followed by whitespace / punctuation / line-end. This EXCLUDES intra-word apostrophes (don't, it's, the climber's, life's) which are letter-flanked on both sides.
+  - Multiple quoted spans per line each colorize independently.
+
+  Lane: style.rs (rewrite line_fragments to a role-agnostic, apostrophe-safe quote-span scanner + a single QUOTE color/style in theme) + tui.rs (styled_transcript_line uses it for every role). Drop now-dead opposing_role wiring (or leave it unused and unexported). Headless path unaffected (no color).
+
+  ## Acceptance
+  - A quoted span (single OR double, straight OR curly) renders in the QUOTE color regardless of the line's role, META/observer included.
+  - The observed example colorizes BOTH 'I pronounce my life well lived' and 'I hope that verdict is within reach'.
+  - Apostrophes in contractions/possessives (don't, it's, climber's) are NOT colorized and do NOT start a span.
+  - Multiple quotes in one line each colorize; unterminated quote runs to line-end gracefully.
+  - Tests: double-span, single-span, curly variants, contraction-apostrophe-NOT-colorized, meta-line quote colorized, multi-quote line, unterminated-quote.
+status: Approved
+priority: High
+owner: ''
+feature: Uncategorized
+created_at: 2026-06-07T14:27:53.809916311Z
+modified_at: 2026-06-07T14:27:53.809916311Z
+req_type: Bug
+tags:
+- bug
+- quotes
+- style
+- tui
