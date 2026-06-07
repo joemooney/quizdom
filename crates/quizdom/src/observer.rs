@@ -432,6 +432,156 @@ pub fn structural_objection(position: &str, goal: Option<&str>) -> ClosingObject
     }
 }
 
+// trace:STORY-164 | ai:claude
+/// An answer from the `/help` channel: a belief-neutral explanation of HOW the
+/// tool / dialogue works, sourced from TOOL-CONTEXT (the design: controls, the
+/// flow, what a feature does) — NEVER from the user's belief content.
+///
+/// `/help` is the free-form counterpart to the palette's static per-command `?`
+/// help: the user asks a question in their own words ("how do I rest my case?",
+/// "what does observe do?") and gets a process answer. It is strictly
+/// belief-neutral: it talks only about the TOOL, so it can never supply a belief
+/// or take a side. Offline it degrades to a STATIC help index built from the same
+/// tool-context — no model, no belief content invented.
+#[derive(Debug, Clone, Eq, PartialEq)]
+pub struct HelpAnswer {
+    /// The belief-neutral, process-focused answer.
+    pub answer: String,
+    /// True when this answer was assembled from the STATIC help index (offline /
+    /// degraded) rather than produced by the LLM.
+    pub degraded: bool,
+}
+
+/// System prompt that pins `/help` to its belief-neutral, TOOL-CONTEXT-only
+/// contract. The model answers ONLY from the supplied description of the tool's
+/// controls and flow; it must never engage with, supply, or take a side on the
+/// user's belief content. The guarantee is mirrored structurally: when the model
+/// is unavailable the caller degrades to [`static_help_index`], which is built
+/// purely from the same tool-context and so is belief-neutral by construction.
+const HELP_SYSTEM_PROMPT: &str = "You are quizdom's /help channel. quizdom is a Socratic belief-exploration tool, and YOUR job is to explain HOW THE TOOL AND THE DIALOGUE WORK — the controls, the flow, what each feature does, how to rest a case. You answer ONLY from the TOOL-CONTEXT supplied below (the tool's design). You are STRICTLY belief-neutral: you must NEVER answer the user's belief/philosophical question itself, NEVER supply a belief, NEVER take a side or say which position is correct, and NEVER scaffold a belief-framing. If the user's question is about a belief rather than the tool, redirect them to the process (e.g. /observe or /tutor) without engaging the belief's content. Be concise, concrete, and grounded in the listed controls.";
+
+/// Build the `/help` prompt: the user's free-form process question plus the
+/// supplied TOOL-CONTEXT (the design facts the answer must be grounded in). The
+/// tool-context carries no belief content, so the prompt cannot leak one.
+fn help_prompt(question: &str, tool_context: &str) -> String {
+    let question = question.trim();
+    let asked = if question.is_empty() {
+        "(no specific question — give a brief orientation to the controls and flow)"
+    } else {
+        question
+    };
+    format!(
+        "TOOL-CONTEXT (the tool's design — the only thing you may answer from):\n{tool_context}\n\nThe user's process question: {asked}\n\nAnswer the user's question about HOW THE TOOL WORKS, grounded in the tool-context above. Stay strictly belief-neutral: do NOT answer any belief/philosophical question, supply a belief, or take a side — if the question is about a belief, point them at the relevant control instead. Reply in plain prose (no JSON), a few sentences at most."
+    )
+}
+
+// trace:STORY-164 | ai:claude
+/// Answer a free-form `/help` question with the supplied LLM client, degrading to
+/// the STATIC help index when the call fails or returns nothing usable.
+///
+/// `tool_context` is the design description the answer must be grounded in (the
+/// controls + their detailed help, supplied by the caller from the command
+/// registry). Belief-neutral throughout: the system prompt forbids engaging the
+/// belief content, and the offline fallback is built purely from the same
+/// tool-context — so `/help` can never supply a belief, online or off.
+pub fn answer_help<C: LLMClient>(client: &C, question: &str, tool_context: &str) -> HelpAnswer {
+    match llm_answer_help(client, question, tool_context) {
+        Some(answer) => answer,
+        // Offline / not-logged-in / malformed: fall back to the static help index
+        // rather than failing the keypress mid-session.
+        None => static_help_index(question, tool_context),
+    }
+}
+
+/// The LLM leg of [`answer_help`]: run the call on a current-thread runtime and
+/// return the trimmed prose answer. Returns `None` on any failure (or an empty
+/// answer) so the caller degrades to the static help index.
+fn llm_answer_help<C: LLMClient>(
+    client: &C,
+    question: &str,
+    tool_context: &str,
+) -> Option<HelpAnswer> {
+    let prompt = help_prompt(question, tool_context);
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_time()
+        .build()
+        .ok()?;
+    let (text, _tool_calls) = runtime
+        .block_on(client.call(HELP_SYSTEM_PROMPT, &[Message::user(prompt)], &[]))
+        .ok()?;
+    let answer = text.trim();
+    if answer.is_empty() {
+        return None;
+    }
+    Some(HelpAnswer {
+        answer: answer.to_string(),
+        degraded: false,
+    })
+}
+
+// trace:STORY-164 | ai:claude
+/// The offline / degraded `/help` answer: a STATIC help index assembled purely
+/// from the supplied TOOL-CONTEXT. It invents no content and engages no belief —
+/// it just surfaces the design facts (the controls and what they do), optionally
+/// led by the line that best matches the user's question, so `/help` still does
+/// something useful with no model available. Belief-neutral by construction.
+pub fn static_help_index(question: &str, tool_context: &str) -> HelpAnswer {
+    // Search terms from the question, with punctuation stripped and the short,
+    // ubiquitous words ("how", "do", "my", …) dropped so the "Most relevant"
+    // lead-in keys on the content word the user cares about ("rest", "observe")
+    // rather than a stopword that appears across many control lines.
+    let needle = question
+        .trim()
+        .to_ascii_lowercase()
+        .split_whitespace()
+        .map(|term| {
+            term.trim_matches(|c: char| !c.is_alphanumeric())
+                .to_string()
+        })
+        .filter(|term| term.len() >= 4)
+        .collect::<Vec<_>>();
+    let lines: Vec<&str> = tool_context
+        .lines()
+        .map(str::trim)
+        .filter(|line| !line.is_empty())
+        .collect();
+
+    let mut answer = String::from(
+        "Offline help (belief-neutral — about the tool, not your belief). Here are the controls and what they do:\n",
+    );
+
+    // When the question has search terms, lead with the single best-matching
+    // control line so the static index points at what the user asked about. The
+    // match is purely lexical over the tool-context — no belief content is read.
+    if !needle.is_empty() {
+        if let Some(best) = lines
+            .iter()
+            .max_by_key(|line| help_match_score(&line.to_ascii_lowercase(), &needle))
+            .filter(|line| help_match_score(&line.to_ascii_lowercase(), &needle) > 0)
+        {
+            answer.push_str(&format!("\nMost relevant: {best}\n"));
+        }
+    }
+
+    for line in &lines {
+        answer.push_str(&format!("  {line}\n"));
+    }
+    answer.push_str(
+        "\nTip: open the palette with '/' and press '?' on any command for its full help.",
+    );
+    HelpAnswer {
+        answer,
+        degraded: true,
+    }
+}
+
+/// How many of the question's search terms appear in a tool-context `line` (both
+/// already lowercased). Used only to choose which static-index line to lead with;
+/// it reads the TOOL description, never any belief content.
+fn help_match_score(line: &str, needle: &[String]) -> usize {
+    needle.iter().filter(|term| line.contains(*term)).count()
+}
+
 /// The first sentence (or the whole string if it has no terminator), trimmed,
 /// used to keep the structural note compact without echoing a long prompt.
 fn first_sentence(text: &str) -> String {
@@ -698,5 +848,100 @@ mod tests {
         let objection = structural_objection("   ", None);
         assert!(objection.degraded);
         assert!(objection.objection.contains("no settled position"));
+    }
+
+    // ---- STORY-164: /help (process help, tool-context, belief-neutral) ------
+
+    fn tool_context() -> &'static str {
+        "/observe — a belief-neutral reading of the current exchange.\n\
+         /rest — rest your case and begin the closing ritual.\n\
+         /goal — state or show the session goal."
+    }
+
+    #[test]
+    fn help_answers_process_questions_from_tool_context() {
+        // trace:STORY-164 | ai:claude — /help answers a HOW-the-tool-works question
+        // from the supplied TOOL-CONTEXT (the design), and the answer flows through.
+        let client = MockClient::ok(
+            "To rest your case, use the /rest control — it begins the closing ritual.",
+        );
+        let answer = answer_help(&client, "how do I rest my case?", tool_context());
+        assert!(!answer.degraded);
+        assert!(answer.answer.contains("/rest"));
+    }
+
+    #[test]
+    fn help_prompt_is_grounded_in_tool_context_and_belief_neutral() {
+        // trace:STORY-164 | ai:claude — the prompt carries the TOOL-CONTEXT and
+        // pins belief-neutrality (answer about the tool, never the belief), and the
+        // user's process question rides along.
+        let client = MockClient::ok("ok");
+        let _ = answer_help(&client, "what does observe do?", tool_context());
+        let prompt = client.last_prompt.borrow().clone().unwrap();
+        assert!(prompt.contains("TOOL-CONTEXT"));
+        assert!(prompt.contains("/observe"));
+        assert!(prompt.contains("what does observe do?"));
+        assert!(prompt.to_lowercase().contains("belief-neutral"));
+        assert!(prompt.contains("do NOT answer any belief"));
+    }
+
+    #[test]
+    fn help_system_prompt_forbids_supplying_a_belief() {
+        // trace:STORY-164 | ai:claude — the contract is tool-context, not belief
+        // content: the system prompt must forbid answering the belief itself.
+        assert!(HELP_SYSTEM_PROMPT.contains("belief-neutral"));
+        assert!(HELP_SYSTEM_PROMPT.contains("NEVER take a side"));
+        assert!(HELP_SYSTEM_PROMPT.contains("TOOL-CONTEXT"));
+    }
+
+    #[test]
+    fn help_degrades_to_a_static_index_when_offline() {
+        // trace:STORY-164 | ai:claude — offline, /help still answers from a STATIC
+        // help index built purely from the tool-context (no model, no belief).
+        let answer = answer_help(&MockClient::err(), "how do I rest my case?", tool_context());
+        assert!(answer.degraded);
+        // The static index surfaces the controls from the tool-context...
+        assert!(answer.answer.contains("/rest"));
+        assert!(answer.answer.contains("/observe"));
+        // ...and leads with the control that best matches the question.
+        assert!(answer.answer.contains("Most relevant:"));
+        let relevant_line = answer
+            .answer
+            .lines()
+            .find(|line| line.starts_with("Most relevant:"))
+            .unwrap();
+        assert!(relevant_line.contains("/rest"));
+    }
+
+    #[test]
+    fn help_degrades_when_the_llm_returns_empty_or_unusable() {
+        // trace:STORY-164 | ai:claude — an empty model answer is no better than
+        // offline; degrade to the static index rather than render a blank box.
+        let answer = answer_help(&MockClient::ok("   "), "", tool_context());
+        assert!(answer.degraded);
+        assert!(answer.answer.contains("Offline help"));
+    }
+
+    #[test]
+    fn static_help_index_handles_an_empty_question() {
+        // A bare /help (no question) still lists the controls, with no
+        // "Most relevant" lead-in (nothing to match against).
+        let answer = static_help_index("", tool_context());
+        assert!(answer.degraded);
+        assert!(answer.answer.contains("/observe"));
+        assert!(!answer.answer.contains("Most relevant:"));
+    }
+
+    #[test]
+    fn help_never_engages_belief_content() {
+        // trace:STORY-164 | ai:claude — even when the user phrases their question as
+        // a belief, the offline index answers ONLY from the tool-context (the
+        // controls) and never supplies a belief or takes a side. Belief-neutral by
+        // construction: the answer is assembled purely from the tool description.
+        let answer = static_help_index("is determinism true?", tool_context());
+        // The answer is the controls list — it contains none of the belief content.
+        assert!(!answer.answer.to_lowercase().contains("determinism is"));
+        assert!(answer.answer.contains("about the tool, not your belief"));
+        assert!(answer.answer.contains("/goal"));
     }
 }
