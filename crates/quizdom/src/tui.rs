@@ -41,6 +41,12 @@ use crate::input::{
     is_terminate_command, is_verdict_command, mode_command_text, normalize_answer,
     objection_command_text, tutor_command_text, AnswerInput, InputContext,
 };
+// trace:STORY-180 | ai:claude — the capable free-text editor (tui-textarea) and
+// the open-in-$EDITOR escape.
+use crate::editor::{
+    edit_buffer_externally, editor_model, EditorLauncher, EditorModel, EditorOutcome,
+    SpawnEditorLauncher, TextEditor, VimMode,
+};
 // trace:STORY-176 | ai:claude — the single keymap registry drives BOTH the key
 // dispatcher (here) and the cheat-sheet overlay, so they can never drift.
 use crate::keymap::{self, KeyAction};
@@ -448,6 +454,24 @@ impl TerminalGuard {
         execute!(stdout, EnterAlternateScreen).map_err(QuizdomError::Io)?;
         Ok(Self)
     }
+
+    // trace:STORY-180 | ai:claude — the open-in-$EDITOR escape (Ctrl-X Ctrl-E)
+    /// SUSPEND the TUI: leave the alternate screen and raw mode so an external
+    /// `$EDITOR` (vim/emacs) gets a normal cooked terminal. Paired with [`resume`].
+    fn suspend(&self) -> Result<()> {
+        disable_raw_mode().map_err(QuizdomError::Io)?;
+        execute!(io::stdout(), LeaveAlternateScreen).map_err(QuizdomError::Io)?;
+        Ok(())
+    }
+
+    // trace:STORY-180 | ai:claude
+    /// RESUME the TUI after the external editor exits: re-enter the alternate
+    /// screen + raw mode so the session redraws cleanly where it left off.
+    fn resume(&self) -> Result<()> {
+        enable_raw_mode().map_err(QuizdomError::Io)?;
+        execute!(io::stdout(), EnterAlternateScreen).map_err(QuizdomError::Io)?;
+        Ok(())
+    }
 }
 
 impl Drop for TerminalGuard {
@@ -493,6 +517,13 @@ pub(crate) struct TuiFrontEnd<R: BufRead> {
     /// The fallback line source + sink for the nested headless quick-add.
     author_input: R,
     author_output: Vec<u8>,
+    // trace:STORY-180 | ai:claude — the editing model (Emacs/readline vs Vim
+    // modal) for the free-text box, inferred ONCE from $EDITOR/$VISUAL at startup.
+    editor_model: EditorModel,
+    // trace:STORY-180 | ai:claude — the open-in-$EDITOR launcher. Boxed + injectable
+    // so the Ctrl-X Ctrl-E round-trip can be driven by a mock in tests (CI never
+    // spawns a real editor); production wires [`SpawnEditorLauncher`].
+    launcher: Box<dyn EditorLauncher>,
 }
 
 impl<R: BufRead> TuiFrontEnd<R> {
@@ -515,6 +546,9 @@ impl<R: BufRead> TuiFrontEnd<R> {
             pending: Vec::new(),
             author_input,
             author_output: Vec::new(),
+            // trace:STORY-180 | ai:claude — infer the editing model from $EDITOR once.
+            editor_model: editor_model(),
+            launcher: Box::new(SpawnEditorLauncher),
         };
         tui.transcript.push_block(
             "quizdom — interactive session. Type your answer and press Enter. Press / for the \
@@ -831,6 +865,209 @@ impl<R: BufRead> TuiFrontEnd<R> {
         }
     }
 
+    // trace:STORY-180 | ai:claude
+    /// Draw the three panes with the FREE-TEXT EDITOR widget filling the input
+    /// box (instead of the single-line `> text` paragraph). The editor is a
+    /// [`crate::editor::TextEditor`] wrapping a `tui-textarea` widget, so it
+    /// renders its own cursor + multi-line content; the box title surfaces the
+    /// active editing model (and Vim mode).
+    fn draw_editor(&mut self, editor: &TextEditor) -> Result<()> {
+        let transcript = &self.transcript;
+        let status_text = self.status.render();
+        let title = editor_box_title(editor);
+        self.terminal
+            .draw(|frame| {
+                let panes = layout(frame.area());
+
+                // ----- transcript pane (same as draw) -----
+                let inner_height = panes.transcript.height.saturating_sub(2) as usize;
+                let offset = transcript.visible_offset(inner_height);
+                let highlight = transcript.highlight();
+                let body: Vec<Line> = transcript
+                    .lines()
+                    .iter()
+                    .enumerate()
+                    .skip(offset)
+                    .map(|(index, line)| {
+                        let mut styled = styled_transcript_line(line);
+                        if Some(index) == highlight {
+                            styled = styled.style(theme::reread_highlight());
+                        }
+                        styled
+                    })
+                    .collect();
+                let follow_hint = if offset + inner_height < transcript.len() {
+                    " (scrolled — ↓ to follow) "
+                } else {
+                    " transcript "
+                };
+                let transcript_widget = Paragraph::new(body)
+                    .block(
+                        Block::default()
+                            .borders(Borders::ALL)
+                            .border_style(theme::border())
+                            .title(follow_hint),
+                    )
+                    .wrap(Wrap { trim: false });
+                frame.render_widget(transcript_widget, panes.transcript);
+
+                // ----- input box: the tui-textarea editor widget -----
+                let mut textarea = editor.textarea().clone();
+                textarea.set_block(
+                    Block::default()
+                        .borders(Borders::ALL)
+                        .border_style(theme::border())
+                        .title(title.clone()),
+                );
+                frame.render_widget(&textarea, panes.input);
+
+                // ----- status bar (same as draw) -----
+                let status_widget = Paragraph::new(styled_status_line(&status_text)).block(
+                    Block::default()
+                        .borders(Borders::ALL)
+                        .border_style(theme::border())
+                        .title(" status "),
+                );
+                frame.render_widget(status_widget, panes.status);
+            })
+            .map_err(QuizdomError::Io)?;
+        Ok(())
+    }
+
+    // trace:STORY-180 | ai:claude
+    /// Gather a FREE-TEXT answer through the capable editor (readline/Emacs or
+    /// Vim modal, per `$EDITOR`). Returns the submitted text, `None` on EOF, or
+    /// the canonical `/`-palette command string when the palette is opened from an
+    /// EMPTY box and a command is selected (which the caller routes through the
+    /// SAME recognizers as a typed command, the front-end-agnostic contract).
+    ///
+    /// Ctrl-X Ctrl-E suspends the TUI and opens `$VISUAL`/`$EDITOR` on the buffer,
+    /// reading it back on save. The transcript scroll / cheat-sheet keymap is NOT
+    /// consulted here: the editor owns every key (a free-text answer may contain
+    /// any character), so the editor is a distinct focus from the transcript.
+    fn read_free_text(&mut self) -> Result<Option<String>> {
+        self.flush_pending();
+        let mut editor = TextEditor::new(self.editor_model);
+        loop {
+            self.draw_editor(&editor)?;
+            let Event::Key(key) = event::read().map_err(QuizdomError::Io)? else {
+                continue;
+            };
+            if !matches!(key.kind, KeyEventKind::Press | KeyEventKind::Repeat) {
+                continue;
+            }
+            match editor.feed(key) {
+                EditorOutcome::Continue => {}
+                EditorOutcome::Submit(text) => {
+                    let line = text.trim().to_string();
+                    self.transcript.push_block(&format!("> {line}"));
+                    return Ok(Some(line));
+                }
+                EditorOutcome::Eof => return Ok(None),
+                EditorOutcome::OpenPalette => {
+                    // The `/`-from-empty palette (as today). A selected command
+                    // returns as its canonical typed form and routes identically.
+                    if let Some(command) = self.run_palette("")? {
+                        self.transcript.push_block(&format!("> {command}"));
+                        return Ok(Some(command));
+                    }
+                    // Cancelled — drop back into the editor (the box is still empty).
+                }
+                EditorOutcome::OpenExternalEditor => {
+                    self.open_external_editor(&mut editor)?;
+                }
+            }
+        }
+    }
+
+    // trace:STORY-180 | ai:claude
+    /// The Ctrl-X Ctrl-E flow: SUSPEND the TUI (leave the alternate screen via the
+    /// [`TerminalGuard`]), round-trip the buffer through `$VISUAL`/`$EDITOR` via
+    /// the injectable launcher, then RESUME and force a full redraw. A launcher
+    /// error (editor missing / non-zero exit) is non-fatal: the in-pane buffer is
+    /// kept and a note is shown in the transcript.
+    fn open_external_editor(&mut self, editor: &mut TextEditor) -> Result<()> {
+        let buffer = editor.text();
+        self._guard.suspend()?;
+        let outcome = edit_buffer_externally(&buffer, self.launcher.as_ref());
+        let resume = self._guard.resume();
+        // Clear the terminal so the alternate screen redraws fresh after the editor.
+        self.terminal.clear().map_err(QuizdomError::Io)?;
+        resume?;
+        match outcome {
+            Ok(text) => editor.set_text(&text),
+            Err(error) => {
+                self.transcript
+                    .push_block(&format!("[editor] could not edit externally: {error}"));
+            }
+        }
+        Ok(())
+    }
+
+    // trace:STORY-180 | ai:claude
+    /// Gather a YES/NO or MULTIPLE-CHOICE answer with SINGLE-KEY, no-Enter controls
+    /// (Y/N for yes-no, digits for choice, plus the shared X/P/B and `/` palette).
+    /// The rich free-text editor is NOT used here — `y` means Yes, not a typed
+    /// char. Returns the canonical raw token (e.g. `"y"`, `"x"`, a digit, or a
+    /// palette command string) for the caller to route through the same
+    /// recognizers as the line front-end. `None` on EOF.
+    fn read_single_key(
+        &mut self,
+        kind: &AnswerKind,
+        context: InputContext,
+    ) -> Result<Option<String>> {
+        self.flush_pending();
+        loop {
+            self.draw("", None)?;
+            let viewport = self.viewport_height();
+            let Event::Key(key) = event::read().map_err(QuizdomError::Io)? else {
+                continue;
+            };
+            if !matches!(key.kind, KeyEventKind::Press | KeyEventKind::Repeat) {
+                continue;
+            }
+            if key.modifiers.contains(KeyModifiers::CONTROL)
+                && matches!(key.code, KeyCode::Char('c') | KeyCode::Char('d'))
+            {
+                return Ok(None);
+            }
+            // Transcript scroll / re-read highlight stay live on a single-key
+            // prompt (read-back is non-destructive). The cheat-sheet `?` fires
+            // here too (the box is always "empty" — there is no typed buffer).
+            if let Some(action) = keymap::dispatch(key.code, key.modifiers) {
+                match action {
+                    KeyAction::HighlightPrev => {
+                        self.transcript.highlight_prev(viewport);
+                    }
+                    KeyAction::HighlightNext => {
+                        self.transcript.highlight_next(viewport);
+                    }
+                    KeyAction::ScrollLineUp => self.transcript.scroll_up(1, viewport),
+                    KeyAction::ScrollLineDown => self.transcript.scroll_down(1, viewport),
+                    KeyAction::ScrollPageUp => self.transcript.scroll_up(viewport.max(1), viewport),
+                    KeyAction::ScrollPageDown => {
+                        self.transcript.scroll_down(viewport.max(1), viewport)
+                    }
+                    KeyAction::CheatSheet => self.show_cheat_sheet("")?,
+                }
+                continue;
+            }
+            if let Some(token) = single_key_token(key.code, kind, context) {
+                if token == "/" {
+                    // `/` opens the palette (as on a single-key line front-end).
+                    if let Some(command) = self.run_palette("")? {
+                        self.transcript.push_block(&format!("> {command}"));
+                        return Ok(Some(command));
+                    }
+                    continue;
+                }
+                self.transcript.push_block(&format!("> {token}"));
+                return Ok(Some(token));
+            }
+            // Unrecognized key: ignore and keep waiting (no-Enter single-key UI).
+        }
+    }
+
     /// The transcript viewport height in rows for the CURRENT terminal size,
     /// used for scroll math between draws.
     fn viewport_height(&self) -> usize {
@@ -856,8 +1093,19 @@ impl<R: BufRead> FrontEnd for TuiFrontEnd<R> {
         // gather + parse here. Parsing reuses the SAME recognizers as the line
         // front-end (input.rs), so a typed answer and a palette selection route
         // identically — the acceptance guarantee carried over from STORY-163.
+        //
+        // trace:STORY-180 | ai:claude — route by ANSWER KIND: a FREE-TEXT question
+        // gets the capable in-pane editor (readline/Emacs or Vim modal + the
+        // Ctrl-X Ctrl-E $EDITOR escape); YES/NO and MULTIPLE-CHOICE keep the
+        // single-key, no-Enter controls (Y/N/X/P/B / digits) — so `y` means Yes,
+        // not a typed char. Both paths route their result through the SAME
+        // recognizers below.
         loop {
-            let raw = match self.read_text_line(None)? {
+            let raw = match kind {
+                AnswerKind::FreeText => self.read_free_text()?,
+                AnswerKind::YesNo | AnswerKind::Choice(_) => self.read_single_key(kind, context)?,
+            };
+            let raw = match raw {
                 Some(raw) => raw,
                 None => return Ok(AnswerInput::End),
             };
@@ -902,6 +1150,55 @@ fn palette_rect(area: Rect) -> Rect {
     let x = area.x + (area.width.saturating_sub(width)) / 2;
     let y = area.y + (area.height.saturating_sub(height)) / 2;
     Rect::new(x, y, width, height)
+}
+
+// trace:STORY-180 | ai:claude
+/// The box-title for the free-text editor, surfacing the active editing model so
+/// the user knows which keymap is live (and, for Vim, the current mode). Pure
+/// over the editor state so it is testable without a terminal.
+fn editor_box_title(editor: &TextEditor) -> String {
+    match editor.model() {
+        EditorModel::Emacs => " your answer · emacs ".to_string(),
+        EditorModel::Vim => {
+            let mode = match editor.vim_mode() {
+                VimMode::Normal => "NORMAL",
+                VimMode::Insert => "INSERT",
+                VimMode::Visual => "VISUAL",
+                VimMode::Operator(_) => "OP-PENDING",
+            };
+            format!(" your answer · vim {mode} ")
+        }
+    }
+}
+
+// trace:STORY-180 | ai:claude
+/// Map a single keystroke to its canonical answer/control TOKEN for a YES/NO or
+/// MULTIPLE-CHOICE prompt (no Enter). Mirrors the headless line front-end's
+/// `read_single_key_answer` EXACTLY so the TUI and the line path agree: `y`/`n`
+/// for yes-no, digits for choice, the shared `x`/`p`/`b`, context-gated `a`/`f`,
+/// `q`/Esc to quit, `o`/`s` for observe/synopsis, `?` cheat-sheet, and `/` opens
+/// the palette (returned as the literal `"/"` for the caller to act on). Pure, so
+/// the routing is unit-testable. Returns `None` for an unrecognized key.
+fn single_key_token(code: KeyCode, kind: &AnswerKind, context: InputContext) -> Option<String> {
+    let token = match code {
+        KeyCode::Char('y') | KeyCode::Char('Y') if matches!(kind, AnswerKind::YesNo) => "y",
+        KeyCode::Char('n') | KeyCode::Char('N') if matches!(kind, AnswerKind::YesNo) => "n",
+        KeyCode::Char('x') | KeyCode::Char('X') => "x",
+        KeyCode::Char('o') | KeyCode::Char('O') => "/observe",
+        KeyCode::Char('s') | KeyCode::Char('S') => "/synopsis",
+        KeyCode::Char('a') | KeyCode::Char('A') if context == InputContext::Frontier => "/add",
+        KeyCode::Char('p') | KeyCode::Char('P') => "p",
+        KeyCode::Char('b') | KeyCode::Char('B') => "b",
+        KeyCode::Char('f') | KeyCode::Char('F') if context == InputContext::Review => "f",
+        KeyCode::Char('q') | KeyCode::Char('Q') => "/end",
+        KeyCode::Char('/') => "/",
+        KeyCode::Char(c) if matches!(kind, AnswerKind::Choice(_)) && c.is_ascii_digit() => {
+            return Some(c.to_string());
+        }
+        KeyCode::Esc => "/end",
+        _ => return None,
+    };
+    Some(token.to_string())
 }
 
 /// Parse a raw input line into a control [`AnswerInput`], or `None` when it is an
@@ -1508,6 +1805,89 @@ mod tests {
             .spans
             .iter()
             .any(|s| s.style.fg == Some(theme::STATUS_VALUE)));
+    }
+
+    // ---- STORY-180: free-text editor routing + single-key token mapping -----
+
+    // trace:STORY-180 | ai:claude — YES/NO routes the single keys to the same
+    // canonical tokens the headless `read_single_key_answer` produces, so a typed
+    // and a TUI single-key answer route identically (front-end-agnostic contract).
+    #[test]
+    fn single_key_token_maps_yes_no_controls() {
+        let k = &AnswerKind::YesNo;
+        assert_eq!(
+            single_key_token(KeyCode::Char('y'), k, InputContext::Frontier).as_deref(),
+            Some("y")
+        );
+        assert_eq!(
+            single_key_token(KeyCode::Char('N'), k, InputContext::Frontier).as_deref(),
+            Some("n")
+        );
+        assert_eq!(
+            single_key_token(KeyCode::Char('x'), k, InputContext::Frontier).as_deref(),
+            Some("x")
+        );
+        assert_eq!(
+            single_key_token(KeyCode::Char('p'), k, InputContext::Frontier).as_deref(),
+            Some("p")
+        );
+        assert_eq!(
+            single_key_token(KeyCode::Char('b'), k, InputContext::Frontier).as_deref(),
+            Some("b")
+        );
+        // `/` returns the bare slash so the loop opens the palette.
+        assert_eq!(
+            single_key_token(KeyCode::Char('/'), k, InputContext::Frontier).as_deref(),
+            Some("/")
+        );
+        // q / Esc end the session.
+        assert_eq!(
+            single_key_token(KeyCode::Char('q'), k, InputContext::Frontier).as_deref(),
+            Some("/end")
+        );
+        assert_eq!(
+            single_key_token(KeyCode::Esc, k, InputContext::Frontier).as_deref(),
+            Some("/end")
+        );
+    }
+
+    // trace:STORY-180 | ai:claude — MULTIPLE-CHOICE routes DIGIT keys to the option
+    // index token; `y`/`n` are NOT yes-no controls here (they fall through, so a
+    // stray letter is ignored on a choice prompt).
+    #[test]
+    fn single_key_token_maps_choice_digits_and_context_gates() {
+        let choice = AnswerKind::Choice(vec!["a".into(), "b".into()]);
+        assert_eq!(
+            single_key_token(KeyCode::Char('2'), &choice, InputContext::Frontier).as_deref(),
+            Some("2")
+        );
+        // 'y' is not a yes-no control on a choice prompt -> unrecognized.
+        assert!(single_key_token(KeyCode::Char('y'), &choice, InputContext::Frontier).is_none());
+        // `/add` is frontier-only; `/forward` is review-only (same gates as headless).
+        assert_eq!(
+            single_key_token(KeyCode::Char('a'), &choice, InputContext::Frontier).as_deref(),
+            Some("/add")
+        );
+        assert!(single_key_token(KeyCode::Char('a'), &choice, InputContext::Review).is_none());
+        assert_eq!(
+            single_key_token(KeyCode::Char('f'), &choice, InputContext::Review).as_deref(),
+            Some("f")
+        );
+        assert!(single_key_token(KeyCode::Char('f'), &choice, InputContext::Frontier).is_none());
+    }
+
+    // trace:STORY-180 | ai:claude — the free-text editor box title surfaces the
+    // active editing model (and, for Vim, the live mode) so the user can see which
+    // keymap is in effect.
+    #[test]
+    fn editor_box_title_shows_the_active_model_and_vim_mode() {
+        let emacs = TextEditor::new(EditorModel::Emacs);
+        assert!(editor_box_title(&emacs).contains("emacs"));
+
+        let vim = TextEditor::new(EditorModel::Vim);
+        // Vim starts in INSERT.
+        assert!(editor_box_title(&vim).contains("vim"));
+        assert!(editor_box_title(&vim).contains("INSERT"));
     }
 
     // trace:STORY-171 | ai:claude
