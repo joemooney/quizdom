@@ -3,12 +3,12 @@ spec_id: STORY-156
 agreed_id: STORY-156
 title: Offer-to-conclude at the well-rounded threshold + graceful conclude path
 description: 'When the STORY (roundedness score) crosses a well-rounded threshold, the on-demand synopsis OFFERS to conclude: ''your position is ~N% rounded — conclude with a summary, or keep probing edge cases?''. If the user concludes, print a final belief-neutral summary of their OWN well-formed position and end gracefully (with the resume footer). Below threshold, the synopsis just shows the score + gap. Lane: synopsis.rs + session.rs (the conclude path). Pairs with BUG-136 (convergence = the GOOD terminal vs the dead-end menu). ## Acceptance: at/above threshold the synopsis offers conclude (accept -> final summary + graceful end; decline -> keep exploring); below threshold shows the gap; tests cover both branches + offline.'
-status: Approved
+status: InProgress
 priority: High
 owner: ''
 feature: Uncategorized
 created_at: 2026-06-07T00:55:25.018510211Z
-modified_at: 2026-06-07T00:55:25.018510211Z
+modified_at: 2026-06-07T01:56:37.025355501Z
 req_type: Story
 tags:
 - conclude
