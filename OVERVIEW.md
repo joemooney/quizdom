@@ -110,8 +110,18 @@ decision`); progress in the EPIC tree (`aida list --type epic`).
   reads the current exchange (what's asked, where you went off-track, what a
   precise answer must address); `S` / `quizdom session synopsis` summarizes
   the arc + your engagement. Clarifies and coaches, never advocates a belief.
+- **EPIC-154 (convergence) — complete.** A belief-neutral *roundedness* score in
+  the synopsis (consistency/clarity/completeness/coherence + the limiting gap) and
+  an offer-to-conclude when you cross 'well-rounded'.
+- **EPIC-158 (session framing) — complete.** A `--goal`/`/goal` that orients the
+  questioning + scoring; a closing ritual (`/rest` -> closing statements ->
+  `verdict`, terminator forfeits the last word); and a `--mode debate` toggle
+  where the questioner steelmans the opposing side.
+- **EPIC-162 (TUI overlays) — complete.** A `/` slash-command palette (menu +
+  descriptions + `?`-help, crossterm), plus `/help` (how the tool works) and
+  `/tutor` (helps you articulate your point + the nuance you're missing).
 
-**Every epic is complete** (~227 tests, CI green, runs on the Max plan by
+**Every epic is complete** (~336 tests, CI green, runs on the Max plan by
 default). The product is the full vision plus the use-driven extensions; further
 work is driven entirely by real use.
 
