@@ -102,6 +102,14 @@ pub fn assist_user_question(
 pub struct StrategyContext {
     pub answer: Answer,
     pub recent_path: Vec<AnsweredQuestion>,
+    // trace:STORY-159 | ai:claude
+    /// The session GOAL/thesis the exploration is trying to resolve, if one has
+    /// been set (via `--goal`, an in-session command, or an Observer proposal).
+    /// When present it ORIENTS the LLM next-question prompt — questions aim at
+    /// resolving the goal. `None` means free-flowing (no goal set yet), and the
+    /// prompt is unchanged. Belief-neutral: the goal is the question being
+    /// settled, never a belief to advocate.
+    pub goal: Option<String>,
 }
 
 #[derive(Debug, Clone, Eq, PartialEq)]
@@ -424,14 +432,30 @@ fn strategy_prompt(
     context: &StrategyContext,
     candidates: &[Question],
 ) -> String {
-    let mut prompt = format!(
+    let mut prompt = String::new();
+    // trace:STORY-159 | ai:claude
+    // When a session GOAL/thesis is set, lead the prompt with it so the model
+    // ORIENTS its selection toward RESOLVING the goal — picking or generating the
+    // follow-up that best moves the user toward settling it. Belief-neutral: the
+    // goal frames WHICH QUESTION is being settled, never which answer is right.
+    if let Some(goal) = context
+        .goal
+        .as_deref()
+        .map(str::trim)
+        .filter(|g| !g.is_empty())
+    {
+        prompt.push_str(&format!(
+            "Session goal (the claim/question being resolved): {goal}\nOrient the next question toward resolving this goal — pick or generate the follow-up that best moves the exploration toward settling it. Stay belief-neutral: aim at resolving the question, never advocate which answer is true.\n\n"
+        ));
+    }
+    prompt.push_str(&format!(
         "Current question ({id}): {title}\nAnswer mode: {mode}\nUser raw answer: {raw}\nUser normalized answer: {normalized}\n\nRecent path:\n",
         id = current.id,
         title = current.title,
         mode = current.answer_kind.mode(),
         raw = context.answer.raw,
         normalized = context.answer.normalized,
-    );
+    ));
     for item in &context.recent_path {
         prompt.push_str(&format!(
             "- {}: {} => {}\n",
@@ -1007,5 +1031,64 @@ mod weighted_index_tests {
             assert_eq!(a, b);
             assert!(a < total);
         }
+    }
+}
+
+// trace:STORY-159 | ai:claude
+#[cfg(test)]
+mod goal_orientation_tests {
+    use super::{strategy_prompt, AnsweredQuestion, StrategyContext};
+    use crate::model::{Answer, AnswerKind, Question};
+
+    fn question() -> Question {
+        Question {
+            id: "Q-1".to_string(),
+            title: "Is free will real?".to_string(),
+            tags: vec!["topic:free-will".to_string()],
+            answer_kind: AnswerKind::YesNo,
+            weight: 50,
+        }
+    }
+
+    fn context(goal: Option<&str>) -> StrategyContext {
+        StrategyContext {
+            answer: Answer {
+                raw: "yes".to_string(),
+                normalized: "yes".to_string(),
+            },
+            recent_path: Vec::<AnsweredQuestion>::new(),
+            goal: goal.map(str::to_string),
+        }
+    }
+
+    #[test]
+    fn prompt_orients_toward_the_goal_when_set() {
+        // When a goal is set, the next-question prompt names it and asks the model
+        // to ORIENT selection toward resolving it — so questions aim at the goal.
+        let goal = "can libertarian free will be held consistently?";
+        let prompt = strategy_prompt(&question(), &context(Some(goal)), &[]);
+        assert!(prompt.contains(goal), "the goal text must appear: {prompt}");
+        assert!(
+            prompt.contains("Orient the next question toward resolving this goal"),
+            "the prompt must instruct orientation: {prompt}"
+        );
+        // Belief-neutral: it aims at resolving the QUESTION, never at a belief.
+        assert!(prompt.to_lowercase().contains("belief-neutral"));
+        assert!(!prompt.to_lowercase().contains("which answer is true\","));
+    }
+
+    #[test]
+    fn prompt_is_free_flowing_when_no_goal_is_set() {
+        // No goal → the prompt carries no goal/orientation preamble (free-flowing).
+        let prompt = strategy_prompt(&question(), &context(None), &[]);
+        assert!(!prompt.contains("Session goal"));
+        assert!(!prompt.contains("Orient the next question"));
+    }
+
+    #[test]
+    fn a_blank_goal_does_not_orient() {
+        // A whitespace-only goal is treated as no goal — no orientation preamble.
+        let prompt = strategy_prompt(&question(), &context(Some("   ")), &[]);
+        assert!(!prompt.contains("Session goal"));
     }
 }

@@ -30,9 +30,12 @@ pub(crate) fn render_breadcrumb(
     question: &Question,
     depth: usize,
     branch_id: &str,
+    // trace:STORY-159 | ai:claude — the live session goal, shown in the
+    // breadcrumb so the user always sees the thesis they are orienting toward.
+    goal: Option<&str>,
     output: &mut impl Write,
 ) -> Result<()> {
-    let line = breadcrumb_line(question, depth, branch_id);
+    let line = breadcrumb_line(question, depth, branch_id, goal);
     writeln!(output, "{}", style::paint(style::breadcrumb(), &line))?;
     Ok(())
 }
@@ -40,13 +43,26 @@ pub(crate) fn render_breadcrumb(
 // trace:STORY-78 | ai:claude
 /// Pure formatter behind [`render_breadcrumb`], split out so the breadcrumb's
 /// content is unit-testable without a buffer or the styling global.
-pub(crate) fn breadcrumb_line(question: &Question, depth: usize, branch_id: &str) -> String {
-    format!(
-        "[topic: {} | depth: {} | branch: {}]",
+// trace:STORY-159 | ai:claude — when a goal is set it is appended as its own
+/// breadcrumb segment (`| goal: ...`); a free-flowing session omits the segment
+/// entirely so the breadcrumb stays compact until a goal exists.
+pub(crate) fn breadcrumb_line(
+    question: &Question,
+    depth: usize,
+    branch_id: &str,
+    goal: Option<&str>,
+) -> String {
+    let mut line = format!(
+        "[topic: {} | depth: {} | branch: {}",
         breadcrumb_topic(question),
         depth,
         branch_id
-    )
+    );
+    if let Some(goal) = goal.map(str::trim).filter(|goal| !goal.is_empty()) {
+        line.push_str(&format!(" | goal: {goal}"));
+    }
+    line.push(']');
+    line
 }
 
 // trace:STORY-78 | ai:claude
@@ -136,11 +152,14 @@ fn control_prompt(prefix: &str, context: InputContext) -> String {
         // trace:STORY-128 | ai:claude — `[S] Synopsis` joins the observer
         // controls in both contexts: it is non-destructive, so a whole-session
         // reading and a return to the same prompt is always safe.
+        // trace:STORY-159 | ai:claude — `/goal <text>` joins the controls; it has
+        // no single key because it takes free-text, so it is shown as the typed
+        // command form alongside the single-key set.
         InputContext::Frontier => {
-            format!("{prefix}  [?] Observe  [S] Synopsis  [X] eXplore  [A] Add  [P] Punt  [B] Back  [Q] Quit")
+            format!("{prefix}  [?] Observe  [S] Synopsis  [X] eXplore  [A] Add  [P] Punt  [B] Back  [Q] Quit  (/goal <text>)")
         }
         InputContext::Review => {
-            format!("{prefix}  [?] Observe  [S] Synopsis  [X] eXplore  [P] Punt  [B] Back  [F] Forward  [Q] Quit")
+            format!("{prefix}  [?] Observe  [S] Synopsis  [X] eXplore  [P] Punt  [B] Back  [F] Forward  [Q] Quit  (/goal <text>)")
         }
     }
 }
@@ -156,11 +175,13 @@ fn free_text_controls(context: InputContext) -> String {
     match context {
         // trace:STORY-128 | ai:claude — `/synopsis` mirrors the single-key
         // synopsis control for the free-text line-mode prompt.
+        // trace:STORY-159 | ai:claude — `/goal <text>` mirrors the single-key
+        // control set for the free-text line-mode prompt.
         InputContext::Frontier => {
-            "/observe /synopsis /explore /add /punt /back /quit to navigate.".to_string()
+            "/observe /synopsis /goal /explore /add /punt /back /quit to navigate.".to_string()
         }
         InputContext::Review => {
-            "/observe /synopsis /explore /punt /back /forward /quit to navigate.".to_string()
+            "/observe /synopsis /goal /explore /punt /back /forward /quit to navigate.".to_string()
         }
     }
 }
@@ -183,6 +204,13 @@ pub(crate) enum AnswerInput {
     // belief-neutral reading of the WHOLE session so far. Non-destructive: the
     // session shows the synopsis, then re-presents the SAME question.
     Synopsis,
+    // trace:STORY-159 | ai:claude
+    // The user stated the session GOAL/thesis in-session via `/goal <text>`
+    // (way 2 of 3). Carries the goal text. Non-destructive: the session records
+    // the goal, then re-presents the SAME question — now oriented toward it. A
+    // bare `/goal` with no text carries an empty string, which the session
+    // treats as "show the current goal" rather than clearing it.
+    Goal(String),
     End,
 }
 
@@ -309,6 +337,12 @@ pub(crate) fn read_answer_or_end(
         // (a whole-session reading), so it too is recognized in every context.
         if is_synopsis_command(&raw) {
             return Ok(AnswerInput::Synopsis);
+        }
+        // trace:STORY-159 | ai:claude — the `/goal <text>` command is
+        // non-destructive (it sets the orienting thesis, then re-presents the
+        // same question), so it is recognized in every context.
+        if let Some(goal) = goal_command_text(&raw) {
+            return Ok(AnswerInput::Goal(goal));
         }
         // trace:STORY-88 | ai:claude — quick-add is a frontier-only control.
         if context == InputContext::Frontier && is_add_command(&raw) {
@@ -441,6 +475,33 @@ pub(crate) fn is_synopsis_command(raw: &str) -> bool {
         raw.trim().to_ascii_lowercase().as_str(),
         "s" | "/s" | "/synopsis" | "synopsis"
     )
+}
+
+// trace:STORY-159 | ai:claude
+/// The in-session goal command: state the session GOAL/thesis. Recognised as
+/// `/goal <text>` or `goal <text>` (leading keyword, case-insensitive). Returns
+/// the goal text (trimmed) when the line is a goal command — an empty string for
+/// a bare `/goal` (the session treats that as "show the current goal"). Returns
+/// `None` when the line is not a goal command, so ordinary free-text answers
+/// that merely mention the word "goal" mid-sentence are unaffected (only a
+/// leading `goal`/`/goal` keyword triggers it).
+pub(crate) fn goal_command_text(raw: &str) -> Option<String> {
+    let trimmed = raw.trim();
+    // The keyword is whichever leading token the user typed: `/goal` or `goal`.
+    // Match it case-insensitively, then carry the REST verbatim (the goal text
+    // must preserve the user's own casing). Only a leading keyword followed by
+    // whitespace or end-of-line triggers — a free-text answer that merely
+    // contains "goal" mid-sentence is left as an answer.
+    for keyword in ["/goal", "goal"] {
+        if trimmed.len() >= keyword.len() && trimmed[..keyword.len()].eq_ignore_ascii_case(keyword)
+        {
+            let rest = &trimmed[keyword.len()..];
+            if rest.is_empty() || rest.starts_with(char::is_whitespace) {
+                return Some(rest.trim().to_string());
+            }
+        }
+    }
+    None
 }
 
 // trace:STORY-88 | ai:claude
