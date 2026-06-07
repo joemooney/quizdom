@@ -19,6 +19,8 @@
 use crate::error::Result;
 use crate::input::{read_answer_or_end, AnswerInput, FreeTextInput, InputContext};
 use crate::model::AnswerKind;
+// trace:STORY-190 | ai:claude
+use crate::palette::PaletteContext;
 use std::io::{BufRead, BufReader, Read, Write};
 
 /// The interface the session ENGINE talks to instead of stdin/stdout.
@@ -45,7 +47,17 @@ pub(crate) trait FrontEnd {
     /// given [`AnswerKind`] in the given [`InputContext`] (frontier vs review).
     /// Returns the parsed [`AnswerInput`] (an answer, a navigation/control
     /// action, a meta-channel request, or end-of-input).
-    fn read_answer(&mut self, kind: &AnswerKind, context: InputContext) -> Result<AnswerInput>;
+    ///
+    /// `palette_ctx` is the STORY-190 session snapshot the engine populates so a
+    /// `/`-opened palette can grey inapplicable commands (e.g. `/judge` without an
+    /// open objection). It does not affect TYPED commands — those still route
+    /// through the recognizers unchanged.
+    fn read_answer(
+        &mut self,
+        kind: &AnswerKind,
+        context: InputContext,
+        palette_ctx: PaletteContext,
+    ) -> Result<AnswerInput>;
 
     /// Request a raw line of text with the given prompt (used by the closing
     /// ritual, the dead-end menu, and the term-honing prompts, where the engine
@@ -114,10 +126,16 @@ impl<R: Read, W: Write> FrontEnd for LineFrontEnd<R, W> {
         &mut self.output
     }
 
-    fn read_answer(&mut self, kind: &AnswerKind, context: InputContext) -> Result<AnswerInput> {
+    fn read_answer(
+        &mut self,
+        kind: &AnswerKind,
+        context: InputContext,
+        palette_ctx: PaletteContext,
+    ) -> Result<AnswerInput> {
         read_answer_or_end(
             kind,
             context,
+            palette_ctx,
             &mut self.input,
             &mut self.free_text_input,
             &mut self.output,
@@ -179,7 +197,11 @@ mod tests {
     fn read_answer_routes_through_the_existing_recognizers() {
         let mut fe = LineFrontEnd::new(Cursor::new(b"y\n".to_vec()), Vec::new()).unwrap();
         match fe
-            .read_answer(&AnswerKind::YesNo, InputContext::Frontier)
+            .read_answer(
+                &AnswerKind::YesNo,
+                InputContext::Frontier,
+                PaletteContext::default(),
+            )
             .unwrap()
         {
             AnswerInput::Answer(answer) => assert_eq!(answer.normalized, "yes"),

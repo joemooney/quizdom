@@ -27,6 +27,63 @@ use crossterm::event::{self, Event, KeyCode, KeyEventKind};
 use crossterm::terminal::{disable_raw_mode, enable_raw_mode};
 use std::io::{self, IsTerminal, Write};
 
+// trace:STORY-190 | ai:claude — the context-aware availability machinery.
+/// A snapshot of the session state the palette needs to decide which commands
+/// are APPLICABLE right now.
+///
+/// Populated by the ENGINE (it knows `objection_state.is_some()`, `goal.is_some()`,
+/// the gauge toggle, and whether stepping back/forward is possible) and threaded
+/// through `read_answer` into the palette. The palette never reaches into session
+/// state itself — it only reads this flat snapshot, so the availability rules stay
+/// pure and unit-testable.
+#[derive(Debug, Clone, Copy, Default, Eq, PartialEq)]
+pub(crate) struct PaletteContext {
+    /// An objection is currently OPEN (the `/objection` court-case pin). Gates
+    /// `/judge` + `/resolved` (need one open) and `/objection` (one at a time).
+    pub(crate) objection_open: bool,
+    /// A session GOAL/thesis is set. Gates `/request-goal` (a goal is already set).
+    pub(crate) goal_set: bool,
+    /// The persistent score gauge is ON (informational; `/score` is a toggle and
+    /// stays enabled regardless).
+    pub(crate) score_on: bool,
+    /// Stepping BACK is possible (there is answered history to revisit). Gates
+    /// `/back`.
+    pub(crate) can_back: bool,
+    /// Stepping FORWARD is possible (we are in review, not at the frontier). Gates
+    /// `/forward`.
+    pub(crate) can_forward: bool,
+}
+
+// trace:STORY-190 | ai:claude
+/// Whether a palette command APPLIES in the current [`PaletteContext`].
+///
+/// `Enabled` commands run normally; `Disabled` commands render DIMMED with their
+/// `reason`, stay navigable so their `?`-detail can explain when they apply, and
+/// are a NO-OP on Enter (they never execute / are returned).
+#[derive(Debug, Clone, Copy, Eq, PartialEq)]
+pub(crate) enum Availability {
+    /// The command applies right now and runs on Enter.
+    Enabled,
+    /// The command does not apply; `reason` is the one-liner shown beside the
+    /// greyed entry and surfaced when Enter is pressed on it.
+    Disabled { reason: &'static str },
+}
+
+impl Availability {
+    /// Whether the command is enabled (runs on Enter).
+    pub(crate) fn is_enabled(self) -> bool {
+        matches!(self, Availability::Enabled)
+    }
+
+    /// The disabled reason, if any.
+    pub(crate) fn reason(self) -> Option<&'static str> {
+        match self {
+            Availability::Enabled => None,
+            Availability::Disabled { reason } => Some(reason),
+        }
+    }
+}
+
 /// One entry in the slash-command palette.
 ///
 /// `command` is the canonical TYPED form the palette returns when this entry is
@@ -36,7 +93,14 @@ use std::io::{self, IsTerminal, Write};
 /// one-liner shown in the menu; `detail` is the longer help + rationale shown
 /// when `?` is pressed on the highlighted command (what it does, when to use
 /// it, why it exists).
-#[derive(Debug, Clone, Copy, Eq, PartialEq)]
+///
+/// `availability` is the STORY-190 context predicate: given the live
+/// [`PaletteContext`] snapshot it returns [`Availability`] so inapplicable
+/// commands render greyed and Enter on them is a no-op. The predicate lives in
+/// the registry NEXT TO the command (single source of truth, like the STORY-176
+/// keymap) — add a context rule in one place. State-independent commands use
+/// [`always_enabled`].
+#[derive(Clone, Copy)]
 pub(crate) struct PaletteCommand {
     /// The canonical typed form returned on selection (e.g. `/observe`).
     pub(crate) command: &'static str,
@@ -44,6 +108,99 @@ pub(crate) struct PaletteCommand {
     pub(crate) description: &'static str,
     /// The detailed help + rationale shown when `?` is pressed.
     pub(crate) detail: &'static str,
+    /// The context predicate deciding whether this command applies right now.
+    pub(crate) availability: fn(&PaletteContext) -> Availability,
+}
+
+impl PaletteCommand {
+    /// This command's availability under the given context snapshot.
+    pub(crate) fn availability(&self, context: &PaletteContext) -> Availability {
+        (self.availability)(context)
+    }
+}
+
+impl std::fmt::Debug for PaletteCommand {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("PaletteCommand")
+            .field("command", &self.command)
+            .field("description", &self.description)
+            .finish_non_exhaustive()
+    }
+}
+
+impl PartialEq for PaletteCommand {
+    // Two registry entries are equal when their canonical command strings match;
+    // the `availability` fn pointer is excluded (fn pointers are not usefully
+    // comparable, and the command string already uniquely identifies an entry).
+    fn eq(&self, other: &Self) -> bool {
+        self.command == other.command
+            && self.description == other.description
+            && self.detail == other.detail
+    }
+}
+
+impl Eq for PaletteCommand {}
+
+// trace:STORY-190 | ai:claude — predicates kept NEXT TO the registry (single
+// source of truth). State-independent commands default to Enabled.
+/// The default predicate: a command that always applies.
+fn always_enabled(_: &PaletteContext) -> Availability {
+    Availability::Enabled
+}
+
+/// `/judge` + `/resolved`: enabled only when an objection is OPEN.
+fn needs_open_objection(context: &PaletteContext) -> Availability {
+    if context.objection_open {
+        Availability::Enabled
+    } else {
+        Availability::Disabled {
+            reason: "needs an open objection",
+        }
+    }
+}
+
+/// `/objection`: disabled when an objection is ALREADY open (one at a time).
+fn no_objection_open(context: &PaletteContext) -> Availability {
+    if context.objection_open {
+        Availability::Disabled {
+            reason: "an objection is already open",
+        }
+    } else {
+        Availability::Enabled
+    }
+}
+
+/// `/request-goal`: enabled only when NO goal is set yet.
+fn no_goal_yet(context: &PaletteContext) -> Availability {
+    if context.goal_set {
+        Availability::Disabled {
+            reason: "a goal is already set",
+        }
+    } else {
+        Availability::Enabled
+    }
+}
+
+/// `/back`: enabled only when there is answered history to step back into.
+fn can_step_back(context: &PaletteContext) -> Availability {
+    if context.can_back {
+        Availability::Enabled
+    } else {
+        Availability::Disabled {
+            reason: "no earlier answer to revisit",
+        }
+    }
+}
+
+/// `/forward`: enabled only when stepping forward is possible (in review).
+fn can_step_forward(context: &PaletteContext) -> Availability {
+    if context.can_forward {
+        Availability::Enabled
+    } else {
+        Availability::Disabled {
+            reason: "already at the frontier",
+        }
+    }
 }
 
 /// The single source of truth for the palette's command list.
@@ -65,6 +222,7 @@ restates the challenge in plainer terms, names the precise tension, diagnoses wh
 vs what you answered, and lists the dimensions a precise answer must address. It never supplies \
 your answer or takes a side. Use it when a follow-up feels slippery and you want to see the \
 exchange more clearly. Non-destructive: returns to the same question.",
+            availability: always_enabled,
         },
         PaletteCommand {
             command: "/synopsis",
@@ -73,6 +231,7 @@ exchange more clearly. Non-destructive: returns to the same question.",
 far and reflects it back belief-neutrally — the ground you have covered and where it is thin. \
 Use it to get oriented in a long session. Never supplies a belief. Non-destructive: returns to \
 the same question.",
+            availability: always_enabled,
         },
         // trace:STORY-174 | ai:claude — the persistent score-gauge toggle.
         PaletteCommand {
@@ -85,6 +244,8 @@ Default OFF until you type /score. It needs an LLM pass, so it recomputes at GAT
 answered turns), showing the last value with a freshness marker in between — never every turn. \
 Belief-neutral: it scores STRUCTURE / progress, never which belief is correct. Non-destructive: \
 returns to your question.",
+            // trace:STORY-190 | ai:claude — /score is a TOGGLE, always available.
+            availability: always_enabled,
         },
         PaletteCommand {
             command: "/help",
@@ -94,6 +255,7 @@ dialogue work — the controls, the flow, what a feature does, how to rest your 
 from the tool's design (TOOL-CONTEXT), never from your belief content, so it is strictly \
 belief-neutral. Use it when you are unsure what a control does or how the process works. \
 Non-destructive: returns to your question.",
+            availability: always_enabled,
         },
         PaletteCommand {
             command: "/tutor",
@@ -104,6 +266,7 @@ view back more precisely ('you seem to be getting at X — is that it?'), teache
 distinction, and names what you have not yet addressed — WITHOUT telling you what to believe. \
 It asks 'is this what you mean?'; it never supplies the belief or takes a side. \
 Non-destructive: returns to your question.",
+            availability: always_enabled,
         },
         PaletteCommand {
             command: "/explore",
@@ -111,6 +274,7 @@ Non-destructive: returns to your question.",
             detail: "Follows the current thread one level deeper instead of answering directly, \
 branching the exploration into the question behind the question. Use it when a question opens \
 a richer line you want to pursue before committing to an answer.",
+            availability: always_enabled,
         },
         PaletteCommand {
             command: "/add",
@@ -118,6 +282,7 @@ a richer line you want to pursue before committing to an answer.",
             detail: "Authors a new question from the current node and links it into the graph as \
 a follow-on, so your own line of inquiry becomes part of the session. Frontier-only. Use it \
 when the tool has not asked the question you most want to explore.",
+            availability: always_enabled,
         },
         PaletteCommand {
             command: "/goal",
@@ -127,6 +292,9 @@ orienting toward — phrased belief-neutrally as a question to settle, never a b
 With a goal set, a bare /goal shows the current goal. With none set, a bare /goal offers to \
 REQUEST one (the Observer proposes from the conversation so far). Once set, the goal orients \
 the next questions and the breadcrumb.",
+            // trace:STORY-190 | ai:claude — bare /goal both sets and shows, so it
+            // stays enabled whether or not a goal exists (only /request-goal gates).
+            availability: always_enabled,
         },
         // trace:STORY-173 | ai:claude
         PaletteCommand {
@@ -136,6 +304,8 @@ the next questions and the breadcrumb.",
 so far, skipping the bare-/goal confirm. It offers the proposal to accept, edit, or decline; \
 nothing is set unless you accept. Belief-neutral: the proposed goal is the QUESTION being \
 resolved, never a belief to adopt.",
+            // trace:STORY-190 | ai:claude — greyed once a goal is already set.
+            availability: no_goal_yet,
         },
         PaletteCommand {
             command: "/mode",
@@ -144,6 +314,7 @@ resolved, never a belief to adopt.",
 questioning) and debate (the questioner steelmans the OPPOSING side's craft). Belief-neutral: \
 debate challenges the strength of your case, it never asserts which belief is true. A bare \
 /mode shows the current mode.",
+            availability: always_enabled,
         },
         // trace:STORY-175 | ai:claude — the court-case objection mechanic.
         PaletteCommand {
@@ -154,6 +325,9 @@ contested point: the questioner narrows its next questions to it and normal adva
 until it is cleared. Clear it with /resolved (only the party who raised it) or /judge (only the \
 OTHER party, who hands it to the Observer to rule on). One objection at a time. Belief-neutral: \
 an objection names a STRUCTURAL tension, never a counter-belief.",
+            // trace:STORY-190 | ai:claude — greyed while one is already open
+            // (one-at-a-time); raise it again only after /resolved or /judge.
+            availability: no_objection_open,
         },
         PaletteCommand {
             command: "/resolved",
@@ -161,6 +335,8 @@ an objection names a STRUCTURAL tension, never a counter-belief.",
             detail: "Clears the open objection by WITHDRAWING or ACCEPTING its resolution — only \
 the party who RAISED the objection may call it. Returns the dialogue to normal flow and logs the \
 resolution. If you are the other party, use /judge instead.",
+            // trace:STORY-190 | ai:claude — only applies with an open objection.
+            availability: needs_open_objection,
         },
         PaletteCommand {
             command: "/judge",
@@ -171,6 +347,8 @@ material and unaddressed) or OVERRULED (immaterial or already addressed) and nam
 condition; a sustained objection becomes a tracked open thread that widens the distance-to-goal \
 until addressed, while the dialogue proceeds. It judges STRUCTURE, never which belief is true. \
 Needs an LLM backend (degrades to a note offline).",
+            // trace:STORY-190 | ai:claude — only applies with an open objection.
+            availability: needs_open_objection,
         },
         PaletteCommand {
             command: "/rest",
@@ -179,12 +357,27 @@ Needs an LLM backend (degrades to a note offline).",
 where the exchange becomes closing statements: your settled position plus the challenger's \
 strongest remaining structural objection, ending in a belief-neutral verdict on how \
 well-rounded the case is.",
+            availability: always_enabled,
         },
         PaletteCommand {
             command: "/back",
             description: "Step back to revisit the previous answer",
             detail: "Steps back along the answered path to revisit and, if you choose, revise a \
 previous answer. Use it to reconsider an earlier turn without losing your place.",
+            // trace:STORY-190 | ai:claude — greyed with no answered history yet.
+            availability: can_step_back,
+        },
+        // trace:STORY-190 | ai:claude — /forward is the review-pane counterpart to
+        // /back; it lives in the registry so the palette can grey it at the
+        // frontier (where stepping forward is meaningless) and enable it in review.
+        PaletteCommand {
+            command: "/forward",
+            description: "Step forward toward the frontier (review only)",
+            detail: "In the review pane, steps FORWARD along the answered path toward the \
+frontier (the inverse of /back); from the last reviewed answer it returns to the live frontier. \
+Only meaningful while reviewing — at the frontier there is nothing ahead to step toward.",
+            // trace:STORY-190 | ai:claude — enabled only while reviewing.
+            availability: can_step_forward,
         },
         PaletteCommand {
             command: "/punt",
@@ -192,12 +385,14 @@ previous answer. Use it to reconsider an earlier turn without losing your place.
             detail: "Sets the current question aside and moves to a different topic. Punting is a \
 signal the tool records — a question you repeatedly punt is down-weighted. Use it when a \
 question does not land for you right now.",
+            availability: always_enabled,
         },
         PaletteCommand {
             command: "/quit",
             description: "End the session",
             detail: "Ends the session, printing the session id and the command to resume it \
 later. An empty session is discarded rather than saved.",
+            availability: always_enabled,
         },
     ]
 }
@@ -251,20 +446,54 @@ pub(crate) struct PaletteState {
     filter: String,
     /// Index into the CURRENT filtered view (`visible()`), not into `commands`.
     highlight: usize,
+    // trace:STORY-190 | ai:claude — the live session snapshot the availability
+    // predicates read. Captured once when the palette opens; the palette never
+    // mutates it.
+    context: PaletteContext,
 }
 
 impl PaletteState {
-    /// Build the palette state from a command registry.
+    /// Build the palette state from a command registry, with the [`PaletteContext`]
+    /// snapshot that drives the availability predicates.
     ///
     /// The buffer starts with the `/` sigil that opened the palette, so the
     /// palette begins in [`FilterMode::Prefix`] (with an empty prefix, which
     /// shows every command). Backspacing that `/` away flips to
     /// [`FilterMode::Search`] without closing (STORY-177).
-    pub(crate) fn new(commands: Vec<PaletteCommand>) -> Self {
+    pub(crate) fn new(commands: Vec<PaletteCommand>, context: PaletteContext) -> Self {
         Self {
             commands,
             filter: String::from("/"),
             highlight: 0,
+            context,
+        }
+    }
+
+    // trace:STORY-190 | ai:claude
+    /// The availability of a command under this palette's context snapshot.
+    pub(crate) fn availability_of(&self, command: &PaletteCommand) -> Availability {
+        command.availability(&self.context)
+    }
+
+    // trace:STORY-190 | ai:claude
+    /// The currently highlighted command AND its availability, or `None` when the
+    /// filter excludes everything. Render uses this to grey disabled rows; the
+    /// driver uses it to make Enter a NO-OP on a disabled command.
+    pub(crate) fn highlighted_with_availability(&self) -> Option<(PaletteCommand, Availability)> {
+        self.highlighted()
+            .map(|command| (command, self.availability_of(&command)))
+    }
+
+    // trace:STORY-190 | ai:claude
+    /// The canonical command string to RETURN when Enter is pressed — `Some` only
+    /// when a command is highlighted AND it is enabled. A disabled (greyed)
+    /// command yields `None`: Enter on it is a no-op that never executes.
+    pub(crate) fn selection(&self) -> Option<String> {
+        match self.highlighted_with_availability() {
+            Some((command, availability)) if availability.is_enabled() => {
+                Some(command.command.to_string())
+            }
+            _ => None,
         }
     }
 
@@ -396,12 +625,15 @@ fn name_has_prefix(command: &PaletteCommand, needle: &str) -> bool {
 /// TTY it takes over the terminal in raw mode, renders the menu to `output`,
 /// drives the key loop via [`PaletteState`], restores the prompt, and returns
 /// `Some(outcome)`.
-pub(crate) fn run_palette(output: &mut dyn Write) -> io::Result<Option<PaletteOutcome>> {
+pub(crate) fn run_palette(
+    context: PaletteContext,
+    output: &mut dyn Write,
+) -> io::Result<Option<PaletteOutcome>> {
     if !io::stdin().is_terminal() {
         return Ok(None);
     }
     enable_raw_mode()?;
-    let result = run_palette_in_raw(output);
+    let result = run_palette_in_raw(context, output);
     let _ = disable_raw_mode();
     result
 }
@@ -413,17 +645,24 @@ pub(crate) fn run_palette(output: &mut dyn Write) -> io::Result<Option<PaletteOu
 /// out of raw mode on return, so that path calls this variant and leaves the
 /// raw-mode lifetime to its existing guard. Always returns `Some` — the caller
 /// has already decided it is on a TTY.
-pub(crate) fn run_palette_in_raw(output: &mut dyn Write) -> io::Result<Option<PaletteOutcome>> {
-    let mut state = PaletteState::new(command_registry());
+pub(crate) fn run_palette_in_raw(
+    context: PaletteContext,
+    output: &mut dyn Write,
+) -> io::Result<Option<PaletteOutcome>> {
+    let mut state = PaletteState::new(command_registry(), context);
     drive_palette(&mut state, output).map(Some)
 }
 
 /// The render + key loop, factored out of [`run_palette`] so the raw-mode guard
 /// in the caller always restores the terminal even on an error path.
 fn drive_palette(state: &mut PaletteState, output: &mut dyn Write) -> io::Result<PaletteOutcome> {
+    // trace:STORY-190 | ai:claude — when Enter lands on a DISABLED (greyed)
+    // command, we surface its reason in the detail pane instead of returning it;
+    // `show_reason` flips the next render to that explanation.
     let mut show_detail = false;
+    let mut show_reason = false;
     loop {
-        render_palette(state, show_detail, output)?;
+        render_palette(state, show_detail, show_reason, output)?;
         let event = event::read()?;
         let Event::Key(key) = event else {
             continue;
@@ -431,29 +670,43 @@ fn drive_palette(state: &mut PaletteState, output: &mut dyn Write) -> io::Result
         if !matches!(key.kind, KeyEventKind::Press | KeyEventKind::Repeat) {
             continue;
         }
-        // Any navigation / typing dismisses an open detail pane first.
+        // Any navigation / typing dismisses an open detail/reason pane first.
         match key.code {
             KeyCode::Esc => return Ok(PaletteOutcome::Cancelled),
             KeyCode::Enter => {
-                if let Some(command) = state.highlighted() {
-                    return Ok(PaletteOutcome::Selected(command.command.to_string()));
+                // trace:STORY-190 | ai:claude — Enter returns a command ONLY when
+                // it is enabled; on a disabled (greyed) command it is a NO-OP that
+                // surfaces the reason, and it never executes / returns the command.
+                if let Some(command) = state.selection() {
+                    return Ok(PaletteOutcome::Selected(command));
+                }
+                // Disabled-highlight: show why it does not apply, keep the menu up.
+                if let Some((_, availability)) = state.highlighted_with_availability() {
+                    if !availability.is_enabled() {
+                        show_reason = true;
+                        show_detail = false;
+                    }
                 }
                 // Nothing matches the filter — Enter is a no-op; keep the menu up.
             }
             KeyCode::Up => {
                 show_detail = false;
+                show_reason = false;
                 state.move_up();
             }
             KeyCode::Down => {
                 show_detail = false;
+                show_reason = false;
                 state.move_down();
             }
             KeyCode::Char('?') => {
                 // `?` toggles the DETAILED help for the highlighted command.
+                show_reason = false;
                 show_detail = !show_detail;
             }
             KeyCode::Backspace => {
                 show_detail = false;
+                show_reason = false;
                 // trace:STORY-177 | ai:claude — `pop_filter` returns false ONLY
                 // on a truly empty buffer; backspacing the leading `/` succeeds
                 // (flips to search mode) and keeps the overlay open.
@@ -464,6 +717,7 @@ fn drive_palette(state: &mut PaletteState, output: &mut dyn Write) -> io::Result
             }
             KeyCode::Char(character) => {
                 show_detail = false;
+                show_reason = false;
                 state.push_filter(character);
             }
             _ => {}
@@ -478,9 +732,10 @@ fn drive_palette(state: &mut PaletteState, output: &mut dyn Write) -> io::Result
 fn render_palette(
     state: &PaletteState,
     show_detail: bool,
+    show_reason: bool,
     output: &mut dyn Write,
 ) -> io::Result<()> {
-    let text = render_to_string(state, show_detail);
+    let text = render_to_string_with_reason(state, show_detail, show_reason);
     // In raw mode the cursor does not auto-return; emit explicit CRLFs so each
     // line starts at column zero.
     write!(output, "\r\n{}", text.replace('\n', "\r\n"))?;
@@ -489,8 +744,28 @@ fn render_palette(
 
 /// The palette's rendered text for a given state — split out so the menu layout
 /// (header, the filtered rows with a `>` highlight marker, and the optional
-/// detail pane) is unit-testable without a terminal.
+/// detail pane) is unit-testable without a terminal. STORY-190 added the
+/// availability layer behind [`render_to_string_with_reason`]; the live
+/// renderers (crossterm + TUI) call that variant, so this no-reason shorthand
+/// is the test-facing entry point.
+#[cfg(test)]
 pub(crate) fn render_to_string(state: &PaletteState, show_detail: bool) -> String {
+    render_to_string_with_reason(state, show_detail, false)
+}
+
+// trace:STORY-190 | ai:claude
+/// The palette's rendered text, with the STORY-190 availability layer: DISABLED
+/// (inapplicable) commands render greyed — a `·` marker in place of the active
+/// `>`/space, dimmed by a trailing `— (reason)` — and stay in the list so they
+/// remain discoverable and navigable (STORY-177 filters operate over the full
+/// list, greyed entries included). `show_reason` appends the highlighted greyed
+/// command's reason as a one-line note (what Enter on a disabled command surfaces
+/// instead of executing).
+pub(crate) fn render_to_string_with_reason(
+    state: &PaletteState,
+    show_detail: bool,
+    show_reason: bool,
+) -> String {
     let mut out = String::new();
     // trace:STORY-177 | ai:claude — the buffer is shown VERBATIM (it already
     // carries its leading `/` when present), and the active match mode is named
@@ -512,17 +787,40 @@ pub(crate) fn render_to_string(state: &PaletteState, show_detail: bool) -> Strin
         return out;
     }
     for (index, command) in visible.iter().enumerate() {
-        let marker = if index == state.highlight_index() {
-            ">"
-        } else {
-            " "
+        let highlighted = index == state.highlight_index();
+        // trace:STORY-190 | ai:claude — greyed (disabled) rows carry a `·` instead
+        // of the `>`/space marker and a trailing `— (reason)`; the row still shows
+        // and is still navigable so its `?`-detail can explain when it applies.
+        let availability = state.availability_of(command);
+        let marker = match (highlighted, availability.is_enabled()) {
+            (true, _) => ">",
+            (false, true) => " ",
+            (false, false) => "·",
         };
-        out.push_str(&format!(
-            "{marker} {:<10}  {}\n",
-            command.command, command.description
-        ));
+        match availability.reason() {
+            Some(reason) => out.push_str(&format!(
+                "{marker} {:<10}  {}  — ({reason})\n",
+                command.command, command.description
+            )),
+            None => out.push_str(&format!(
+                "{marker} {:<10}  {}\n",
+                command.command, command.description
+            )),
+        }
     }
     out.push_str("  [type] filter  [↑/↓] move  [Enter] run  [?] details  [Esc] cancel\n");
+    // trace:STORY-190 | ai:claude — Enter on a greyed command surfaces WHY it does
+    // not apply (a no-op note) rather than executing it.
+    if show_reason {
+        if let Some((command, availability)) = state.highlighted_with_availability() {
+            if let Some(reason) = availability.reason() {
+                out.push_str(&format!(
+                    "\n{} is unavailable: {reason}.\n",
+                    command.command
+                ));
+            }
+        }
+    }
     if show_detail {
         if let Some(command) = state.highlighted() {
             out.push_str(&format!("\n{} — {}\n", command.command, command.detail));
@@ -536,7 +834,21 @@ mod tests {
     use super::*;
 
     fn state() -> PaletteState {
-        PaletteState::new(command_registry())
+        PaletteState::new(command_registry(), PaletteContext::default())
+    }
+
+    // trace:STORY-190 | ai:claude — a palette over a specific session snapshot, so
+    // the availability predicates can be exercised state-by-state.
+    fn state_with(context: PaletteContext) -> PaletteState {
+        PaletteState::new(command_registry(), context)
+    }
+
+    fn cmd(state: &PaletteState, name: &str) -> PaletteCommand {
+        state
+            .visible()
+            .into_iter()
+            .find(|c| c.command == name)
+            .unwrap_or_else(|| panic!("registry missing {name}"))
     }
 
     // trace:STORY-177 | ai:claude — a palette in SEARCH mode: open it (buffer
@@ -880,5 +1192,207 @@ mod tests {
         }
         let rendered = render_to_string(&state, false);
         assert!(rendered.contains("no commands match"));
+    }
+
+    // ---- STORY-190: context-aware availability ------------------------------
+
+    // trace:STORY-190 | ai:claude — the /forward review-pane control joins the
+    // registry so the palette can grey it at the frontier and enable it in review.
+    #[test]
+    fn registry_includes_forward() {
+        let names: Vec<&str> = command_registry().iter().map(|c| c.command).collect();
+        assert!(names.contains(&"/forward"), "registry missing /forward");
+    }
+
+    // trace:STORY-190 | ai:claude — every registry entry carries an availability
+    // predicate; with no special state the default-enabled commands are enabled.
+    #[test]
+    fn default_context_leaves_unconditional_commands_enabled() {
+        let state = state();
+        for name in ["/observe", "/synopsis", "/score", "/help", "/goal", "/quit"] {
+            assert!(
+                state.availability_of(&cmd(&state, name)).is_enabled(),
+                "{name} should be enabled by default"
+            );
+        }
+    }
+
+    // trace:STORY-190 | ai:claude — /judge + /resolved are greyed with a reason
+    // unless an objection is open; enabled when one is.
+    #[test]
+    fn judge_and_resolved_need_an_open_objection() {
+        let closed = state_with(PaletteContext {
+            objection_open: false,
+            ..Default::default()
+        });
+        for name in ["/judge", "/resolved"] {
+            assert_eq!(
+                closed.availability_of(&cmd(&closed, name)).reason(),
+                Some("needs an open objection"),
+                "{name} should be greyed with no open objection"
+            );
+        }
+        let open = state_with(PaletteContext {
+            objection_open: true,
+            ..Default::default()
+        });
+        for name in ["/judge", "/resolved"] {
+            assert!(
+                open.availability_of(&cmd(&open, name)).is_enabled(),
+                "{name} should be enabled with an open objection"
+            );
+        }
+    }
+
+    // trace:STORY-190 | ai:claude — /objection is greyed (one-at-a-time) while an
+    // objection is already open, enabled otherwise.
+    #[test]
+    fn objection_is_one_at_a_time() {
+        let open = state_with(PaletteContext {
+            objection_open: true,
+            ..Default::default()
+        });
+        assert_eq!(
+            open.availability_of(&cmd(&open, "/objection")).reason(),
+            Some("an objection is already open")
+        );
+        let closed = state_with(PaletteContext {
+            objection_open: false,
+            ..Default::default()
+        });
+        assert!(closed
+            .availability_of(&cmd(&closed, "/objection"))
+            .is_enabled());
+    }
+
+    // trace:STORY-190 | ai:claude — /request-goal is greyed once a goal is set.
+    #[test]
+    fn request_goal_greyed_when_goal_already_set() {
+        let set = state_with(PaletteContext {
+            goal_set: true,
+            ..Default::default()
+        });
+        assert_eq!(
+            set.availability_of(&cmd(&set, "/request-goal")).reason(),
+            Some("a goal is already set")
+        );
+        let unset = state_with(PaletteContext {
+            goal_set: false,
+            ..Default::default()
+        });
+        assert!(unset
+            .availability_of(&cmd(&unset, "/request-goal"))
+            .is_enabled());
+        // The bare /goal stays enabled regardless (it both sets and shows).
+        assert!(set.availability_of(&cmd(&set, "/goal")).is_enabled());
+    }
+
+    // trace:STORY-190 | ai:claude — /back is greyed with no answered history;
+    // /forward is greyed at the frontier and enabled in review.
+    #[test]
+    fn back_and_forward_track_navigation_state() {
+        let frontier = state_with(PaletteContext {
+            can_back: false,
+            can_forward: false,
+            ..Default::default()
+        });
+        assert!(frontier
+            .availability_of(&cmd(&frontier, "/back"))
+            .reason()
+            .is_some());
+        assert!(frontier
+            .availability_of(&cmd(&frontier, "/forward"))
+            .reason()
+            .is_some());
+
+        let mid = state_with(PaletteContext {
+            can_back: true,
+            can_forward: true,
+            ..Default::default()
+        });
+        assert!(mid.availability_of(&cmd(&mid, "/back")).is_enabled());
+        assert!(mid.availability_of(&cmd(&mid, "/forward")).is_enabled());
+    }
+
+    // trace:STORY-190 | ai:claude — Enter on a DISABLED command does NOT return it
+    // (selection() is None); on an enabled command it returns the canonical form.
+    #[test]
+    fn enter_on_a_disabled_command_does_not_return_it() {
+        // No open objection: highlight /judge (disabled) and confirm no selection.
+        let mut state = state_with(PaletteContext::default());
+        for character in "judge".chars() {
+            state.push_filter(character);
+        }
+        assert_eq!(state.highlighted().unwrap().command, "/judge");
+        assert!(
+            !state
+                .availability_of(&state.highlighted().unwrap())
+                .is_enabled(),
+            "/judge is disabled with no open objection"
+        );
+        assert_eq!(
+            state.selection(),
+            None,
+            "Enter on a disabled command yields no selection (no-op)"
+        );
+
+        // With an objection open, the same /judge IS selectable.
+        let mut open = state_with(PaletteContext {
+            objection_open: true,
+            ..Default::default()
+        });
+        for character in "judge".chars() {
+            open.push_filter(character);
+        }
+        assert_eq!(open.selection(), Some("/judge".to_string()));
+    }
+
+    // trace:STORY-190 | ai:claude — greyed commands still APPEAR under BOTH filter
+    // modes (STORY-177 prefix + search), so discoverability is unaffected.
+    #[test]
+    fn greyed_commands_still_appear_under_both_filter_modes() {
+        // Default context greys /judge, /resolved, /back, /forward.
+        // Prefix mode: `/judge` still lists /judge even though it is disabled.
+        let mut prefix = state_with(PaletteContext::default());
+        for character in "judge".chars() {
+            prefix.push_filter(character);
+        }
+        assert_eq!(prefix.mode(), FilterMode::Prefix);
+        assert!(prefix.visible().iter().any(|c| c.command == "/judge"));
+        assert!(!prefix.availability_of(&cmd(&prefix, "/judge")).is_enabled());
+
+        // Search mode: backspace the `/`, search "resolve" — /resolved still shows.
+        let mut search = state_with(PaletteContext::default());
+        assert!(search.pop_filter());
+        assert_eq!(search.mode(), FilterMode::Search);
+        for character in "resolve".chars() {
+            search.push_filter(character);
+        }
+        assert!(search.visible().iter().any(|c| c.command == "/resolved"));
+        assert!(!search
+            .availability_of(&cmd(&search, "/resolved"))
+            .is_enabled());
+    }
+
+    // trace:STORY-190 | ai:claude — the render dims disabled rows (a `·` marker +
+    // a trailing `— (reason)`), and Enter's no-op surfaces the reason note.
+    #[test]
+    fn render_greys_disabled_rows_with_their_reason() {
+        let state = state_with(PaletteContext::default());
+        let rendered = render_to_string(&state, false);
+        let judge_line = rendered
+            .lines()
+            .find(|line| line.contains("/judge"))
+            .unwrap();
+        assert!(judge_line.contains("needs an open objection"));
+        assert!(judge_line.trim_start().starts_with('·'));
+
+        // The Enter-no-op reason note appears only when requested.
+        let mut highlighting_judge = state_with(PaletteContext::default());
+        for character in "judge".chars() {
+            highlighting_judge.push_filter(character);
+        }
+        let with_reason = render_to_string_with_reason(&highlighting_judge, false, true);
+        assert!(with_reason.contains("/judge is unavailable: needs an open objection"));
     }
 }

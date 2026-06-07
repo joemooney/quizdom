@@ -1569,6 +1569,7 @@ fn free_text_command_vs_answer_parsing_round_trip() {
     let action = read_answer_or_end(
         &AnswerKind::FreeText,
         InputContext::Frontier,
+        crate::palette::PaletteContext::default(),
         &mut "/back\n".as_bytes(),
         &mut free_text,
         &mut out,
@@ -1580,6 +1581,7 @@ fn free_text_command_vs_answer_parsing_round_trip() {
     let action = read_answer_or_end(
         &AnswerKind::FreeText,
         InputContext::Frontier,
+        crate::palette::PaletteContext::default(),
         &mut "/add\n".as_bytes(),
         &mut free_text,
         &mut out,
@@ -1591,6 +1593,7 @@ fn free_text_command_vs_answer_parsing_round_trip() {
     let action = read_answer_or_end(
         &AnswerKind::FreeText,
         InputContext::Frontier,
+        crate::palette::PaletteContext::default(),
         &mut "/explore\n".as_bytes(),
         &mut free_text,
         &mut out,
@@ -1605,6 +1608,7 @@ fn free_text_command_vs_answer_parsing_round_trip() {
     let action = read_answer_or_end(
         &AnswerKind::FreeText,
         InputContext::Frontier,
+        crate::palette::PaletteContext::default(),
         &mut "because freedom\n".as_bytes(),
         &mut free_text,
         &mut out,
@@ -1623,6 +1627,7 @@ fn free_text_command_vs_answer_parsing_round_trip() {
     let action = read_answer_or_end(
         &AnswerKind::FreeText,
         InputContext::Review,
+        crate::palette::PaletteContext::default(),
         &mut "/forward\n".as_bytes(),
         &mut free_text,
         &mut out,

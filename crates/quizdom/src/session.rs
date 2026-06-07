@@ -2788,447 +2788,469 @@ fn run_session_from_current(
                 render_term_definitions(&probed_terms, fe.out())?;
             }
             render_question_for(&current, InputContext::Frontier, fe.out())?;
-            let answer = match fe.read_answer(&current.answer_kind, InputContext::Frontier)? {
-                AnswerInput::Answer(answer) => answer,
-                AnswerInput::Back => {
-                    match browse_answered_path(
-                        bank,
-                        &recent_path,
+            // trace:STORY-190 | ai:claude — snapshot the live session state for the
+            // palette's context-aware availability: which slash-commands apply right
+            // now (an objection open? a goal set? the gauge on? back possible?).
+            // `/forward` is review-only, so `can_forward` is false at the frontier.
+            let palette_ctx = crate::palette::PaletteContext {
+                objection_open: objection_state.is_some(),
+                goal_set: goal.is_some(),
+                score_on: score_gauge_on,
+                can_back: !recent_path.is_empty(),
+                can_forward: false,
+            };
+            let answer =
+                match fe.read_answer(&current.answer_kind, InputContext::Frontier, palette_ctx)? {
+                    AnswerInput::Answer(answer) => answer,
+                    AnswerInput::Back => {
+                        match browse_answered_path(
+                            bank,
+                            &recent_path,
+                            // trace:STORY-128 | ai:claude
+                            &ReviewContext {
+                                observer: &observer,
+                                log_path: &config.log_path,
+                                branch: &config.branch_id,
+                                // trace:STORY-190 | ai:claude
+                                objection_open: objection_state.is_some(),
+                                goal_set: goal.is_some(),
+                                score_on: score_gauge_on,
+                            },
+                            fe,
+                        )? {
+                            ReviewOutcome::Frontier => continue,
+                            ReviewOutcome::Revised {
+                                index,
+                                question,
+                                answer,
+                            } => {
+                                pending_revision = Some((index, question, answer));
+                                continue;
+                            }
+                            ReviewOutcome::End => {
+                                // trace:STORY-80 | ai:claude
+                                ended_at_frontier = true;
+                                logger.session_ended(
+                                    &config.session_id,
+                                    &config.user_id,
+                                    &config.branch_id,
+                                    answered_turn,
+                                    "User ended session.",
+                                )?;
+                                break;
+                            }
+                        }
+                    }
+                    AnswerInput::Add => {
+                        // trace:STORY-88 | ai:claude
+                        // Quick-add: author a new question mid-exploration and
+                        // link it as a `begets` follow-on from the CURRENT node,
+                        // then re-present the current question so the user
+                        // resumes exactly where they paused. The persisted
+                        // Q-object is tagged `source:user-authored` (STORY-85)
+                        // and shows up as a begets successor in later sessions.
+                        quick_add_from_current(
+                            bank,
+                            strategy,
+                            user_authored_persister,
+                            &current,
+                            fe,
+                        )?;
+                        continue;
+                    }
+                    AnswerInput::Observe => {
+                        // trace:STORY-127 | ai:claude
+                        // Non-destructive observer: read the current exchange as
+                        // a belief-neutral META voice, then re-present the SAME
+                        // question (like eXplore). Nothing is logged or mutated.
+                        let exchange = exchange_for_frontier(&current, &recent_path);
+                        let reading = {
+                            let _spinner = crate::spinner::Spinner::start("observing");
+                            observer.read(&exchange)
+                        };
+                        render_exchange_reading(&reading, fe.out())?;
+                        continue;
+                    }
+                    AnswerInput::Synopsis => {
                         // trace:STORY-128 | ai:claude
-                        &ReviewContext {
-                            observer: &observer,
-                            log_path: &config.log_path,
-                            branch: &config.branch_id,
-                        },
-                        fe,
-                    )? {
-                        ReviewOutcome::Frontier => continue,
-                        ReviewOutcome::Revised {
-                            index,
-                            question,
-                            answer,
-                        } => {
-                            pending_revision = Some((index, question, answer));
-                            continue;
-                        }
-                        ReviewOutcome::End => {
-                            // trace:STORY-80 | ai:claude
-                            ended_at_frontier = true;
-                            logger.session_ended(
-                                &config.session_id,
-                                &config.user_id,
-                                &config.branch_id,
-                                answered_turn,
-                                "User ended session.",
-                            )?;
-                            break;
-                        }
-                    }
-                }
-                AnswerInput::Add => {
-                    // trace:STORY-88 | ai:claude
-                    // Quick-add: author a new question mid-exploration and
-                    // link it as a `begets` follow-on from the CURRENT node,
-                    // then re-present the current question so the user
-                    // resumes exactly where they paused. The persisted
-                    // Q-object is tagged `source:user-authored` (STORY-85)
-                    // and shows up as a begets successor in later sessions.
-                    quick_add_from_current(bank, strategy, user_authored_persister, &current, fe)?;
-                    continue;
-                }
-                AnswerInput::Observe => {
-                    // trace:STORY-127 | ai:claude
-                    // Non-destructive observer: read the current exchange as
-                    // a belief-neutral META voice, then re-present the SAME
-                    // question (like eXplore). Nothing is logged or mutated.
-                    let exchange = exchange_for_frontier(&current, &recent_path);
-                    let reading = {
-                        let _spinner = crate::spinner::Spinner::start("observing");
-                        observer.read(&exchange)
-                    };
-                    render_exchange_reading(&reading, fe.out())?;
-                    continue;
-                }
-                AnswerInput::Synopsis => {
-                    // trace:STORY-128 | ai:claude
-                    // Non-destructive GLOBAL synopsis: read the whole session
-                    // log so far as a belief-neutral META voice, then
-                    // re-present the SAME question (like Observe). Nothing is
-                    // logged or mutated.
-                    let rendered = render_session_synopsis(
-                        &observer,
-                        &config.log_path,
-                        Some(&config.branch_id),
-                        fe.out(),
-                    )?;
-                    // trace:STORY-156 | ai:claude
-                    // CONVERGENCE terminal: when the synopsis crossed the
-                    // well-rounded threshold it OFFERED to conclude. Prompt
-                    // the user (agency preserved). Accepting prints a final
-                    // belief-neutral summary of their OWN position and ends
-                    // the session gracefully with the resume footer; declining
-                    // (or any non-conclude path / offline) just re-presents the
-                    // SAME question and keeps exploring.
-                    if let Some((synopsis, arc)) = rendered {
-                        // trace:STORY-159 | ai:claude
-                        // OBSERVER-PROPOSED goal (way 3 of 3): if the session
-                        // is still free-flowing, let the Observer read the arc
-                        // and OFFER a goal when a thesis has crystallized. The
-                        // user decides; declining keeps exploring. Offered
-                        // before the conclude prompt so a goal can orient the
-                        // remaining exploration.
-                        if goal.is_none() {
-                            maybe_propose_goal(
-                                &mut goal,
-                                &observer,
-                                &arc,
-                                config,
-                                &mut logger,
-                                answered_turn,
-                                fe,
-                            )?;
-                        }
-                        if synopsis.offers_conclude() && prompt_to_conclude(fe)? {
-                            crate::synopsis::render_conclusion(&synopsis, &arc, fe.out())?;
-                            ended_at_frontier = true;
-                            concluded = true;
-                            logger.session_ended(
-                                &config.session_id,
-                                &config.user_id,
-                                &config.branch_id,
-                                answered_turn,
-                                "User concluded at the well-rounded threshold.",
-                            )?;
-                            break;
-                        }
-                    }
-                    continue;
-                }
-                AnswerInput::Forward => continue,
-                AnswerInput::Score => {
-                    // trace:STORY-174 | ai:claude
-                    // Toggle the persistent score gauge. `/score` is the SOLE
-                    // toggle and the gauge defaults OFF. Turning it ON computes the
-                    // score IMMEDIATELY (a gate) and shows it; turning it OFF emits
-                    // the gauge-off marker (the TUI clears its segment) and stops
-                    // showing it. Non-destructive: the SAME question is then
-                    // re-presented (the loop redraws the breadcrumb + gauge).
-                    // Belief-neutral: the gauge reads structure / distance-to-goal.
-                    score_gauge_on = !score_gauge_on;
-                    if score_gauge_on {
-                        let gauge = compute_score_gauge(
+                        // Non-destructive GLOBAL synopsis: read the whole session
+                        // log so far as a belief-neutral META voice, then
+                        // re-present the SAME question (like Observe). Nothing is
+                        // logged or mutated.
+                        let rendered = render_session_synopsis(
                             &observer,
                             &config.log_path,
                             Some(&config.branch_id),
-                            goal.as_deref(),
-                            objection_open_threads.last().map(String::as_str),
-                        );
-                        render_score_gauge(&gauge, true, fe.out())?;
-                        last_gauge = Some(gauge);
-                        // The toggle is itself a gate, so the next frontier turn
-                        // shows this fresh value without recomputing.
-                        turns_since_score = 0;
-                    } else {
-                        last_gauge = None;
-                        render_score_gauge_off(fe.out())?;
-                    }
-                    continue;
-                }
-                AnswerInput::Goal(text) => {
-                    // trace:STORY-159 | ai:claude
-                    // In-session goal (way 2 of 3): the user states the
-                    // thesis. A non-empty text SETS the goal — logged as a
-                    // `goal_set` event (so resume restores it and the arc /
-                    // synopsis orient to it) — then the SAME question is
-                    // re-presented, now oriented toward the goal. Non-destructive:
-                    // nothing else changes. Belief-neutral: the goal is the
-                    // question being settled, never a belief.
-                    // trace:STORY-173 | ai:claude
-                    // A bare `/goal` (empty text) now branches on whether a goal
-                    // is set: WITH a goal it still just SHOWS the current one
-                    // (unchanged), but with NO goal it first PROMPTS "No goal set —
-                    // request one? [y/N]" and, on yes, proposes one on demand
-                    // (accept / edit / decline). It never clears a goal.
-                    if text.trim().is_empty() && goal.is_none() {
-                        let prompt = "No goal set — request one? [y/N]: ";
-                        let wants = match fe.read_line(prompt)? {
-                            Some(line) => {
-                                matches!(line.trim().to_ascii_lowercase().as_str(), "y" | "yes")
+                            fe.out(),
+                        )?;
+                        // trace:STORY-156 | ai:claude
+                        // CONVERGENCE terminal: when the synopsis crossed the
+                        // well-rounded threshold it OFFERED to conclude. Prompt
+                        // the user (agency preserved). Accepting prints a final
+                        // belief-neutral summary of their OWN position and ends
+                        // the session gracefully with the resume footer; declining
+                        // (or any non-conclude path / offline) just re-presents the
+                        // SAME question and keeps exploring.
+                        if let Some((synopsis, arc)) = rendered {
+                            // trace:STORY-159 | ai:claude
+                            // OBSERVER-PROPOSED goal (way 3 of 3): if the session
+                            // is still free-flowing, let the Observer read the arc
+                            // and OFFER a goal when a thesis has crystallized. The
+                            // user decides; declining keeps exploring. Offered
+                            // before the conclude prompt so a goal can orient the
+                            // remaining exploration.
+                            if goal.is_none() {
+                                maybe_propose_goal(
+                                    &mut goal,
+                                    &observer,
+                                    &arc,
+                                    config,
+                                    &mut logger,
+                                    answered_turn,
+                                    fe,
+                                )?;
                             }
-                            // EOF / non-TTY: do not propose on the user's behalf.
-                            None => false,
-                        };
-                        if wants {
-                            request_goal_on_demand(
-                                &mut goal,
-                                &observer,
-                                config,
-                                &mut logger,
-                                answered_turn,
-                                fe,
-                            )?;
+                            if synopsis.offers_conclude() && prompt_to_conclude(fe)? {
+                                crate::synopsis::render_conclusion(&synopsis, &arc, fe.out())?;
+                                ended_at_frontier = true;
+                                concluded = true;
+                                logger.session_ended(
+                                    &config.session_id,
+                                    &config.user_id,
+                                    &config.branch_id,
+                                    answered_turn,
+                                    "User concluded at the well-rounded threshold.",
+                                )?;
+                                break;
+                            }
                         }
                         continue;
                     }
-                    set_goal_in_session(
-                        &mut goal,
-                        &text,
-                        "user",
-                        config,
-                        &mut logger,
-                        answered_turn,
-                        fe.out(),
-                    )?;
-                    continue;
-                }
-                AnswerInput::RequestGoal => {
-                    // trace:STORY-173 | ai:claude
-                    // The on-demand `/request-goal` alias: propose a goal DIRECTLY
-                    // (skipping the bare-`/goal` `[y/N]` confirm), then offer it
-                    // (accept / edit / decline). With a goal already set it just
-                    // shows the current one. Offline degrades to a "needs an LLM
-                    // backend" note. Non-destructive: nothing else changes.
-                    request_goal_on_demand(
-                        &mut goal,
-                        &observer,
-                        config,
-                        &mut logger,
-                        answered_turn,
-                        fe,
-                    )?;
-                    continue;
-                }
-                AnswerInput::Mode(token) => {
-                    // trace:STORY-161 | ai:claude
-                    // In-session mode toggle: `/mode debate` makes the
-                    // questioner steelman the OPPOSING side; `/mode socratic`
-                    // returns to the neutral-challenger default. A non-empty
-                    // token SETS the mode (logged as a `mode_set` event so
-                    // resume restores it and the verdict path frames the
-                    // debate); a bare `/mode` SHOWS the current mode. Then the
-                    // SAME question is re-presented under the new mode.
-                    // Belief-neutral: debate argues craft, never which belief is
-                    // true.
-                    set_mode_in_session(
-                        &mut mode,
-                        &token,
-                        config,
-                        &mut logger,
-                        answered_turn,
-                        fe.out(),
-                    )?;
-                    continue;
-                }
-                AnswerInput::Rest => {
-                    // trace:STORY-160 | ai:claude
-                    // "Rest your case": a PHASE TRANSITION out of the
-                    // question/answer loop into the CLOSING ritual. The user
-                    // (the only party who rests at the frontier) states their
-                    // settled position(s); the challenger answers each with its
-                    // strongest remaining objection; the ritual ends on
-                    // `verdict` or `terminate` (terminator forfeits the last
-                    // word). The session ALWAYS ends after the ritual, so this
-                    // breaks the main loop with the closing outcome.
-                    let outcome = run_closing_phase(
-                        config,
-                        &observer,
-                        goal.as_deref(),
-                        ClosingParty::User,
-                        &mut logger,
-                        answered_turn,
-                        fe,
-                    )?;
-                    // trace:STORY-160 | ai:claude — a rested case is meaningful
-                    // session activity even if no question was answered, so the
-                    // log survives (it carries the closing statements + verdict)
-                    // rather than being discarded as empty (STORY-81).
-                    answer_recorded = true;
-                    ended_at_frontier = true;
-                    logger.session_ended(
-                        &config.session_id,
-                        &config.user_id,
-                        &config.branch_id,
-                        answered_turn,
-                        outcome.summary,
-                    )?;
-                    break;
-                }
-                AnswerInput::Verdict => {
-                    // trace:STORY-160 | ai:claude
-                    // A direct request for the FINAL VERDICT at the frontier:
-                    // rest the case and render the belief-neutral roundedness
-                    // verdict immediately (no objection exchange). Logged as a
-                    // closing phase transition so the log shows the ritual.
-                    logger.phase_changed(
-                        &config.session_id,
-                        &config.user_id,
-                        &config.branch_id,
-                        answered_turn,
-                        "closing",
-                        ClosingParty::User.as_str(),
-                    )?;
-                    let outcome =
-                        finish_with_verdict(config, &observer, goal.as_deref(), fe.out())?;
-                    // trace:STORY-160 | ai:claude — keep the rested/verdict
-                    // session (it carries the phase transition + verdict).
-                    answer_recorded = true;
-                    ended_at_frontier = true;
-                    logger.session_ended(
-                        &config.session_id,
-                        &config.user_id,
-                        &config.branch_id,
-                        answered_turn,
-                        outcome.summary,
-                    )?;
-                    break;
-                }
-                AnswerInput::Terminate => {
-                    // trace:STORY-160 | ai:claude
-                    // `terminate` at the frontier: the user rests AND
-                    // terminates in one step. By the fairness rule the user
-                    // forfeits the last word, so the CHALLENGER makes the final
-                    // closing statement (its strongest remaining objection)
-                    // before the verdict renders.
-                    logger.phase_changed(
-                        &config.session_id,
-                        &config.user_id,
-                        &config.branch_id,
-                        answered_turn,
-                        "closing",
-                        ClosingParty::User.as_str(),
-                    )?;
-                    render_closing_banner(fe.out())?;
-                    render_terminate_note(ClosingParty::User, fe.out())?;
-                    let objection = {
-                        let _spinner = crate::spinner::Spinner::start("closing objection");
-                        observer.closing_objection("", goal.as_deref())
-                    };
-                    render_closing_objection(&objection, true, fe.out())?;
-                    logger.closing_statement(
-                        &config.session_id,
-                        &config.user_id,
-                        &config.branch_id,
-                        answered_turn,
-                        ClosingParty::Challenger.as_str(),
-                        &objection.objection,
-                        true,
-                    )?;
-                    let outcome =
-                        finish_with_verdict(config, &observer, goal.as_deref(), fe.out())?;
-                    // trace:STORY-160 | ai:claude — keep the terminated session.
-                    answer_recorded = true;
-                    ended_at_frontier = true;
-                    logger.session_ended(
-                        &config.session_id,
-                        &config.user_id,
-                        &config.branch_id,
-                        answered_turn,
-                        outcome.summary,
-                    )?;
-                    break;
-                }
-                AnswerInput::Help(question) => {
-                    // trace:STORY-164 | ai:claude — non-destructive process-help
-                    // channel: answer the free-form question from TOOL-CONTEXT (the
-                    // design), belief-neutral, then re-present the SAME question
-                    // (like Observe). Offline degrades to a static help index.
-                    let answer = {
-                        let _spinner = crate::spinner::Spinner::start("helping");
-                        observer.help(&question)
-                    };
-                    render_help_answer(&answer, fe.out())?;
-                    continue;
-                }
-                AnswerInput::Tutor(text) => {
-                    // trace:STORY-165 | ai:claude — non-destructive articulation &
-                    // nuance coach: reflect the user's OWN point back more precisely,
-                    // teach the distinction, and name the missing nuance — never
-                    // supplying a belief or taking a side. Re-present the SAME
-                    // question (like Observe). Offline degrades to a structural note.
-                    let context = tutor_context_for_frontier(&text, &current, &recent_path);
-                    let reading = {
-                        let _spinner = crate::spinner::Spinner::start("tutoring");
-                        observer.tutor(&context)
-                    };
-                    render_tutor_reading(&reading, fe.out())?;
-                    continue;
-                }
-                AnswerInput::Objection(text) => {
-                    // trace:STORY-175 | ai:claude
-                    // EITHER party raised a court-style `/objection`: PIN the
-                    // exchange on the contested point (the user is the objector
-                    // here). One-at-a-time guard refuses a second; a bare
-                    // `/objection` shows the open one. On success the questioner
-                    // narrows to the point (via StrategyContext) and the gavel motif
-                    // shows. Non-destructive otherwise: the SAME question is
-                    // re-presented. Belief-neutral: the objection is a structural
-                    // tension, never a belief.
-                    raise_objection(
-                        &mut objection_state,
-                        &text,
-                        ObjectionParty::User,
-                        config,
-                        &mut logger,
-                        answered_turn,
-                        fe.out(),
-                    )?;
-                    continue;
-                }
-                AnswerInput::Resolved => {
-                    // trace:STORY-175 | ai:claude
-                    // `/resolved`: ONLY the OBJECTOR may call it. A wrong-caller is
-                    // rejected with a helpful note. On success the objection clears
-                    // and normal flow resumes. Pure state transition — works offline.
-                    resolve_objection(
-                        &mut objection_state,
-                        ObjectionParty::User,
-                        config,
-                        &mut logger,
-                        answered_turn,
-                        fe.out(),
-                    )?;
-                    continue;
-                }
-                AnswerInput::Judge => {
-                    // trace:STORY-175 | ai:claude
-                    // `/judge`: ONLY the OTHER (non-objecting) party may call it ->
-                    // the Observer renders a belief-neutral SUSTAINED/OVERRULED
-                    // ruling + resolving condition, then clears the objection. A
-                    // wrong-caller (the objector) is rejected. Offline degrades to a
-                    // "needs an LLM backend" note (the objection stays open). A
-                    // SUSTAINED ruling tracks the resolving condition as an open
-                    // thread that widens the gauge until addressed; the dialogue
-                    // proceeds.
-                    let context = judge_context_for_frontier(&current, &recent_path);
-                    let outcome = judge_objection(
-                        &mut objection_state,
-                        ObjectionParty::User,
-                        &observer,
-                        &context,
-                        goal.as_deref(),
-                        config,
-                        &mut logger,
-                        answered_turn,
-                        fe.out(),
-                    )?;
-                    if let Some(thread) = outcome.open_thread {
-                        objection_open_threads.push(thread);
+                    AnswerInput::Forward => continue,
+                    AnswerInput::Score => {
+                        // trace:STORY-174 | ai:claude
+                        // Toggle the persistent score gauge. `/score` is the SOLE
+                        // toggle and the gauge defaults OFF. Turning it ON computes the
+                        // score IMMEDIATELY (a gate) and shows it; turning it OFF emits
+                        // the gauge-off marker (the TUI clears its segment) and stops
+                        // showing it. Non-destructive: the SAME question is then
+                        // re-presented (the loop redraws the breadcrumb + gauge).
+                        // Belief-neutral: the gauge reads structure / distance-to-goal.
+                        score_gauge_on = !score_gauge_on;
+                        if score_gauge_on {
+                            let gauge = compute_score_gauge(
+                                &observer,
+                                &config.log_path,
+                                Some(&config.branch_id),
+                                goal.as_deref(),
+                                objection_open_threads.last().map(String::as_str),
+                            );
+                            render_score_gauge(&gauge, true, fe.out())?;
+                            last_gauge = Some(gauge);
+                            // The toggle is itself a gate, so the next frontier turn
+                            // shows this fresh value without recomputing.
+                            turns_since_score = 0;
+                        } else {
+                            last_gauge = None;
+                            render_score_gauge_off(fe.out())?;
+                        }
+                        continue;
                     }
-                    continue;
-                }
-                AnswerInput::End => {
-                    // trace:STORY-80 | ai:claude
-                    ended_at_frontier = true;
-                    logger.session_ended(
-                        &config.session_id,
-                        &config.user_id,
-                        &config.branch_id,
-                        answered_turn,
-                        "User ended session.",
-                    )?;
-                    break;
-                }
-            };
+                    AnswerInput::Goal(text) => {
+                        // trace:STORY-159 | ai:claude
+                        // In-session goal (way 2 of 3): the user states the
+                        // thesis. A non-empty text SETS the goal — logged as a
+                        // `goal_set` event (so resume restores it and the arc /
+                        // synopsis orient to it) — then the SAME question is
+                        // re-presented, now oriented toward the goal. Non-destructive:
+                        // nothing else changes. Belief-neutral: the goal is the
+                        // question being settled, never a belief.
+                        // trace:STORY-173 | ai:claude
+                        // A bare `/goal` (empty text) now branches on whether a goal
+                        // is set: WITH a goal it still just SHOWS the current one
+                        // (unchanged), but with NO goal it first PROMPTS "No goal set —
+                        // request one? [y/N]" and, on yes, proposes one on demand
+                        // (accept / edit / decline). It never clears a goal.
+                        if text.trim().is_empty() && goal.is_none() {
+                            let prompt = "No goal set — request one? [y/N]: ";
+                            let wants = match fe.read_line(prompt)? {
+                                Some(line) => {
+                                    matches!(line.trim().to_ascii_lowercase().as_str(), "y" | "yes")
+                                }
+                                // EOF / non-TTY: do not propose on the user's behalf.
+                                None => false,
+                            };
+                            if wants {
+                                request_goal_on_demand(
+                                    &mut goal,
+                                    &observer,
+                                    config,
+                                    &mut logger,
+                                    answered_turn,
+                                    fe,
+                                )?;
+                            }
+                            continue;
+                        }
+                        set_goal_in_session(
+                            &mut goal,
+                            &text,
+                            "user",
+                            config,
+                            &mut logger,
+                            answered_turn,
+                            fe.out(),
+                        )?;
+                        continue;
+                    }
+                    AnswerInput::RequestGoal => {
+                        // trace:STORY-173 | ai:claude
+                        // The on-demand `/request-goal` alias: propose a goal DIRECTLY
+                        // (skipping the bare-`/goal` `[y/N]` confirm), then offer it
+                        // (accept / edit / decline). With a goal already set it just
+                        // shows the current one. Offline degrades to a "needs an LLM
+                        // backend" note. Non-destructive: nothing else changes.
+                        request_goal_on_demand(
+                            &mut goal,
+                            &observer,
+                            config,
+                            &mut logger,
+                            answered_turn,
+                            fe,
+                        )?;
+                        continue;
+                    }
+                    AnswerInput::Mode(token) => {
+                        // trace:STORY-161 | ai:claude
+                        // In-session mode toggle: `/mode debate` makes the
+                        // questioner steelman the OPPOSING side; `/mode socratic`
+                        // returns to the neutral-challenger default. A non-empty
+                        // token SETS the mode (logged as a `mode_set` event so
+                        // resume restores it and the verdict path frames the
+                        // debate); a bare `/mode` SHOWS the current mode. Then the
+                        // SAME question is re-presented under the new mode.
+                        // Belief-neutral: debate argues craft, never which belief is
+                        // true.
+                        set_mode_in_session(
+                            &mut mode,
+                            &token,
+                            config,
+                            &mut logger,
+                            answered_turn,
+                            fe.out(),
+                        )?;
+                        continue;
+                    }
+                    AnswerInput::Rest => {
+                        // trace:STORY-160 | ai:claude
+                        // "Rest your case": a PHASE TRANSITION out of the
+                        // question/answer loop into the CLOSING ritual. The user
+                        // (the only party who rests at the frontier) states their
+                        // settled position(s); the challenger answers each with its
+                        // strongest remaining objection; the ritual ends on
+                        // `verdict` or `terminate` (terminator forfeits the last
+                        // word). The session ALWAYS ends after the ritual, so this
+                        // breaks the main loop with the closing outcome.
+                        let outcome = run_closing_phase(
+                            config,
+                            &observer,
+                            goal.as_deref(),
+                            ClosingParty::User,
+                            &mut logger,
+                            answered_turn,
+                            fe,
+                        )?;
+                        // trace:STORY-160 | ai:claude — a rested case is meaningful
+                        // session activity even if no question was answered, so the
+                        // log survives (it carries the closing statements + verdict)
+                        // rather than being discarded as empty (STORY-81).
+                        answer_recorded = true;
+                        ended_at_frontier = true;
+                        logger.session_ended(
+                            &config.session_id,
+                            &config.user_id,
+                            &config.branch_id,
+                            answered_turn,
+                            outcome.summary,
+                        )?;
+                        break;
+                    }
+                    AnswerInput::Verdict => {
+                        // trace:STORY-160 | ai:claude
+                        // A direct request for the FINAL VERDICT at the frontier:
+                        // rest the case and render the belief-neutral roundedness
+                        // verdict immediately (no objection exchange). Logged as a
+                        // closing phase transition so the log shows the ritual.
+                        logger.phase_changed(
+                            &config.session_id,
+                            &config.user_id,
+                            &config.branch_id,
+                            answered_turn,
+                            "closing",
+                            ClosingParty::User.as_str(),
+                        )?;
+                        let outcome =
+                            finish_with_verdict(config, &observer, goal.as_deref(), fe.out())?;
+                        // trace:STORY-160 | ai:claude — keep the rested/verdict
+                        // session (it carries the phase transition + verdict).
+                        answer_recorded = true;
+                        ended_at_frontier = true;
+                        logger.session_ended(
+                            &config.session_id,
+                            &config.user_id,
+                            &config.branch_id,
+                            answered_turn,
+                            outcome.summary,
+                        )?;
+                        break;
+                    }
+                    AnswerInput::Terminate => {
+                        // trace:STORY-160 | ai:claude
+                        // `terminate` at the frontier: the user rests AND
+                        // terminates in one step. By the fairness rule the user
+                        // forfeits the last word, so the CHALLENGER makes the final
+                        // closing statement (its strongest remaining objection)
+                        // before the verdict renders.
+                        logger.phase_changed(
+                            &config.session_id,
+                            &config.user_id,
+                            &config.branch_id,
+                            answered_turn,
+                            "closing",
+                            ClosingParty::User.as_str(),
+                        )?;
+                        render_closing_banner(fe.out())?;
+                        render_terminate_note(ClosingParty::User, fe.out())?;
+                        let objection = {
+                            let _spinner = crate::spinner::Spinner::start("closing objection");
+                            observer.closing_objection("", goal.as_deref())
+                        };
+                        render_closing_objection(&objection, true, fe.out())?;
+                        logger.closing_statement(
+                            &config.session_id,
+                            &config.user_id,
+                            &config.branch_id,
+                            answered_turn,
+                            ClosingParty::Challenger.as_str(),
+                            &objection.objection,
+                            true,
+                        )?;
+                        let outcome =
+                            finish_with_verdict(config, &observer, goal.as_deref(), fe.out())?;
+                        // trace:STORY-160 | ai:claude — keep the terminated session.
+                        answer_recorded = true;
+                        ended_at_frontier = true;
+                        logger.session_ended(
+                            &config.session_id,
+                            &config.user_id,
+                            &config.branch_id,
+                            answered_turn,
+                            outcome.summary,
+                        )?;
+                        break;
+                    }
+                    AnswerInput::Help(question) => {
+                        // trace:STORY-164 | ai:claude — non-destructive process-help
+                        // channel: answer the free-form question from TOOL-CONTEXT (the
+                        // design), belief-neutral, then re-present the SAME question
+                        // (like Observe). Offline degrades to a static help index.
+                        let answer = {
+                            let _spinner = crate::spinner::Spinner::start("helping");
+                            observer.help(&question)
+                        };
+                        render_help_answer(&answer, fe.out())?;
+                        continue;
+                    }
+                    AnswerInput::Tutor(text) => {
+                        // trace:STORY-165 | ai:claude — non-destructive articulation &
+                        // nuance coach: reflect the user's OWN point back more precisely,
+                        // teach the distinction, and name the missing nuance — never
+                        // supplying a belief or taking a side. Re-present the SAME
+                        // question (like Observe). Offline degrades to a structural note.
+                        let context = tutor_context_for_frontier(&text, &current, &recent_path);
+                        let reading = {
+                            let _spinner = crate::spinner::Spinner::start("tutoring");
+                            observer.tutor(&context)
+                        };
+                        render_tutor_reading(&reading, fe.out())?;
+                        continue;
+                    }
+                    AnswerInput::Objection(text) => {
+                        // trace:STORY-175 | ai:claude
+                        // EITHER party raised a court-style `/objection`: PIN the
+                        // exchange on the contested point (the user is the objector
+                        // here). One-at-a-time guard refuses a second; a bare
+                        // `/objection` shows the open one. On success the questioner
+                        // narrows to the point (via StrategyContext) and the gavel motif
+                        // shows. Non-destructive otherwise: the SAME question is
+                        // re-presented. Belief-neutral: the objection is a structural
+                        // tension, never a belief.
+                        raise_objection(
+                            &mut objection_state,
+                            &text,
+                            ObjectionParty::User,
+                            config,
+                            &mut logger,
+                            answered_turn,
+                            fe.out(),
+                        )?;
+                        continue;
+                    }
+                    AnswerInput::Resolved => {
+                        // trace:STORY-175 | ai:claude
+                        // `/resolved`: ONLY the OBJECTOR may call it. A wrong-caller is
+                        // rejected with a helpful note. On success the objection clears
+                        // and normal flow resumes. Pure state transition — works offline.
+                        resolve_objection(
+                            &mut objection_state,
+                            ObjectionParty::User,
+                            config,
+                            &mut logger,
+                            answered_turn,
+                            fe.out(),
+                        )?;
+                        continue;
+                    }
+                    AnswerInput::Judge => {
+                        // trace:STORY-175 | ai:claude
+                        // `/judge`: ONLY the OTHER (non-objecting) party may call it ->
+                        // the Observer renders a belief-neutral SUSTAINED/OVERRULED
+                        // ruling + resolving condition, then clears the objection. A
+                        // wrong-caller (the objector) is rejected. Offline degrades to a
+                        // "needs an LLM backend" note (the objection stays open). A
+                        // SUSTAINED ruling tracks the resolving condition as an open
+                        // thread that widens the gauge until addressed; the dialogue
+                        // proceeds.
+                        let context = judge_context_for_frontier(&current, &recent_path);
+                        let outcome = judge_objection(
+                            &mut objection_state,
+                            ObjectionParty::User,
+                            &observer,
+                            &context,
+                            goal.as_deref(),
+                            config,
+                            &mut logger,
+                            answered_turn,
+                            fe.out(),
+                        )?;
+                        if let Some(thread) = outcome.open_thread {
+                            objection_open_threads.push(thread);
+                        }
+                        continue;
+                    }
+                    AnswerInput::End => {
+                        // trace:STORY-80 | ai:claude
+                        ended_at_frontier = true;
+                        logger.session_ended(
+                            &config.session_id,
+                            &config.user_id,
+                            &config.branch_id,
+                            answered_turn,
+                            "User ended session.",
+                        )?;
+                        break;
+                    }
+                };
             (answered_turn, answer)
         };
         let probed_terms = load_probed_terms(bank, &current);
@@ -3647,7 +3669,15 @@ fn ask_contradiction_follow_up(
         &question,
     )?;
     render_question(&question, fe.out())?;
-    match fe.read_answer(&question.answer_kind, InputContext::Frontier)? {
+    // trace:STORY-190 | ai:claude — the contradiction follow-up is a frontier-style
+    // sub-prompt with no objection / goal / navigation state threaded in, so the
+    // palette opens over the default snapshot (the state-gated commands grey out,
+    // the rest stay enabled).
+    match fe.read_answer(
+        &question.answer_kind,
+        InputContext::Frontier,
+        crate::palette::PaletteContext::default(),
+    )? {
         AnswerInput::Answer(answer) => {
             let resolution = resolution_persister.persist_resolution(contradiction, &answer.raw)?;
             logger.contradiction_resolved(
@@ -3906,6 +3936,13 @@ struct ReviewContext<'a> {
     observer: &'a ObserverEngine,
     log_path: &'a Path,
     branch: &'a str,
+    // trace:STORY-190 | ai:claude — the frontier session state carried into the
+    // review pane so the `/` palette there greys the same state-gated commands
+    // (an open objection? a goal set? the gauge on?). Navigation availability
+    // (`can_back` / `can_forward`) is derived from the review cursor, not here.
+    objection_open: bool,
+    goal_set: bool,
+    score_on: bool,
 }
 
 // trace:STORY-168 | ai:claude — front-end seam.
@@ -3927,7 +3964,19 @@ fn browse_answered_path(
         let question = bank.load_question(&reviewed.question_ref)?;
         render_reviewed_answer(cursor, recent_path.len(), reviewed, fe.out())?;
         render_question_for(&question, InputContext::Review, fe.out())?;
-        match fe.read_answer(&question.answer_kind, InputContext::Review)? {
+        // trace:STORY-190 | ai:claude — the review-pane palette snapshot: the
+        // frontier state-gated flags carried in via ReviewContext, plus navigation
+        // availability derived from the review cursor. `/back` applies only off the
+        // first answer; `/forward` always applies in review (it steps forward or
+        // returns to the frontier).
+        let palette_ctx = crate::palette::PaletteContext {
+            objection_open: review.objection_open,
+            goal_set: review.goal_set,
+            score_on: review.score_on,
+            can_back: cursor != 0,
+            can_forward: true,
+        };
+        match fe.read_answer(&question.answer_kind, InputContext::Review, palette_ctx)? {
             AnswerInput::Back => {
                 if cursor == 0 {
                     writeln!(fe.out(), "Already at the first answered question.")?;
