@@ -19,12 +19,12 @@ description: |-
   - Deterministic/offline strategies make no extra calls and surface no objection/goal-offer.
   - Belief-neutral throughout; the /score gauge behavior is unchanged.
   - All existing goal-offer / objection tests still pass (adapted to the envelope source); headless byte output unchanged.
-status: Approved
+status: InProgress
 priority: High
 owner: ''
 feature: Uncategorized
 created_at: 2026-06-07T20:26:41.972698397Z
-modified_at: 2026-06-07T20:26:56.132663645Z
+modified_at: 2026-06-07T20:27:49.275921514Z
 req_type: Story
 tags:
 - cost
