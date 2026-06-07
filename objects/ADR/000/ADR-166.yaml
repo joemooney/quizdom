@@ -1,0 +1,18 @@
+id: 019ea07c-d440-7db2-993b-eb8e169bd910
+spec_id: ADR-166
+agreed_id: ADR-166
+title: Full ratatui TUI for interactive sessions; keep a headless line front-end (reverses EPIC-162 overlay)
+description: 'The incremental crossterm-overlay palette (EPIC-162 STORY-163) renders poorly: it only opens AFTER Enter (rustyline owns the line, so ''/'' can''t be intercepted mid-edit) and line-prints the menu repeatedly (no alternate screen / cursor control -> stacking down the page). Decision: adopt a REAL TUI library (ratatui + crossterm) for the INTERACTIVE front-end (session start/resume/fork). Keep the session ENGINE front-end-agnostic behind a small interface, and a HEADLESS LINE front-end behind it for the ~336 piped/byte tests, non-TTY/scripting, a --no-tui flag, and the non-interactive standalone commands. This REVERSES the earlier ''incremental overlays'' call (it demonstrably failed). LLM engines (observe/tutor/help/synopsis/roundedness) stay front-end-agnostic; only rendering + input move into the TUI.'
+status: Approved
+priority: High
+owner: ''
+feature: Uncategorized
+created_at: 2026-06-07T05:09:55.904938930Z
+modified_at: 2026-06-07T05:09:55.904938930Z
+req_type: Decision
+tags:
+- architecture
+- decision
+- front-end
+- ratatui
+- tui
