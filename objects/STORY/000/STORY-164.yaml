@@ -3,12 +3,12 @@ spec_id: STORY-164
 agreed_id: STORY-164
 title: '/help: free-form tool/process help (LLM, tool-context, belief-neutral)'
 description: 'An out-of-band help channel: prompt for a free-form question about HOW the tool/dialogue works (controls, the flow, what a feature does, how to rest your case), answered by the LLM using TOOL-CONTEXT (the design/controls), NOT the user''s belief content. Non-destructive (returns to the question). Complements the palette''s static per-command ''?'' with free-form Q&A. Belief-neutral. Offline degrades to a static help index. Lane: observer.rs (or a help module) + input.rs/session.rs for the command. ## Acceptance: ''/help <question>'' answers process questions from tool-context (not belief content); non-destructive; offline shows static help; mocked-LLM tests cover it.'
-status: Approved
+status: Completed
 priority: High
 owner: ''
 feature: Uncategorized
 created_at: 2026-06-07T02:28:04.176969010Z
-modified_at: 2026-06-07T02:28:04.176969010Z
+modified_at: 2026-06-07T03:31:13.387812851Z
 req_type: Story
 tags:
 - help
