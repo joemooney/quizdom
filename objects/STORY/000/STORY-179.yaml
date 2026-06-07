@@ -36,7 +36,7 @@ priority: High
 owner: ''
 feature: Uncategorized
 created_at: 2026-06-07T14:51:43.875515782Z
-modified_at: 2026-06-07T14:53:41.089763254Z
+modified_at: 2026-06-07T14:53:44.607184689Z
 req_type: Story
 tags:
 - markdown
@@ -52,3 +52,9 @@ relationships:
   target_id: 019ea07d-90fc-7b53-ad38-d8979d58a26f
   created_at: 2026-06-07T14:51:58.937971523Z
   created_by: joe
+comments:
+- id: 019ea293-531f-7332-a61d-ac9b1c6740e6
+  author: joe
+  content: 'DECIDED (user): scope = INLINE + BASIC BLOCK (lists, headings, blockquotes, fenced code), not inline-only. Use pulldown-cmark; render its events to ratatui ourselves to keep role-color + quote-yellow layering. BUG-178''s quote-yellow is realized inside this renderer (co-implement as one component). Heading sizing -> bold + heading color (no font size in a terminal); blockquote -> indent + ''|'' bar; lists -> bullet/number + hanging indent; code fence -> dim monospace block.'
+  created_at: 2026-06-07T14:53:44.607184689Z
+  modified_at: 2026-06-07T14:53:44.607184689Z
