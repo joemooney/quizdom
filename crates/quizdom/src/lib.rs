@@ -2,6 +2,8 @@
 mod bank;
 mod contradiction;
 mod error;
+// trace:STORY-168 | ai:claude
+mod frontend;
 mod honing;
 mod input;
 mod model;

@@ -123,7 +123,7 @@ fn event_branch(value: &Value) -> &str {
 /// Render one logged event as transcript line(s). Returns `true` when the event
 /// produced output, so the caller can detect an empty (or fully filtered)
 /// transcript. Unknown event types render nothing and return `false`.
-fn render_event(value: &Value, output: &mut impl Write) -> Result<bool> {
+fn render_event(value: &Value, output: &mut dyn Write) -> Result<bool> {
     match json_str(value, "event_type") {
         Some("session_started") => {
             let branch = event_branch(value);
@@ -220,7 +220,7 @@ fn render_event(value: &Value, output: &mut impl Write) -> Result<bool> {
 pub fn render_transcript(
     reader: impl Read,
     branch: Option<&str>,
-    output: &mut impl Write,
+    output: &mut dyn Write,
 ) -> Result<()> {
     let reader = BufReader::new(reader);
     let mut events = Vec::new();
@@ -270,7 +270,7 @@ pub fn render_transcript(
 // trace:STORY-77 | ai:claude
 pub fn run_session_show(
     args: impl IntoIterator<Item = String>,
-    output: &mut impl Write,
+    output: &mut dyn Write,
 ) -> Result<()> {
     let config = ShowConfig::parse(args)?;
     let path = config.log_path()?;

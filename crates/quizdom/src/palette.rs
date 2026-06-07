@@ -270,7 +270,7 @@ fn command_matches(command: &PaletteCommand, needle: &str) -> bool {
 /// TTY it takes over the terminal in raw mode, renders the menu to `output`,
 /// drives the key loop via [`PaletteState`], restores the prompt, and returns
 /// `Some(outcome)`.
-pub(crate) fn run_palette(output: &mut impl Write) -> io::Result<Option<PaletteOutcome>> {
+pub(crate) fn run_palette(output: &mut dyn Write) -> io::Result<Option<PaletteOutcome>> {
     if !io::stdin().is_terminal() {
         return Ok(None);
     }
@@ -287,14 +287,14 @@ pub(crate) fn run_palette(output: &mut impl Write) -> io::Result<Option<PaletteO
 /// out of raw mode on return, so that path calls this variant and leaves the
 /// raw-mode lifetime to its existing guard. Always returns `Some` — the caller
 /// has already decided it is on a TTY.
-pub(crate) fn run_palette_in_raw(output: &mut impl Write) -> io::Result<Option<PaletteOutcome>> {
+pub(crate) fn run_palette_in_raw(output: &mut dyn Write) -> io::Result<Option<PaletteOutcome>> {
     let mut state = PaletteState::new(command_registry());
     drive_palette(&mut state, output).map(Some)
 }
 
 /// The render + key loop, factored out of [`run_palette`] so the raw-mode guard
 /// in the caller always restores the terminal even on an error path.
-fn drive_palette(state: &mut PaletteState, output: &mut impl Write) -> io::Result<PaletteOutcome> {
+fn drive_palette(state: &mut PaletteState, output: &mut dyn Write) -> io::Result<PaletteOutcome> {
     let mut show_detail = false;
     loop {
         render_palette(state, show_detail, output)?;
@@ -349,7 +349,7 @@ fn drive_palette(state: &mut PaletteState, output: &mut impl Write) -> io::Resul
 fn render_palette(
     state: &PaletteState,
     show_detail: bool,
-    output: &mut impl Write,
+    output: &mut dyn Write,
 ) -> io::Result<()> {
     let text = render_to_string(state, show_detail);
     // In raw mode the cursor does not auto-return; emit explicit CRLFs so each

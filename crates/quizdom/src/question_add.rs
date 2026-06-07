@@ -221,8 +221,8 @@ fn question_add(
     existing: &[Question],
     strategy: &dyn NextQuestionStrategy,
     persister: &dyn UserAuthoredQuestionPersister,
-    input: &mut impl BufRead,
-    output: &mut impl Write,
+    input: &mut dyn BufRead,
+    output: &mut dyn Write,
 ) -> Result<()> {
     let link = config.link();
     author_question(
@@ -258,8 +258,8 @@ pub(crate) fn author_question(
     persister: &dyn UserAuthoredQuestionPersister,
     topic: &str,
     link: &QuestionLink,
-    input: &mut impl BufRead,
-    output: &mut impl Write,
+    input: &mut dyn BufRead,
+    output: &mut dyn Write,
 ) -> Result<Option<Question>> {
     let title = prompt_question_text(input, output)?;
     let answer_kind = prompt_answer_shape(input, output)?;
@@ -304,8 +304,8 @@ fn resolve_assist(
     assist: UserQuestionAssist,
     title: &str,
     answer_kind: &AnswerKind,
-    input: &mut impl BufRead,
-    output: &mut impl Write,
+    input: &mut dyn BufRead,
+    output: &mut dyn Write,
 ) -> Result<Option<Candidate>> {
     match assist {
         UserQuestionAssist::Duplicate(duplicate) => {
@@ -374,7 +374,7 @@ fn resolve_assist(
 /// Prompt for the question text, re-prompting until a non-empty line is given.
 /// EOF (a closed / empty piped stdin) is a usage error rather than an infinite
 /// loop.
-fn prompt_question_text(input: &mut impl BufRead, output: &mut impl Write) -> Result<String> {
+fn prompt_question_text(input: &mut dyn BufRead, output: &mut dyn Write) -> Result<String> {
     loop {
         write!(output, "Question text: ")?;
         output.flush()?;
@@ -393,7 +393,7 @@ fn prompt_question_text(input: &mut impl BufRead, output: &mut impl Write) -> Re
 }
 
 /// Prompt for the answer shape: yes-no, free-text, or a multiple-choice list.
-fn prompt_answer_shape(input: &mut impl BufRead, output: &mut impl Write) -> Result<AnswerKind> {
+fn prompt_answer_shape(input: &mut dyn BufRead, output: &mut dyn Write) -> Result<AnswerKind> {
     loop {
         writeln!(output, "Answer shape:")?;
         writeln!(output, "  1. Yes / No")?;
@@ -427,8 +427,8 @@ fn prompt_answer_shape(input: &mut impl BufRead, output: &mut impl Write) -> Res
 /// distinct options; returns `None` (so the caller re-prompts the shape) when
 /// fewer are supplied.
 fn prompt_choice_options(
-    input: &mut impl BufRead,
-    output: &mut impl Write,
+    input: &mut dyn BufRead,
+    output: &mut dyn Write,
 ) -> Result<Option<AnswerKind>> {
     writeln!(
         output,
@@ -466,8 +466,8 @@ fn prompt_choice_options(
 
 /// Prompt a yes/no question with a default applied on a blank line or EOF.
 fn prompt_yes_no(
-    input: &mut impl BufRead,
-    output: &mut impl Write,
+    input: &mut dyn BufRead,
+    output: &mut dyn Write,
     prompt: &str,
     default: bool,
 ) -> Result<bool> {
@@ -485,7 +485,7 @@ fn prompt_yes_no(
 }
 
 /// Read one line, returning `None` at EOF. Strips the trailing newline.
-fn read_line(input: &mut impl BufRead) -> Result<Option<String>> {
+fn read_line(input: &mut dyn BufRead) -> Result<Option<String>> {
     let mut raw = String::new();
     if input.read_line(&mut raw)? == 0 {
         Ok(None)
@@ -498,7 +498,7 @@ fn read_line(input: &mut impl BufRead) -> Result<Option<String>> {
 fn render_persisted(
     persisted: &Question,
     link: &QuestionLink,
-    output: &mut impl Write,
+    output: &mut dyn Write,
 ) -> Result<()> {
     writeln!(
         output,
