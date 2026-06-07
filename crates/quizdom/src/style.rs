@@ -162,6 +162,17 @@ pub(crate) mod theme {
         Style::default().fg(BORDER)
     }
 
+    // trace:STORY-176 | ai:claude
+    /// The background accent for the re-read HIGHLIGHT line (the exchange the user
+    /// is re-reading via Ctrl-←/→). A subtle dark-gray band so the highlighted row
+    /// stands out without recoloring its voice. Belief-neutral chrome: it marks
+    /// WHERE the user is looking, never which belief is true.
+    pub(crate) fn reread_highlight() -> Style {
+        Style::default()
+            .bg(Color::Rgb(0x33, 0x33, 0x33))
+            .add_modifier(Modifier::BOLD)
+    }
+
     /// The ratatui style for the input cursor marker (`> `).
     pub(crate) fn input_marker() -> Style {
         Style::default()

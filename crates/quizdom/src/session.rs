@@ -3864,9 +3864,10 @@ enum ReviewOutcome {
 
 // trace:STORY-128 | ai:claude
 /// The session-level context the review pane's observer controls need: the
-/// Observer engine (for the per-exchange `?` reading) plus where to find the
-/// live session log (for the whole-session `S` synopsis). Bundled so the review
-/// helper keeps a tidy argument list.
+/// Observer engine (for the per-exchange `o` reading — STORY-176 moved observe
+/// off `?`, which is now the cheat-sheet) plus where to find the live session log
+/// (for the whole-session `S` synopsis). Bundled so the review helper keeps a
+/// tidy argument list.
 struct ReviewContext<'a> {
     observer: &'a ObserverEngine,
     log_path: &'a Path,

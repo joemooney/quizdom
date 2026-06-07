@@ -166,11 +166,13 @@ fn control_prompt(prefix: &str, context: InputContext) -> String {
         // trace:STORY-163 | ai:claude — `/` opens the slash-command PALETTE
         // (filter/arrow/Enter/Esc, `?` for per-command help); it is advertised
         // alongside the typed commands as the discoverable entry point.
+        // trace:STORY-176 | ai:claude — observe is `[o]` now (moved off `?`); `[?]`
+        // shows the keyboard cheat-sheet. Both appear in the single-key prompt.
         InputContext::Frontier => {
-            format!("{prefix}  [?] Observe  [S] Synopsis  [X] eXplore  [A] Add  [P] Punt  [B] Back  [Q] Quit  (/ palette, /help, /tutor, /goal <text>, /mode <socratic|debate>, /rest)")
+            format!("{prefix}  [o] Observe  [S] Synopsis  [X] eXplore  [A] Add  [P] Punt  [B] Back  [Q] Quit  [?] keys  (/ palette, /help, /tutor, /goal <text>, /mode <socratic|debate>, /rest)")
         }
         InputContext::Review => {
-            format!("{prefix}  [?] Observe  [S] Synopsis  [X] eXplore  [P] Punt  [B] Back  [F] Forward  [Q] Quit  (/ palette, /help, /tutor, /goal <text>, /mode <socratic|debate>, /rest)")
+            format!("{prefix}  [o] Observe  [S] Synopsis  [X] eXplore  [P] Punt  [B] Back  [F] Forward  [Q] Quit  [?] keys  (/ palette, /help, /tutor, /goal <text>, /mode <socratic|debate>, /rest)")
         }
     }
 }
@@ -439,6 +441,17 @@ pub(crate) fn read_answer_or_end(
         if is_end_command(&raw) {
             return Ok(AnswerInput::End);
         }
+        // trace:STORY-176 | ai:claude — `?` (or `/keys`) prints the keyboard
+        // CHEAT-SHEET and re-prompts for the same input. In the headless / non-TTY
+        // line path there is no overlay, so the cheat-sheet degrades to the static
+        // printed list (generated from the keymap registry, so it never drifts from
+        // the TUI dispatcher). Non-destructive — it loops back for the next input.
+        if is_cheatsheet_command(&raw) {
+            writeln!(output, "{}", crate::keymap::render_cheat_sheet())?;
+            write!(output, "> ")?;
+            output.flush()?;
+            continue;
+        }
         if is_back_command(&raw) {
             return Ok(AnswerInput::Back);
         }
@@ -573,6 +586,13 @@ fn read_single_key_answer(
             KeyCode::Char('x') | KeyCode::Char('X') => "x",
             // trace:STORY-127 | ai:claude — the observer key. Non-destructive in
             // every context, so it is accepted regardless of answer kind.
+            // trace:STORY-176 | ai:claude — the observe key MOVED from `?` to `o`
+            // (the DECIDED change); `?` now opens the cheat-sheet.
+            KeyCode::Char('o') | KeyCode::Char('O') => "/observe",
+            // trace:STORY-176 | ai:claude — `?` is the keyboard CHEAT-SHEET key.
+            // Return it so the outer loop's `is_cheatsheet_command` prints the
+            // static list AFTER raw mode is dropped (so it renders with normal line
+            // endings) and re-prompts. Headless degrade of the TUI overlay.
             KeyCode::Char('?') => "?",
             // trace:STORY-128 | ai:claude — the synopsis key. Non-destructive in
             // every context, so it is accepted regardless of answer kind.
@@ -642,14 +662,28 @@ pub(crate) fn is_forward_command(raw: &str) -> bool {
     )
 }
 
+// trace:STORY-176 | ai:claude
+/// The keyboard CHEAT-SHEET control: `?` (the adopted convention) or `/keys`.
+/// In the TUI this opens an overlay; in the headless / non-TTY line path it prints
+/// the static cheat-sheet list (the graceful degrade). Recognised as a bare `?`,
+/// `/?`, `/keys`, or the word `keys` (case-insensitive). Non-destructive.
+pub(crate) fn is_cheatsheet_command(raw: &str) -> bool {
+    matches!(
+        raw.trim().to_ascii_lowercase().as_str(),
+        "?" | "/?" | "/keys" | "keys" | "/cheatsheet" | "/cheat-sheet"
+    )
+}
+
 // trace:STORY-127 | ai:claude
-/// The in-session observer control: surface a belief-neutral reading of the
-/// current exchange without disturbing it. Recognised as a bare `?`, `/?`,
-/// `/observe`, or the word `observe`.
+// trace:STORY-176 | ai:claude — the observe affordance MOVED off `?` to `o` (the
+/// DECIDED change): `?` is now the keyboard CHEAT-SHEET. Observe is recognised as
+/// a bare `o`, `/o`, `/observe`, or the word `observe`. The single-key `o` is
+/// gated to single-key answer prompts (see `read_single_key_answer`); the slash /
+/// word forms keep working in the palette and free-text line.
 pub(crate) fn is_observe_command(raw: &str) -> bool {
     matches!(
         raw.trim().to_ascii_lowercase().as_str(),
-        "?" | "/?" | "/observe" | "observe"
+        "o" | "/o" | "/observe" | "observe"
     )
 }
 
@@ -1036,6 +1070,35 @@ mod tests {
             normalize_answer(&AnswerKind::YesNo, "/punt"),
             Some("punt".to_string())
         );
+    }
+
+    // ---- STORY-176: observe moved from `?` to `o` --------------------------
+
+    // trace:STORY-176 | ai:claude — the observe affordance is now `o` (and the
+    // slash / word forms), NOT `?`. `?` is reserved for the keyboard cheat-sheet,
+    // so it must no longer be recognized as observe.
+    #[test]
+    fn observe_is_now_o_not_question_mark() {
+        assert!(is_observe_command("o"));
+        assert!(is_observe_command("/o"));
+        assert!(is_observe_command("/observe"));
+        assert!(is_observe_command("observe"));
+        // `?` and `/?` are no longer observe — they belong to the cheat-sheet now.
+        assert!(!is_observe_command("?"));
+        assert!(!is_observe_command("/?"));
+    }
+
+    // trace:STORY-176 | ai:claude — `?` (and `/keys`) are the cheat-sheet control,
+    // NOT observe; observe is `o`. Guards the binding swap at the recognizer level.
+    #[test]
+    fn cheatsheet_is_question_mark_and_keys_not_observe() {
+        assert!(is_cheatsheet_command("?"));
+        assert!(is_cheatsheet_command("/?"));
+        assert!(is_cheatsheet_command("/keys"));
+        assert!(is_cheatsheet_command("keys"));
+        // `o` / `/observe` are observe, not the cheat-sheet.
+        assert!(!is_cheatsheet_command("o"));
+        assert!(!is_cheatsheet_command("/observe"));
     }
 
     // ---- STORY-175: the /objection court-mechanic recognizers --------------
