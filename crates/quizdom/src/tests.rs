@@ -461,6 +461,190 @@ fn llm_strategy_selects_existing_candidate_from_model_json() {
     assert_eq!(next.id, "Q-3");
 }
 
+// trace:STORY-188 | ai:claude
+/// A mock LLM client that COUNTS every `call`, so a test can assert the
+/// interrogator makes EXACTLY ONE LLM call per turn (ADR-187) — the consolidated
+/// turn-envelope call — and not the 2-3 full-history probes the old loop spawned.
+#[derive(Clone)]
+struct CountingLlm {
+    text: String,
+    calls: Rc<RefCell<usize>>,
+}
+
+impl CountingLlm {
+    fn new(text: &str) -> Self {
+        Self {
+            text: text.to_string(),
+            calls: Rc::new(RefCell::new(0)),
+        }
+    }
+
+    fn call_count(&self) -> usize {
+        *self.calls.borrow()
+    }
+}
+
+impl LLMClient for CountingLlm {
+    fn call<'a>(
+        &'a self,
+        _system: &'a str,
+        _messages: &'a [Message],
+        _tools: &'a [ToolDef],
+    ) -> LLMFuture<'a> {
+        *self.calls.borrow_mut() += 1;
+        Box::pin(std::future::ready(Ok((self.text.clone(), Vec::new()))))
+    }
+}
+
+// trace:STORY-188 | ai:claude
+#[test]
+fn turn_envelope_is_one_llm_call_carrying_next_question_objection_and_goal_offer() {
+    // ONE structured-output call returns the whole envelope: the next-question
+    // decision PLUS the belief-neutral objection / goal-offer META by-products. The
+    // old design spawned a SEPARATE full-history probe for the goal-offer and the
+    // objection EVERY turn; here the count proves exactly one call total.
+    let bank = FakeBank::new([
+        question("Q-1", 0, AnswerKind::YesNo),
+        question("Q-2", 40, AnswerKind::FreeText),
+    ])
+    .with_edges("Q-1", ["Q-2"]);
+    let client = CountingLlm::new(
+        r#"{"action":"select","id":"Q-2","objection":"you affirm both free will and full causation without reconciling them","goal_offer":{"goal":"can libertarian free will be held consistently?","rationale":"the arc keeps circling it"}}"#,
+    );
+    let strategy = LlmNextQuestionStrategy::new(client.clone());
+
+    let envelope = strategy
+        .next_turn(
+            &bank.load_question("Q-1").unwrap(),
+            &strategy_context("yes"),
+            &bank,
+        )
+        .unwrap();
+
+    // Exactly ONE interrogator LLM call for the whole turn (not 2-3 probes).
+    assert_eq!(
+        client.call_count(),
+        1,
+        "the turn envelope must be a single LLM call"
+    );
+    // All three fields parsed from that one response.
+    assert_eq!(envelope.next_question.as_ref().unwrap().id, "Q-2");
+    assert_eq!(
+        envelope.objection.as_deref(),
+        Some("you affirm both free will and full causation without reconciling them")
+    );
+    assert_eq!(
+        envelope.goal_offer.as_ref().map(|p| p.goal.as_str()),
+        Some("can libertarian free will be held consistently?")
+    );
+}
+
+// trace:STORY-188 | ai:claude
+#[test]
+fn turn_envelope_meta_fields_default_to_none_when_absent_or_null() {
+    // A response with no / null meta fields yields a next question but NO objection
+    // and NO goal-offer — the "rare by design, decline by default" posture, so the
+    // session never surfaces a fabricated tension or goal. Still a single call.
+    let bank = FakeBank::new([question("Q-1", 0, AnswerKind::YesNo)]).with_edges("Q-1", ["Q-1"]);
+    let client = CountingLlm::new(
+        r#"{"action":"generate","question":"What do you mean by responsibility?","answer_mode":"free-text","objection":null,"goal_offer":null}"#,
+    );
+    let strategy = LlmNextQuestionStrategy::new(client.clone());
+
+    let envelope = strategy
+        .next_turn(
+            &bank.load_question("Q-1").unwrap(),
+            &strategy_context("yes"),
+            &bank,
+        )
+        .unwrap();
+
+    assert_eq!(client.call_count(), 1, "still exactly one call");
+    assert!(envelope.next_question.is_some());
+    assert!(
+        envelope.objection.is_none(),
+        "a null objection must not fabricate a tension"
+    );
+    assert!(
+        envelope.goal_offer.is_none(),
+        "a null goal_offer must not fabricate a goal"
+    );
+
+    // A response that simply OMITS the meta keys behaves identically.
+    let bare =
+        LlmNextQuestionStrategy::new(MockLlm::ok(r#"{"action":"generate","question":"q?"}"#));
+    let envelope = bare
+        .next_turn(
+            &bank.load_question("Q-1").unwrap(),
+            &strategy_context("yes"),
+            &bank,
+        )
+        .unwrap();
+    assert!(envelope.objection.is_none());
+    assert!(envelope.goal_offer.is_none());
+}
+
+// trace:STORY-188 | ai:claude
+#[test]
+fn deterministic_strategy_next_turn_makes_no_extra_calls_and_surfaces_no_meta() {
+    // Non-LLM (deterministic) strategies use the default `next_turn`: it returns the
+    // next question with `objection = None` and `goal_offer = None` — NO extra LLM
+    // calls, degrading exactly as before. There is no client to count; the contract
+    // is that the meta fields are always empty for a non-LLM strategy.
+    let bank = FakeBank::new([
+        question("Q-1", 0, AnswerKind::YesNo),
+        question("Q-2", 40, AnswerKind::YesNo),
+    ])
+    .with_edges("Q-1", ["Q-2"]);
+    let strategy = DeterministicNextQuestionStrategy;
+
+    let envelope = strategy
+        .next_turn(
+            &bank.load_question("Q-1").unwrap(),
+            &strategy_context("yes"),
+            &bank,
+        )
+        .unwrap();
+
+    assert!(
+        envelope.next_question.is_some(),
+        "the deterministic next question is unchanged"
+    );
+    assert!(
+        envelope.objection.is_none(),
+        "a deterministic strategy never objects"
+    );
+    assert!(
+        envelope.goal_offer.is_none(),
+        "a deterministic strategy never offers a goal"
+    );
+}
+
+// trace:STORY-188 | ai:claude
+#[test]
+fn turn_envelope_degrades_to_no_meta_on_a_malformed_response() {
+    // A malformed / non-JSON response falls back to the deterministic next question
+    // with NO objection and NO goal-offer (no fabricated meta), the same posture as
+    // the offline path.
+    let bank = FakeBank::new([
+        question("Q-1", 0, AnswerKind::YesNo),
+        question("Q-2", 40, AnswerKind::YesNo),
+    ])
+    .with_edges("Q-1", ["Q-2"]);
+    let strategy = LlmNextQuestionStrategy::new(MockLlm::ok("not json at all"));
+
+    let envelope = strategy
+        .next_turn(
+            &bank.load_question("Q-1").unwrap(),
+            &strategy_context("yes"),
+            &bank,
+        )
+        .unwrap();
+
+    assert!(envelope.objection.is_none());
+    assert!(envelope.goal_offer.is_none());
+}
+
 #[test]
 fn llm_strategy_returns_generated_question_in_memory() {
     let bank = FakeBank::new([question("Q-1", 0, AnswerKind::YesNo)]);

@@ -56,6 +56,39 @@ impl SessionMode {
     }
 }
 
+// trace:STORY-188 | ai:claude
+/// The result of ONE interrogator turn-call (ADR-187): the next question PLUS the
+/// two META by-products — an optional STRUCTURAL objection and an optional
+/// goal-offer — that the LLM strategy now returns as a single structured envelope
+/// instead of the session loop spawning a separate full-history `claude -p` probe
+/// for each per turn.
+///
+/// Belief-NEUTRAL by contract: `objection` names a STRUCTURAL tension (an
+/// inconsistency / unmet burden / ambiguity), never a counter-belief; `goal_offer`
+/// names the QUESTION the exploration is circling, never a belief to adopt. The
+/// session loop applies the SURFACING rules (free-flow + one-shot guards) over
+/// these fields — they say only "the model SAW a tension / a crystallized thesis",
+/// not "surface it now".
+///
+/// Non-LLM strategies (deterministic / offline) leave `objection` and `goal_offer`
+/// `None`, so they make NO extra calls and degrade exactly as before — the meta
+/// by-products are a near-free addition to the call the LLM strategy already makes.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct TurnEnvelope {
+    /// The selected / generated follow-up question, or `None` for a dead end (no
+    /// begets successor) — identical to the legacy `next_question` return so the
+    /// dead-end menu path is unchanged.
+    pub next_question: Option<Question>,
+    /// A STRUCTURAL objection the interrogator could raise this turn, if the model
+    /// saw a genuine material unaddressed tension. `None` = nothing to object over.
+    /// Belief-neutral; the session loop gates whether it is actually SURFACED.
+    pub objection: Option<String>,
+    /// A crystallized-thesis goal-offer, if the model judged one has emerged.
+    /// `None` = nothing crystallized yet. Belief-neutral (a QUESTION to settle);
+    /// the session loop gates whether it is actually SURFACED.
+    pub goal_offer: Option<crate::observer::GoalProposal>,
+}
+
 pub trait NextQuestionStrategy {
     fn next_question(
         &self,
@@ -63,6 +96,28 @@ pub trait NextQuestionStrategy {
         context: &StrategyContext,
         bank: &dyn QuestionBank,
     ) -> Result<Option<Question>>;
+
+    // trace:STORY-188 | ai:claude
+    /// Compute the whole turn ENVELOPE in one shot (ADR-187): the next question
+    /// plus the optional structural objection and goal-offer META by-products.
+    ///
+    /// The default implementation simply wraps [`next_question`] with `objection =
+    /// None` and `goal_offer = None`, so deterministic / offline / non-LLM
+    /// strategies make NO extra calls and surface no objection/goal-offer — exactly
+    /// as today. The LLM strategy overrides this to request all three fields in the
+    /// SINGLE structured-output call it already makes with the full history.
+    fn next_turn(
+        &self,
+        current: &Question,
+        context: &StrategyContext,
+        bank: &dyn QuestionBank,
+    ) -> Result<TurnEnvelope> {
+        Ok(TurnEnvelope {
+            next_question: self.next_question(current, context, bank)?,
+            objection: None,
+            goal_offer: None,
+        })
+    }
 
     fn loaded_terms(&self, _current: &Question, _answer: &Answer) -> Result<Vec<String>> {
         Ok(Vec::new())
@@ -561,8 +616,23 @@ fn strategy_prompt(
             candidate.title
         ));
     }
+    // trace:STORY-188 | ai:claude — request the whole TURN ENVELOPE in this one
+    // structured-output call (ADR-187): the next-question decision PLUS the two
+    // belief-neutral META by-products (a structural objection, a crystallized
+    // goal-offer) the session used to spawn a separate full-history probe for each
+    // per turn. Both meta fields default to null — the model includes them only
+    // when a GENUINE, material, still-unaddressed tension / a single clearly
+    // crystallized thesis exists, mirroring the old rare-by-design probes. They are
+    // belief-neutral: the objection names a STRUCTURAL tension (never a
+    // counter-belief); the goal is the QUESTION being settled (never a belief to
+    // adopt). The session loop decides whether to SURFACE them (free-flow +
+    // one-shot guards).
     prompt.push_str(
-        "\nReturn only JSON. To select a bank question: {\"action\":\"select\",\"id\":\"Q-...\"}. To generate a question: {\"action\":\"generate\",\"question\":\"...\",\"answer_mode\":\"yes-no|free-text\"}.",
+        "\nReturn only JSON with these fields:\n\
+         - the next-question decision: to select a bank question use \"action\":\"select\",\"id\":\"Q-...\"; to generate one use \"action\":\"generate\",\"question\":\"...\",\"answer_mode\":\"yes-no|free-text\".\n\
+         - \"objection\": null, OR — RARELY, only when a GENUINE, MATERIAL, still-UNADDRESSED structural tension exists in the user's positions — a string naming that single tension, phrased belief-neutrally as a STRUCTURAL challenge (an inconsistency / unmet burden / ambiguity), NEVER a counter-belief and NEVER an assertion the user's belief is false. When in doubt, use null.\n\
+         - \"goal_offer\": null, OR — only when a SINGLE THESIS has clearly crystallized (one underlying claim/question the whole exploration is circling) — an object {\"goal\":\"the thesis as a belief-neutral QUESTION to settle\",\"rationale\":\"short neutral reason\"}. The goal MUST be phrased as the QUESTION being resolved, never a belief to adopt, and you must NOT assert which answer is correct. When no single thesis has crystallized, use null.\n\
+         Example: {\"action\":\"select\",\"id\":\"Q-12\",\"objection\":null,\"goal_offer\":null}.",
     );
     prompt
 }
@@ -620,6 +690,37 @@ fn apply_llm_decision(text: &str, candidates: &[Question]) -> Result<Option<Ques
             "LLM strategy decision must use action select or generate".to_string(),
         )),
     }
+}
+
+// trace:STORY-188 | ai:claude
+/// Parse the belief-neutral META by-products out of the turn-envelope JSON: the
+/// optional structural `objection` and the optional crystallized `goal_offer`.
+/// Both are conservative — a missing, null, blank, or malformed field yields
+/// `None`, so the model never has a tension / goal fabricated for it (the same
+/// "rare by design, decline by default" posture as the old separate probes).
+fn parse_envelope_meta(value: &Value) -> (Option<String>, Option<crate::observer::GoalProposal>) {
+    let objection = value
+        .get("objection")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|o| !o.is_empty())
+        .map(str::to_string);
+    let goal_offer = value.get("goal_offer").and_then(|offer| {
+        let goal = offer
+            .get("goal")
+            .and_then(Value::as_str)
+            .map(str::trim)
+            .filter(|goal| !goal.is_empty())?
+            .to_string();
+        let rationale = offer
+            .get("rationale")
+            .and_then(Value::as_str)
+            .unwrap_or("")
+            .trim()
+            .to_string();
+        Some(crate::observer::GoalProposal { goal, rationale })
+    });
+    (objection, goal_offer)
 }
 
 fn find_near_identical_question<'a>(
@@ -686,6 +787,28 @@ where
         }
     }
 
+    // trace:STORY-188 | ai:claude
+    /// ONE structured-output call returns the whole turn ENVELOPE (ADR-187): the
+    /// next-question decision PLUS the belief-neutral objection / goal-offer META
+    /// by-products. On a failing / malformed call it degrades to the deterministic
+    /// next question with NO objection and NO goal-offer — exactly the offline
+    /// posture (no fabricated meta), and the same fallback `next_question` uses.
+    fn next_turn(
+        &self,
+        current: &Question,
+        context: &StrategyContext,
+        bank: &dyn QuestionBank,
+    ) -> Result<TurnEnvelope> {
+        match self.llm_next_turn(current, context, bank) {
+            Ok(envelope) => Ok(envelope),
+            Err(_) => Ok(TurnEnvelope {
+                next_question: self.deterministic.next_question(current, context, bank)?,
+                objection: None,
+                goal_offer: None,
+            }),
+        }
+    }
+
     fn loaded_terms(&self, current: &Question, answer: &Answer) -> Result<Vec<String>> {
         self.llm_loaded_terms(current, answer).or(Ok(Vec::new()))
     }
@@ -719,12 +842,31 @@ where
     C: LLMClient,
     P: GeneratedQuestionPersister,
 {
+    // trace:STORY-188 | ai:claude — `llm_next_question` is now a thin projection of
+    // `llm_next_turn`: the question half of the one envelope call. Kept so the
+    // dead-end menu / `next_question` callers that don't need the META by-products
+    // are unchanged.
     fn llm_next_question(
         &self,
         current: &Question,
         context: &StrategyContext,
         bank: &dyn QuestionBank,
     ) -> Result<Option<Question>> {
+        Ok(self.llm_next_turn(current, context, bank)?.next_question)
+    }
+
+    // trace:STORY-188 | ai:claude
+    /// The single per-turn LLM call (ADR-187): build the prompt from the history we
+    /// ALREADY send, request the structured ENVELOPE, and parse the next-question
+    /// decision PLUS the belief-neutral objection / goal-offer by-products from the
+    /// SAME response. This replaces the old design where the session loop spawned a
+    /// separate full-history probe for the goal-offer and the objection EVERY turn.
+    fn llm_next_turn(
+        &self,
+        current: &Question,
+        context: &StrategyContext,
+        bank: &dyn QuestionBank,
+    ) -> Result<TurnEnvelope> {
         let candidates = relevant_successors(current, &context.answer, bank).unwrap_or_default();
         let prompt = strategy_prompt(current, context, &candidates);
         let runtime = tokio::runtime::Builder::new_current_thread()
@@ -751,8 +893,13 @@ where
                     .call(system_prompt, &[Message::user(prompt)], &[]),
             )
             .map_err(|error| QuizdomError::Aida(error.to_string()))?;
+        // Parse the next-question decision and the META by-products from the SAME
+        // structured response (one call, three fields).
+        let value: Value = serde_json::from_str(text.trim())
+            .map_err(|error| QuizdomError::Parse(format!("invalid LLM strategy JSON: {error}")))?;
+        let (objection, goal_offer) = parse_envelope_meta(&value);
         let next = apply_llm_decision(&text, &candidates)?;
-        match next {
+        let next_question = match next {
             Some(question) if question.id == "generated:llm" => self
                 .generated_question_persister
                 // trace:STORY-48 | ai:claude
@@ -761,9 +908,14 @@ where
                     &question,
                     triggering_answer(current, context).as_deref(),
                 )
-                .map(Some),
-            other => Ok(other),
-        }
+                .map(Some)?,
+            other => other,
+        };
+        Ok(TurnEnvelope {
+            next_question,
+            objection,
+            goal_offer,
+        })
     }
 
     fn llm_loaded_terms(&self, current: &Question, answer: &Answer) -> Result<Vec<String>> {
@@ -1268,5 +1420,60 @@ mod goal_orientation_tests {
         assert!(prompt.contains("DEBATE MODE"));
         assert!(prompt.contains(goal));
         assert!(prompt.contains("Orient the next question toward resolving this goal"));
+    }
+}
+
+// trace:STORY-188 | ai:claude
+#[cfg(test)]
+mod turn_envelope_meta_tests {
+    use super::parse_envelope_meta;
+    use serde_json::json;
+
+    #[test]
+    fn parses_belief_neutral_objection_and_goal_offer() {
+        // The fields carry the model's STRUCTURAL objection + crystallized goal
+        // VERBATIM — belief-neutral text, not asserting which belief is true.
+        let value = json!({
+            "action": "select",
+            "id": "Q-2",
+            "objection": "you affirm both free will and full causation without reconciling them",
+            "goal_offer": {
+                "goal": "can libertarian free will be held consistently?",
+                "rationale": "the arc keeps circling it"
+            }
+        });
+        let (objection, goal_offer) = parse_envelope_meta(&value);
+        assert_eq!(
+            objection.as_deref(),
+            Some("you affirm both free will and full causation without reconciling them")
+        );
+        let offer = goal_offer.expect("a crystallized goal");
+        assert_eq!(
+            offer.goal,
+            "can libertarian free will be held consistently?"
+        );
+        assert_eq!(offer.rationale, "the arc keeps circling it");
+    }
+
+    #[test]
+    fn null_missing_or_blank_meta_fields_yield_none() {
+        // Decline by default: null, omitted, blank, or goal-less offers fabricate
+        // nothing — the same rare-by-design posture as the old separate probes.
+        let (objection, goal_offer) =
+            parse_envelope_meta(&json!({"objection": null, "goal_offer": null}));
+        assert!(objection.is_none() && goal_offer.is_none());
+
+        let (objection, goal_offer) =
+            parse_envelope_meta(&json!({"action": "select", "id": "Q-1"}));
+        assert!(objection.is_none() && goal_offer.is_none());
+
+        let (objection, _) = parse_envelope_meta(&json!({"objection": "   "}));
+        assert!(objection.is_none(), "a blank objection is not a tension");
+
+        let (_, goal_offer) = parse_envelope_meta(&json!({"goal_offer": {"goal": "  "}}));
+        assert!(
+            goal_offer.is_none(),
+            "a blank goal is not a crystallized thesis"
+        );
     }
 }
