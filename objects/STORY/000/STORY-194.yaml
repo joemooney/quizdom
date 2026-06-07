@@ -35,7 +35,7 @@ priority: High
 owner: ''
 feature: Uncategorized
 created_at: 2026-06-07T21:37:42.216666241Z
-modified_at: 2026-06-07T21:38:06.081537113Z
+modified_at: 2026-06-07T21:38:08.114519780Z
 req_type: Story
 tags:
 - editor
@@ -47,4 +47,8 @@ relationships:
 - rel_type: Parent
   target_id: 019ea07d-90fc-7b53-ad38-d8979d58a26f
   created_at: 2026-06-07T21:38:06.081528522Z
+  created_by: joe
+- rel_type: References
+  target_id: 019ea2a1-6f2c-7b61-b3fc-d79d38a42a56
+  created_at: 2026-06-07T21:38:08.114511756Z
   created_by: joe
