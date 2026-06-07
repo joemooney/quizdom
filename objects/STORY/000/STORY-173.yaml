@@ -1,0 +1,25 @@
+id: 019ea0d4-d4a6-7443-87ac-e1380fb89119
+spec_id: STORY-173
+agreed_id: STORY-173
+title: Request a goal when none is set — either party (user-requested proposal + interrogator offer)
+description: |-
+  STORY-159 only proposes a goal incidentally on the '/synopsis' path. Make goal-requesting direct + bidirectional when NO goal is set:
+
+  (1) USER-requested: bare '/goal' (no args) when no goal exists now PROPOSES one — calls observer::propose_goal over the conversation so far and offers it: accept (sets it) / edit / decline. (Today bare '/goal' with no goal just reports 'none'; keep 'show current' behavior when a goal IS set.) Optionally also a '/goal?' alias.
+
+  (2) INTERROGATOR-offered: when no goal is set AND a thesis has crystallized (enough substance), the questioner OCCASIONALLY offers 'we seem to be exploring X — make resolving it the goal?'; user accepts/declines. BOUNDED: offer at most once per crystallized thesis, never nag, honor free-flow (no offer early on).
+
+  Reuses observer::propose_goal + the existing goal-setting/orientation path (STORY-159). Belief-neutral (the goal is the QUESTION being resolved, never a belief). Lane: session.rs (bare-/goal handling + the bounded interrogator offer in the loop) + observer.rs (proposal). ## Acceptance: bare '/goal' with no goal proposes one (accept/edit/decline) and a set goal orients per STORY-159; the interrogator offers a goal once when a thesis crystallizes + none set; offline degrades (no proposal -> 'no goal'); tests cover both request paths + the bounded-offer guard.
+status: Approved
+priority: High
+owner: ''
+feature: Uncategorized
+created_at: 2026-06-07T06:46:03.174173134Z
+modified_at: 2026-06-07T06:46:03.174173134Z
+req_type: Story
+tags:
+- goal
+- observer
+- post-v1
+- request
+- story
