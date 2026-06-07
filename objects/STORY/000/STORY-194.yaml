@@ -1,0 +1,45 @@
+id: 019ea405-2948-7d90-85d7-652b8089f04c
+spec_id: STORY-194
+agreed_id: STORY-194
+title: Settings surface — /settings panel + runtime editor-mode toggle (vim/emacs/auto), unifying mouse/score/mode; F1 help alias
+description: |-
+  Today the ONLY way to get Vim editing is $EDITOR/$VISUAL = vi/vim/nvim (STORY-180 infers the mode at startup) — there is no in-app switch. Add a runtime SETTINGS surface.
+
+  EDITOR MODE (the direct ask):
+  - A runtime toggle to switch the free-text editor between Emacs/readline and Vim modal WITHOUT restarting or changing env. Values: Emacs / Vim / Auto (the current $EDITOR-inferred default). Surfaced as '/editor <emacs|vim|auto>' AND in the settings panel. The editor box title already shows the active model ('your answer · emacs') and updates live.
+
+  SETTINGS PANEL:
+  - '/settings' (and a key — see F1 decision) opens a PANEL listing the runtime-adjustable preferences with CURRENT values, cycled/toggled in place:
+    * Editor mode: Emacs / Vim / Auto
+    * Mouse: On / Off (the STORY-193 toggle)
+    * Score gauge: On / Off (the /score toggle)
+    * Session mode: Socratic / Debate (the /mode toggle)
+    (Future: theme/colors.)
+  - The panel is the unified home; the dedicated commands (/editor, /score, /mode, /mouse) remain as shortcuts and stay IN SYNC with the panel.
+
+  HELP:
+  - F1 -> per decision (cheat-sheet alias / settings / the deeper /help). '?' stays the cheat-sheet; '/help' stays the free-form process-help channel.
+
+  PERSISTENCE (see decision): session-only (env seeds the default each launch) OR persisted across sessions in a small config so 'switch to vim' sticks.
+
+  Lane: a settings module (state + panel) + tui.rs (panel render + key) + input.rs/palette.rs (/settings, /editor, F1 mapping) + editor.rs (runtime model switch — rebuild/retag the TextEditor on change) + keymap.rs (F1) + optional config persistence. Headless: '/editor' and '/settings' work as line commands; the panel degrades to a printed list. Build AFTER STORY-193 so it can incorporate the mouse toggle.
+
+  ## Acceptance
+  - '/editor vim' (and the panel) switches the free-text editor to Vim modal at runtime; emacs/auto likewise; the box title reflects it live.
+  - '/settings' opens a panel showing + toggling editor mode, mouse, score, session mode; the dedicated commands stay in sync.
+  - F1 behaves per the decision.
+  - Settings persist per the decision; headless/offline degrade (panel -> printed list).
+  - Tests: /editor switches the model; the panel reflects + mutates each setting; F1 mapping; (if persisted) a saved setting round-trips across a reload.
+status: Approved
+priority: High
+owner: ''
+feature: Uncategorized
+created_at: 2026-06-07T21:37:42.216666241Z
+modified_at: 2026-06-07T21:37:42.216666241Z
+req_type: Story
+tags:
+- editor
+- settings
+- story
+- tui
+- ux
