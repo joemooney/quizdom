@@ -27,7 +27,7 @@ priority: High
 owner: ''
 feature: Uncategorized
 created_at: 2026-06-07T06:55:41.969073973Z
-modified_at: 2026-06-07T14:57:55.101472189Z
+modified_at: 2026-06-07T14:58:04.280034653Z
 req_type: Story
 tags:
 - court-case
@@ -50,3 +50,8 @@ comments:
   content: 'DECIDED (user): (1) SUSTAINED -> TRACKED GAP: a sustained objection is logged as an open thread that lowers roundedness / widens distance-to-goal until addressed; the dialogue proceeds and the gap pulls future questions (NOT binding, NOT advisory-only). This ties directly into STORY-174''s distance-to-goal gauge + open-thread tracking. (2) Interrogator raises its own /objection RARELY, only when a genuine material unaddressed tension exists — sparse, never per-turn (same bounded posture as the goal-offer). DEPENDENCY: build AFTER STORY-174 (reuses its open-thread/scoring tracking).'
   created_at: 2026-06-07T06:58:18.189761308Z
   modified_at: 2026-06-07T06:58:18.189761308Z
+- id: 019ea297-4978-79e1-b08c-9c148952310a
+  author: joe
+  content: 'Implemented end to end in PR #63 (merged, squash commit cb8ab40). /objection pins the exchange (StrategyContext.objection narrows the questioner, priority over goal); asymmetric /resolved (objector) + /judge (other party, belief-neutral SUSTAINED/OVERRULED via observer::read_judge_ruling). SUSTAINED -> tracked open thread widens the STORY-174 gauge (ScoreGauge::with_open_thread). One-at-a-time guard, bounded interrogator self-objection (one-shot), offline /judge degrade. Wired into line + TUI recognizers + palette + gavel status motif. 409 tests green.'
+  created_at: 2026-06-07T14:58:04.280034653Z
+  modified_at: 2026-06-07T14:58:04.280034653Z
