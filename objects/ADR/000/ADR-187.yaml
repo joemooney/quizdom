@@ -1,0 +1,28 @@
+id: 019ea3c3-f33d-76b2-a0d4-61fe83f063dd
+spec_id: ADR-187
+agreed_id: ADR-187
+title: 'ADR: consolidate per-turn meta-LLM probes into one interrogator turn-envelope'
+description: |-
+  CONTEXT: the session loop spawned a full-history 'claude -p' subprocess PER TURN for each of: propose_goal (until a goal is set) and interrogator_objection (until it objects once) — plus the actual next-question generation. The one-shot guards (offer_made/objection_made) gate the OUTCOME, not the CADENCE, so because these fire 'rarely' (often never), the probes ran on essentially every turn for the whole session. Each re-sends the ENTIRE growing conversation, so cost scaled ~O(turns^2). Observed in 'ps' as a recurring 'claude -p --output-format json' objection probe re-sending ~150 Q&A turns.
+
+  DECISION (user): CONSOLIDATE. The interrogator's next-question LLM call — which already sends the full history and already reasons about the whole dialogue — returns a STRUCTURED ENVELOPE: { next_question, objection: Option<text>, goal_offer: Option<proposal> }. The objection/goal-offer decisions become a near-free byproduct of the call we already make, so there is ONE LLM call per turn instead of 2-3 full-history spawns. The separate per-turn observer.propose_goal / observer.interrogator_objection probes are removed from the loop.
+
+  PRESERVED: belief-neutrality (the envelope's objection/goal-offer fields are prompted neutrally — a STRUCTURAL tension / the QUESTION to resolve, never a belief); the one-shot guards + free-flow now gate whether we SURFACE the envelope's objection/goal-offer (not whether we pay for a probe); the META voice labeling when surfaced. USER-INITIATED paths (/goal, /request-goal, user /objection, /judge) are unchanged — they call the observer on demand (not per turn), which is fine.
+
+  SCOPE: the SCORE gauge stays a SEPARATE, already-GATED synopsis call (bounded to SCORE_GATE_TURNS) — not folded into every turn (it is heavier); may be revisited later.
+
+  CONSEQUENCES: eliminates the unbounded per-turn probe spawns; per-turn cost drops to one call; couples meta-decisions to the strategy call (mitigated by clean structured fields + neutral prompting). Does NOT by itself fix the deeper O(turns^2) full-history RE-SEND growth — tracked separately (see finding).
+status: Approved
+priority: High
+owner: ''
+feature: Uncategorized
+created_at: 2026-06-07T20:26:28.541841169Z
+modified_at: 2026-06-07T20:26:28.541841169Z
+req_type: Decision
+tags:
+- adr
+- cost
+- decision
+- llm
+- performance
+- strategy
