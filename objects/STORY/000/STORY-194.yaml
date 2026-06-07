@@ -35,7 +35,7 @@ priority: High
 owner: ''
 feature: Uncategorized
 created_at: 2026-06-07T21:37:42.216666241Z
-modified_at: 2026-06-07T21:37:42.216666241Z
+modified_at: 2026-06-07T21:38:06.081537113Z
 req_type: Story
 tags:
 - editor
@@ -43,3 +43,8 @@ tags:
 - story
 - tui
 - ux
+relationships:
+- rel_type: Parent
+  target_id: 019ea07d-90fc-7b53-ad38-d8979d58a26f
+  created_at: 2026-06-07T21:38:06.081528522Z
+  created_by: joe
