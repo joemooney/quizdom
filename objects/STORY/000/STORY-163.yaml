@@ -17,3 +17,7 @@ tags:
 - palette
 - story
 - tui
+relationships:
+- rel_type: Child
+  target_id: 019e9fe7-ea5f-7732-9b22-0adc78b3c2a0
+  created_at: 2026-06-07T02:27:58.579453199Z
