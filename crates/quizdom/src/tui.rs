@@ -637,11 +637,19 @@ impl<R: BufRead> TuiFrontEnd<R> {
         Ok(())
     }
 
+    // trace:STORY-177 | ai:claude — the backspace/mode-flip semantics live in
+    // [`PaletteState`]; this driver just feeds keys and re-renders.
     /// Run the live `/` palette overlay starting from the bare `/` already typed.
     /// Filters as the user types, arrow-navigates, Enter runs the highlighted
     /// command (returning its canonical typed form), `?` toggles per-command
-    /// detail, Esc / backspacing past the `/` cancels. Redrawn IN PLACE each
-    /// keystroke. `editing` is the input-box text to keep showing behind it.
+    /// detail, Esc cancels. Redrawn IN PLACE each keystroke. `editing` is the
+    /// input-box text to keep showing behind it.
+    ///
+    /// MATCH MODE switches live on the buffer (STORY-177): with the leading `/`
+    /// it PREFIX-matches command names; backspacing the `/` away FLIPS to a
+    /// name+description SUBSTRING search WITHOUT closing (the palette stays open
+    /// on an empty buffer, showing all). Only Backspace on a truly EMPTY buffer
+    /// — i.e. [`PaletteState::pop_filter`] returning `false` — cancels.
     fn run_palette(&mut self, editing: &str) -> Result<Option<String>> {
         let mut state = PaletteState::new(command_registry());
         let mut show_detail = false;
@@ -671,8 +679,11 @@ impl<R: BufRead> TuiFrontEnd<R> {
                 KeyCode::Char('?') => show_detail = !show_detail,
                 KeyCode::Backspace => {
                     show_detail = false;
+                    // trace:STORY-177 | ai:claude — `pop_filter` returns false
+                    // ONLY on a truly empty buffer; backspacing the leading `/`
+                    // succeeds (flips to search) and keeps the overlay open.
                     if !state.pop_filter() {
-                        // Backspacing past the `/` closes the overlay.
+                        // Backspacing an EMPTY buffer closes the overlay.
                         return Ok(None);
                     }
                 }

@@ -213,16 +213,41 @@ pub(crate) enum PaletteOutcome {
     Cancelled,
 }
 
-/// The pure state behind the palette overlay: the registry, the current filter
-/// string, and which of the filtered commands is highlighted.
+// trace:STORY-177 | ai:claude — the palette's two MATCH MODES, derived live from
+// whether the input buffer still carries its leading `/` sigil.
+/// Which way the palette is matching the buffer against the registry.
+///
+/// The mode is never stored — it is recomputed on every keystroke from whether
+/// the buffer starts with `/` (see [`PaletteState::mode`]). It exists only to
+/// name the two behaviours [`PaletteState::visible`] selects between.
+#[derive(Debug, Clone, Copy, Eq, PartialEq)]
+pub(crate) enum FilterMode {
+    /// Buffer starts with `/`: the `/` is the command SIGIL ("I'm typing a
+    /// command"), so we PREFIX-match the rest of the buffer against the command
+    /// NAME only. `/q` → `/quit`, `/question…`; `/sc` → `/score`.
+    Prefix,
+    /// Buffer has no leading `/` (the user backspaced it away, or it was never
+    /// there): case-insensitive SUBSTRING match ANYWHERE in the command name OR
+    /// description (discovery/search). `goal` → `/goal`, `/request-goal`, and
+    /// anything whose description mentions goals.
+    Search,
+}
+
+/// The pure state behind the palette overlay: the registry, the current input
+/// buffer, and which of the filtered commands is highlighted.
 ///
 /// All filter / navigation / selection logic lives here so it can be unit-tested
 /// without a terminal; the crossterm driver in [`run_palette`] only translates
 /// key events into these method calls and renders [`visible`] / [`filter`] /
 /// [`highlighted`].
+///
+/// The buffer is the EXACT text the user has typed, INCLUDING a leading `/` when
+/// present — the `/` that opened the palette starts in the buffer, and whether
+/// it survives selects the [`FilterMode`] live on every keystroke (STORY-177).
 #[derive(Debug, Clone)]
 pub(crate) struct PaletteState {
     commands: Vec<PaletteCommand>,
+    /// The raw input buffer, including a leading `/` when present.
     filter: String,
     /// Index into the CURRENT filtered view (`visible()`), not into `commands`.
     highlight: usize,
@@ -230,34 +255,71 @@ pub(crate) struct PaletteState {
 
 impl PaletteState {
     /// Build the palette state from a command registry.
+    ///
+    /// The buffer starts with the `/` sigil that opened the palette, so the
+    /// palette begins in [`FilterMode::Prefix`] (with an empty prefix, which
+    /// shows every command). Backspacing that `/` away flips to
+    /// [`FilterMode::Search`] without closing (STORY-177).
     pub(crate) fn new(commands: Vec<PaletteCommand>) -> Self {
         Self {
             commands,
-            filter: String::new(),
+            filter: String::from("/"),
             highlight: 0,
         }
     }
 
-    /// The filter string typed so far (without the leading `/`).
+    /// The raw input buffer typed so far, INCLUDING a leading `/` when present.
     pub(crate) fn filter(&self) -> &str {
         &self.filter
     }
 
-    /// The commands matching the current filter, in registry order.
-    ///
-    /// Matching is case-insensitive and substring-based against the command's
-    /// name (sans leading `/`) and its description, so typing `ob` narrows to
-    /// `/observe` and typing `nuance` finds `/tutor` by its description.
-    pub(crate) fn visible(&self) -> Vec<PaletteCommand> {
-        let needle = self.filter.trim().to_ascii_lowercase();
-        if needle.is_empty() {
-            return self.commands.clone();
+    // trace:STORY-177 | ai:claude
+    /// The current match mode, recomputed live from whether the buffer still
+    /// carries its leading `/` sigil. Never stored — always derived here.
+    pub(crate) fn mode(&self) -> FilterMode {
+        if self.filter.starts_with('/') {
+            FilterMode::Prefix
+        } else {
+            FilterMode::Search
         }
-        self.commands
-            .iter()
-            .filter(|command| command_matches(command, &needle))
-            .copied()
-            .collect()
+    }
+
+    // trace:STORY-177 | ai:claude
+    /// The commands matching the current buffer, in registry order.
+    ///
+    /// The match RULE switches on [`mode`](Self::mode):
+    /// - [`FilterMode::Prefix`] (buffer starts with `/`): the rest of the buffer
+    ///   PREFIX-matches the command NAME only (case-insensitive). An empty
+    ///   prefix (bare `/`) shows every command.
+    /// - [`FilterMode::Search`] (no leading `/`): a case-insensitive SUBSTRING
+    ///   match ANYWHERE in the command name OR description. An empty buffer shows
+    ///   every command.
+    pub(crate) fn visible(&self) -> Vec<PaletteCommand> {
+        match self.mode() {
+            FilterMode::Prefix => {
+                // Strip the sigil; the remainder is the NAME prefix to match.
+                let needle = self.filter[1..].trim().to_ascii_lowercase();
+                if needle.is_empty() {
+                    return self.commands.clone();
+                }
+                self.commands
+                    .iter()
+                    .filter(|command| name_has_prefix(command, &needle))
+                    .copied()
+                    .collect()
+            }
+            FilterMode::Search => {
+                let needle = self.filter.trim().to_ascii_lowercase();
+                if needle.is_empty() {
+                    return self.commands.clone();
+                }
+                self.commands
+                    .iter()
+                    .filter(|command| command_matches(command, &needle))
+                    .copied()
+                    .collect()
+            }
+        }
     }
 
     /// The currently highlighted command, or `None` when the filter excludes
@@ -279,10 +341,16 @@ impl PaletteState {
         self.highlight = 0;
     }
 
-    /// Remove the last filter character (Backspace). Returns `false` when the
-    /// filter is already empty — the caller treats that as "close the palette"
-    /// (backspacing past the `/` cancels the overlay), matching the mental model
-    /// that the `/` opened it.
+    // trace:STORY-177 | ai:claude
+    /// Remove the last buffer character (Backspace). Returns `false` ONLY when
+    /// the buffer is already EMPTY — the caller treats that as "close the
+    /// palette".
+    ///
+    /// Note the STORY-177 nuance: backspacing the LEADING `/` no longer closes
+    /// the palette. With the `/` in the buffer, popping it leaves an empty
+    /// (non-`/`) buffer — still a successful pop (`true`) — which FLIPS the
+    /// palette into [`FilterMode::Search`] showing all commands. Only a further
+    /// Backspace, on the now-empty buffer, returns `false` to close.
     pub(crate) fn pop_filter(&mut self) -> bool {
         let popped = self.filter.pop().is_some();
         self.highlight = 0;
@@ -305,11 +373,20 @@ impl PaletteState {
     }
 }
 
-/// Whether a command matches the (already lowercased, non-empty) filter needle —
-/// by its name (sans leading `/`) or its description.
+/// Whether a command matches the (already lowercased, non-empty) SEARCH needle —
+/// a substring anywhere in its name (sans leading `/`) or its description.
 fn command_matches(command: &PaletteCommand, needle: &str) -> bool {
     let name = command.command.trim_start_matches('/').to_ascii_lowercase();
     name.contains(needle) || command.description.to_ascii_lowercase().contains(needle)
+}
+
+// trace:STORY-177 | ai:claude
+/// Whether a command's NAME (sans leading `/`) STARTS WITH the (already
+/// lowercased, non-empty) prefix needle — the prefix-mode predicate. Names only;
+/// the description is intentionally NOT consulted in prefix mode.
+fn name_has_prefix(command: &PaletteCommand, needle: &str) -> bool {
+    let name = command.command.trim_start_matches('/').to_ascii_lowercase();
+    name.starts_with(needle)
 }
 
 /// Run the slash-command palette overlay and return the user's choice.
@@ -377,8 +454,11 @@ fn drive_palette(state: &mut PaletteState, output: &mut dyn Write) -> io::Result
             }
             KeyCode::Backspace => {
                 show_detail = false;
+                // trace:STORY-177 | ai:claude — `pop_filter` returns false ONLY
+                // on a truly empty buffer; backspacing the leading `/` succeeds
+                // (flips to search mode) and keeps the overlay open.
                 if !state.pop_filter() {
-                    // Backspacing past the `/` closes the overlay.
+                    // Backspacing an EMPTY buffer closes the overlay.
                     return Ok(PaletteOutcome::Cancelled);
                 }
             }
@@ -412,9 +492,18 @@ fn render_palette(
 /// detail pane) is unit-testable without a terminal.
 pub(crate) fn render_to_string(state: &PaletteState, show_detail: bool) -> String {
     let mut out = String::new();
+    // trace:STORY-177 | ai:claude — the buffer is shown VERBATIM (it already
+    // carries its leading `/` when present), and the active match mode is named
+    // so prefix-vs-search is visible at a glance.
     out.push_str("Slash-command palette");
     if !state.filter().is_empty() {
-        out.push_str(&format!(" — filter: /{}", state.filter()));
+        let mode = match state.mode() {
+            FilterMode::Prefix => "name-prefix",
+            FilterMode::Search => "search",
+        };
+        out.push_str(&format!(" — {mode}: {}", state.filter()));
+    } else {
+        out.push_str(" — search (Backspace to close)");
     }
     out.push('\n');
     let visible = state.visible();
@@ -448,6 +537,16 @@ mod tests {
 
     fn state() -> PaletteState {
         PaletteState::new(command_registry())
+    }
+
+    // trace:STORY-177 | ai:claude — a palette in SEARCH mode: open it (buffer
+    // `/`) then backspace the sigil away, the same path a user takes to flip
+    // modes. The buffer is now empty and `mode()` reports `Search`.
+    fn search_state() -> PaletteState {
+        let mut state = state();
+        assert!(state.pop_filter(), "popping the `/` sigil succeeds");
+        assert_eq!(state.mode(), FilterMode::Search);
+        state
     }
 
     // ---- registry -----------------------------------------------------------
@@ -546,13 +645,16 @@ mod tests {
         assert_eq!(visible[0].command, "/synopsis");
     }
 
+    // trace:STORY-177 | ai:claude — in SEARCH mode (no leading `/`), the match is
+    // a case-insensitive substring anywhere in the name OR description. "nuance"
+    // appears only in /tutor's description, not its name.
     #[test]
-    fn filter_is_case_insensitive_and_matches_descriptions() {
-        // "nuance" appears only in /tutor's description, not its name.
-        let mut state = state();
+    fn search_mode_is_case_insensitive_and_matches_descriptions() {
+        let mut state = search_state();
         for character in "NUANCE".chars() {
             state.push_filter(character);
         }
+        assert_eq!(state.mode(), FilterMode::Search);
         let visible = state.visible();
         assert!(visible.iter().any(|c| c.command == "/tutor"));
     }
@@ -567,16 +669,123 @@ mod tests {
         assert!(state.highlighted().is_none());
     }
 
+    // trace:STORY-177 | ai:claude — backspace closes ONLY on a truly empty
+    // buffer. From a fresh palette the buffer is `/`; one Backspace removes a
+    // typed char (or, at the sigil, flips to search), and only a Backspace on the
+    // now-empty buffer reports closure.
     #[test]
-    fn backspacing_an_empty_filter_reports_closure() {
+    fn backspacing_an_empty_buffer_reports_closure() {
         let mut state = state();
-        // First a char, then two pops: the second pop is on an empty filter.
+        // Buffer is `/x`. Pop the char (-> `/`), pop the sigil (-> ``, still a
+        // successful pop that FLIPS to search), then pop the empty buffer -> close.
         state.push_filter('x');
         assert!(state.pop_filter(), "popping a typed char succeeds");
         assert!(
-            !state.pop_filter(),
-            "popping an empty filter reports closure (cancel the overlay)"
+            state.pop_filter(),
+            "popping the leading `/` succeeds (flips to search, does NOT close)"
         );
+        assert_eq!(state.mode(), FilterMode::Search);
+        assert!(
+            !state.pop_filter(),
+            "popping the now-empty buffer reports closure (cancel the overlay)"
+        );
+    }
+
+    // trace:STORY-177 | ai:claude — with the leading `/`, the palette is in
+    // PREFIX mode and matches the command NAME ONLY (not the description). `/q`
+    // lists exactly the commands whose name starts with `q`.
+    #[test]
+    fn prefix_mode_matches_names_only_by_prefix() {
+        let mut state = state();
+        assert_eq!(state.mode(), FilterMode::Prefix);
+        state.push_filter('q'); // buffer is now `/q`
+        let visible = state.visible();
+        let names: Vec<&str> = visible.iter().map(|c| c.command).collect();
+        // /quit is the only command whose NAME starts with `q`.
+        assert_eq!(names, vec!["/quit"]);
+        // Description-only matches must NOT appear: /punt's description mentions
+        // "question" but its name does not start with `q`.
+        assert!(!names.contains(&"/punt"));
+    }
+
+    // trace:STORY-177 | ai:claude — a more pointed names-only prefix check: `/sc`
+    // resolves to /score, and a command merely mentioning "score" in its
+    // description (none here start with `sc`) would not slip in.
+    #[test]
+    fn prefix_mode_resolves_a_two_char_prefix_to_one_command() {
+        let mut state = state();
+        for character in "sc".chars() {
+            state.push_filter(character);
+        }
+        let visible = state.visible();
+        assert_eq!(visible.len(), 1);
+        assert_eq!(visible[0].command, "/score");
+    }
+
+    // trace:STORY-177 | ai:claude — in SEARCH mode, "goal" matches by NAME
+    // (/goal, /request-goal) AND by DESCRIPTION (any command whose description
+    // mentions goals), proving the substring spans both fields.
+    #[test]
+    fn search_mode_matches_name_and_description_substrings() {
+        let mut state = search_state();
+        for character in "goal".chars() {
+            state.push_filter(character);
+        }
+        let names: Vec<&str> = state.visible().iter().map(|c| c.command).collect();
+        // Name matches.
+        assert!(names.contains(&"/goal"));
+        assert!(names.contains(&"/request-goal"));
+        // Description matches: /request-goal aside, /score's detail/description
+        // and others reference goals — at minimum /score's description mentions
+        // distance-to-goal. Assert a description-only hit beyond the name hits.
+        assert!(
+            names.contains(&"/score"),
+            "search mode must catch description-only goal mentions, got {names:?}"
+        );
+    }
+
+    // trace:STORY-177 | ai:claude — the mode FLIPS live when the leading `/` is
+    // removed: same residual text, different result set. `/q` (prefix, names) vs
+    // `q` (search, name OR description) must differ.
+    #[test]
+    fn removing_the_slash_flips_prefix_to_search() {
+        let mut state = state();
+        state.push_filter('q'); // `/q` — prefix mode, names starting with `q`
+        assert_eq!(state.mode(), FilterMode::Prefix);
+        let prefix_names: Vec<&str> = state.visible().iter().map(|c| c.command).collect();
+        assert_eq!(prefix_names, vec!["/quit"]);
+
+        // Backspace the char, then the `/` — buffer becomes empty, search mode.
+        assert!(state.pop_filter()); // -> `/`
+        assert!(state.pop_filter()); // -> `` (flip to search, palette stays open)
+        assert_eq!(state.mode(), FilterMode::Search);
+        // Re-type `q`: now SEARCH — names OR descriptions containing `q` anywhere.
+        state.push_filter('q');
+        let search_names: Vec<&str> = state.visible().iter().map(|c| c.command).collect();
+        assert!(search_names.contains(&"/quit"));
+        // /punt's description ("Punt this question…") contains `q` via "question";
+        // search mode catches it where prefix mode did not.
+        assert!(
+            search_names.contains(&"/punt"),
+            "search mode must catch description `q`, got {search_names:?}"
+        );
+        assert!(
+            search_names.len() > prefix_names.len(),
+            "search is broader than prefix for the same residual text"
+        );
+    }
+
+    // trace:STORY-177 | ai:claude — an empty buffer shows ALL commands in BOTH
+    // modes (bare `/` prefix and fully-empty search).
+    #[test]
+    fn empty_buffer_shows_all_in_both_modes() {
+        // Bare `/` (prefix, empty prefix) shows all.
+        let prefix = state();
+        assert_eq!(prefix.mode(), FilterMode::Prefix);
+        assert_eq!(prefix.visible().len(), command_registry().len());
+        // Empty buffer (search) shows all.
+        let search = search_state();
+        assert_eq!(search.visible().len(), command_registry().len());
     }
 
     // ---- navigation + selection --------------------------------------------
