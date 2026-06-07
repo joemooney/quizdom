@@ -779,6 +779,46 @@ enum ObserverEngine {
     MockJudge(crate::observer::JudgeRuling),
 }
 
+// trace:BUG-181 | ai:claude — a test-build regression guard against a live LLM
+// leak. `run_session_from_current` always builds its observer via
+// `ObserverEngine::for_config`, and `test_config` defaults the backend to
+// `ClaudeCli` (the production default). Without this guard, any test that drives
+// a path which calls `synopsize`/`read`/… on a live backend (e.g. the score-gauge
+// gate test crossing `SCORE_GATE_TURNS`) would SPAWN the real `claude` CLI —
+// ~60s and flaky, and an unwanted LLM charge during `cargo test`. So in TEST
+// builds `for_config` refuses to construct a network-backed engine and returns
+// `Offline` instead (structural readings, identical degraded output), unless a
+// test explicitly opts in via `allow_live_backend`. The opt-in exists only so a
+// future test that genuinely wants the live path can take it deliberately; the
+// ignored API-billed smoke tests construct their clients directly and never route
+// through `for_config`, so they are unaffected. No production behavior changes:
+// outside `cfg(test)` this is a plain backend match.
+#[cfg(test)]
+thread_local! {
+    static ALLOW_LIVE_BACKEND: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
+#[cfg(test)]
+impl ObserverEngine {
+    /// Opt the current test thread into a real network-backed `for_config`
+    /// engine. Off by default so no test can accidentally reach a live LLM.
+    /// Returns a guard that restores the previous setting on drop.
+    fn allow_live_backend() -> impl Drop {
+        struct Restore(bool);
+        impl Drop for Restore {
+            fn drop(&mut self) {
+                ALLOW_LIVE_BACKEND.with(|c| c.set(self.0));
+            }
+        }
+        let prev = ALLOW_LIVE_BACKEND.with(|c| c.replace(true));
+        Restore(prev)
+    }
+
+    fn live_backend_allowed() -> bool {
+        ALLOW_LIVE_BACKEND.with(std::cell::Cell::get)
+    }
+}
+
 impl ObserverEngine {
     /// Build the observer for a session from its configured LLM backend.
     ///
@@ -786,6 +826,12 @@ impl ObserverEngine {
     /// backend degrades to `Offline` when its API key is absent, so an offline
     /// machine still gets the structural note rather than a failure.
     fn for_config(config: &CliConfig) -> Self {
+        // trace:BUG-181 | ai:claude — fail-safe to `Offline` under test so the
+        // session loop can never spawn a live LLM (see the guard note above).
+        #[cfg(test)]
+        if !Self::live_backend_allowed() {
+            return Self::Offline;
+        }
         match config.llm_backend {
             LlmBackendKind::ClaudeCli => Self::ClaudeCli(ClaudeCliClient::from_env()),
             LlmBackendKind::Anthropic => match AnthropicClient::from_env() {
@@ -5201,6 +5247,54 @@ mod conclude_tests {
         assert!(!reading.missing_nuance.is_empty());
         // Belief-neutral: the distinction is the USER's to draw, not the tutor's.
         assert!(reading.distinction.to_lowercase().contains("yours to draw"));
+    }
+
+    // trace:BUG-181 | ai:claude — the regression guard against a live-LLM leak in
+    // tests. `for_config` is the single construction point the session loop uses,
+    // and `test_config` defaults the backend to `ClaudeCli` (the production
+    // default). Under test the guard must yield a NON-network `Offline` engine so
+    // the score-gauge gate path (and any sibling synopsis/objection path) can never
+    // spawn the real `claude` CLI (~60s + a charge). The explicit `allow_live_backend`
+    // opt-in remains available for a future test that deliberately wants the live
+    // path; this asserts BOTH the default block and the opt-in escape hatch.
+    #[test]
+    fn for_config_blocks_a_live_backend_under_test_unless_opted_in() {
+        let mut config = CliConfig::parse([
+            "session".to_string(),
+            "start".to_string(),
+            "--seed".to_string(),
+            "Q-1".to_string(),
+        ])
+        .expect("parse");
+        // The production default backend (set explicitly so the test is robust to
+        // the env / default changing).
+        config.llm_backend = LlmBackendKind::ClaudeCli;
+
+        // Default: even a ClaudeCli backend resolves to the offline engine, so no
+        // test can shell out to `claude` through the session loop.
+        assert!(
+            matches!(ObserverEngine::for_config(&config), ObserverEngine::Offline),
+            "for_config must fail safe to Offline under test"
+        );
+
+        // Opt-in escape hatch: a test that genuinely wants the live path gets the
+        // network-backed engine, and the setting is restored when the guard drops.
+        {
+            let _live = ObserverEngine::allow_live_backend();
+            assert!(
+                matches!(
+                    ObserverEngine::for_config(&config),
+                    ObserverEngine::ClaudeCli(_)
+                ),
+                "allow_live_backend must restore the real ClaudeCli engine"
+            );
+        }
+
+        // Back to the safe default after the opt-in guard drops.
+        assert!(matches!(
+            ObserverEngine::for_config(&config),
+            ObserverEngine::Offline
+        ));
     }
 }
 
