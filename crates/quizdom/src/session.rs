@@ -769,6 +769,14 @@ enum ObserverEngine {
     // canned proposal is still a QUESTION to settle, never a belief.
     #[cfg(test)]
     Mock(Option<crate::observer::GoalProposal>),
+    // trace:STORY-175 | ai:claude — a test-only backend that returns a CANNED
+    // `/judge` ruling, so the SUSTAINED/OVERRULED ruling + open-thread tracking can
+    // be exercised end-to-end without a live LLM. For every other method it behaves
+    // like a present (non-offline) LLM backend degrading structurally — the
+    // objection tests only drive the judge path. Belief-neutral: the canned ruling
+    // judges STRUCTURE, never which belief is true.
+    #[cfg(test)]
+    MockJudge(crate::observer::JudgeRuling),
 }
 
 impl ObserverEngine {
@@ -796,6 +804,8 @@ impl ObserverEngine {
             Self::Offline => structural_reading(exchange),
             #[cfg(test)]
             Self::Mock(_) => structural_reading(exchange),
+            #[cfg(test)]
+            Self::MockJudge(_) => structural_reading(exchange),
         }
     }
 
@@ -809,6 +819,8 @@ impl ObserverEngine {
             Self::Offline => structural_synopsis(arc),
             #[cfg(test)]
             Self::Mock(_) => structural_synopsis(arc),
+            #[cfg(test)]
+            Self::MockJudge(_) => structural_synopsis(arc),
         }
     }
 
@@ -833,6 +845,8 @@ impl ObserverEngine {
                     proposal.clone()
                 }
             }
+            #[cfg(test)]
+            Self::MockJudge(_) => None,
         }
     }
 
@@ -858,6 +872,8 @@ impl ObserverEngine {
             Self::Offline => crate::observer::structural_objection(position, goal),
             #[cfg(test)]
             Self::Mock(_) => crate::observer::structural_objection(position, goal),
+            #[cfg(test)]
+            Self::MockJudge(_) => crate::observer::structural_objection(position, goal),
         }
     }
 
@@ -875,6 +891,8 @@ impl ObserverEngine {
             Self::Offline => crate::observer::static_help_index(question, &tool_context),
             #[cfg(test)]
             Self::Mock(_) => crate::observer::static_help_index(question, &tool_context),
+            #[cfg(test)]
+            Self::MockJudge(_) => crate::observer::static_help_index(question, &tool_context),
         }
     }
 
@@ -892,6 +910,83 @@ impl ObserverEngine {
             Self::Offline => crate::observer::structural_tutor(context),
             #[cfg(test)]
             Self::Mock(_) => crate::observer::structural_tutor(context),
+            #[cfg(test)]
+            Self::MockJudge(_) => crate::observer::structural_tutor(context),
+        }
+    }
+
+    // trace:STORY-175 | ai:claude
+    /// Rule on a `/judge`-ed objection: the belief-neutral SUSTAINED/OVERRULED
+    /// ruling + resolving condition. Uses the LLM when present and falls back to the
+    /// structural ruling offline (though `/judge` is gated upstream to report "needs
+    /// an LLM backend" before reaching here when offline). The OBJECTION-RULING
+    /// counterpart to [`read`]. Belief-neutral: judges STRUCTURE, never which belief
+    /// is true.
+    fn judge(
+        &self,
+        objection: &str,
+        goal: Option<&str>,
+        context: &str,
+    ) -> crate::observer::JudgeRuling {
+        match self {
+            Self::ClaudeCli(client) => {
+                crate::observer::read_judge_ruling(client, objection, goal, context)
+            }
+            Self::Anthropic(client) => {
+                crate::observer::read_judge_ruling(client, objection, goal, context)
+            }
+            Self::Offline => crate::observer::structural_judge_ruling(objection, goal),
+            #[cfg(test)]
+            Self::Mock(_) => crate::observer::structural_judge_ruling(objection, goal),
+            // trace:STORY-175 | ai:claude — return the CANNED ruling so the
+            // SUSTAINED/OVERRULED paths + open-thread tracking are testable.
+            #[cfg(test)]
+            Self::MockJudge(ruling) => ruling.clone(),
+        }
+    }
+
+    // trace:STORY-175 | ai:claude
+    /// Whether the interrogator should RAISE its own `/objection` this turn (the
+    /// bounded self-objection). Uses the LLM when present; offline / no-backend it
+    /// never objects (returns `None`). Belief-neutral: the objection it raises names
+    /// a STRUCTURAL tension, never a belief.
+    #[cfg(test)]
+    fn interrogator_objection(&self, positions: &[String]) -> Option<String> {
+        match self {
+            Self::ClaudeCli(client) => {
+                crate::observer::propose_interrogator_objection(client, positions)
+            }
+            Self::Anthropic(client) => {
+                crate::observer::propose_interrogator_objection(client, positions)
+            }
+            Self::Offline => None,
+            // trace:STORY-175 | ai:claude — a Mock reuses the goal-proposal canned
+            // value to decide whether to object: a `Some` proposal yields an
+            // objection (rare, gated on ≥2 positions like the real path); `None`
+            // stays quiet.
+            Self::Mock(proposal) => {
+                if positions.len() < 2 {
+                    return None;
+                }
+                proposal
+                    .as_ref()
+                    .map(|p| format!("material unaddressed tension re: {}", p.goal))
+            }
+            // The judge-mock never self-objects (the judge tests drive /judge only).
+            Self::MockJudge(_) => None,
+        }
+    }
+
+    #[cfg(not(test))]
+    fn interrogator_objection(&self, positions: &[String]) -> Option<String> {
+        match self {
+            Self::ClaudeCli(client) => {
+                crate::observer::propose_interrogator_objection(client, positions)
+            }
+            Self::Anthropic(client) => {
+                crate::observer::propose_interrogator_objection(client, positions)
+            }
+            Self::Offline => None,
         }
     }
 
@@ -906,6 +1001,8 @@ impl ObserverEngine {
             Self::ClaudeCli(_) | Self::Anthropic(_) => false,
             #[cfg(test)]
             Self::Mock(_) => false,
+            #[cfg(test)]
+            Self::MockJudge(_) => false,
         }
     }
 }
@@ -985,6 +1082,11 @@ fn compute_score_gauge(
     log_path: &Path,
     branch: Option<&str>,
     goal: Option<&str>,
+    // trace:STORY-175 | ai:claude — the most recent SUSTAINED objection's tracked
+    // open thread, folded into the gauge so it WIDENS the distance-to-goal until
+    // addressed; `None` when no objection is tracked. Belief-neutral: a structural
+    // gap, never a belief.
+    open_thread: Option<&str>,
 ) -> ScoreGauge {
     let mut arc = match File::open(log_path) {
         Ok(file) => arc_from_session_log(file, branch).unwrap_or_default(),
@@ -1000,7 +1102,13 @@ fn compute_score_gauge(
         let _spinner = crate::spinner::Spinner::start("scoring");
         observer.synopsize(&arc)
     };
-    ScoreGauge::from_synopsis(&synopsis)
+    let gauge = ScoreGauge::from_synopsis(&synopsis);
+    // trace:STORY-175 | ai:claude — fold the tracked sustained-objection open thread
+    // into the gauge (widens the distance-to-goal); a no-op when there is none.
+    match open_thread.map(str::trim).filter(|t| !t.is_empty()) {
+        Some(thread) => gauge.with_open_thread(thread),
+        None => gauge,
+    }
 }
 
 // trace:STORY-174 | ai:claude
@@ -1378,6 +1486,319 @@ fn maybe_offer_goal_on_crystallize(
     Ok(())
 }
 
+// trace:STORY-175 | ai:claude
+/// The INTERROGATOR's BOUNDED self-objection: when no objection is open and a
+/// genuine MATERIAL, still-unaddressed structural tension exists, the questioner
+/// raises its own `/objection` AT MOST ONCE (the same one-shot-ish posture as the
+/// goal-offer). `objection_made` is the one-shot guard — set the first time the
+/// interrogator actually objects, and NEVER re-raised, so it never spams. No
+/// objection happens on a thin conversation (fewer than two recorded positions) or
+/// while one is already open. Offline it never objects. Belief-neutral: the
+/// objection names a STRUCTURAL tension, never a belief.
+#[allow(clippy::too_many_arguments)]
+fn maybe_interrogator_objection(
+    objection_state: &mut Option<ObjectionState>,
+    objection_made: &mut bool,
+    observer: &ObserverEngine,
+    recent_path: &[AnsweredQuestion],
+    config: &CliConfig,
+    logger: &mut SessionLogger,
+    turn: u64,
+    output: &mut dyn Write,
+) -> Result<()> {
+    // One-at-a-time + one-shot guards: never raise over an open objection, and
+    // never raise a second time (the interrogator objects rarely, never per-turn).
+    if objection_state.is_some() || *objection_made {
+        return Ok(());
+    }
+    // Honor free-flow: only consider objecting once there is real substance.
+    let positions: Vec<String> = recent_path
+        .iter()
+        .filter(|answered| !answered.normalized_answer.is_empty())
+        .map(|answered| format!("On \"{}\": {}", answered.question_text, answered.raw_answer))
+        .collect();
+    if positions.len() < 2 {
+        return Ok(());
+    }
+    let Some(text) = observer.interrogator_objection(&positions) else {
+        // No genuine material tension worth objecting over — stay quiet and DO NOT
+        // spend the one-shot. A later, more-formed turn can still object.
+        return Ok(());
+    };
+    // A material tension surfaced: this is the single interrogator objection. Mark
+    // the one-shot spent BEFORE raising so it is never re-raised.
+    *objection_made = true;
+    writeln!(
+        output,
+        "The interrogator raises an objection on a material, unaddressed point:"
+    )?;
+    raise_objection(
+        objection_state,
+        &text,
+        ObjectionParty::Interrogator,
+        config,
+        logger,
+        turn,
+        output,
+    )?;
+    Ok(())
+}
+
+// trace:STORY-175 | ai:claude
+/// Emit the open-objection STATUS MOTIF: a machine-readable `[objection: …]` line
+/// the TUI status bar mirrors into a GAVEL segment (the same out-of-band channel
+/// the breadcrumb / score gauge use), plus a human-readable META line for the
+/// HEADLESS path so a non-TTY / `--no-tui` run shows the pin in its footer. The
+/// gavel glyph reads as "court is in session" on the contested point.
+fn render_objection_motif(state: &ObjectionState, output: &mut dyn Write) -> Result<()> {
+    // The bracketed line the TUI parses (mirrors the `[score: …]` channel).
+    writeln!(
+        output,
+        "[objection: {} ({})]",
+        state.text,
+        state.objector.as_str()
+    )?;
+    // The headless-facing META footer with the gavel motif.
+    writeln!(
+        output,
+        "{}",
+        crate::style::paint(
+            crate::style::meta(),
+            &format!(
+                "  {} OBJECTION (raised by {}): {} — pinned. /resolved (objector) or /judge (other party) to clear.",
+                crate::style::OBJECTION_GAVEL,
+                state.objector.as_str(),
+                state.text
+            )
+        )
+    )?;
+    Ok(())
+}
+
+// trace:STORY-175 | ai:claude
+/// Emit the objection-CLEAR motif so the TUI status bar drops its gavel segment
+/// when the objection is `/resolved` or `/judge`-d, plus a headless confirmation.
+fn render_objection_clear_motif(output: &mut dyn Write) -> Result<()> {
+    writeln!(output, "[objection: clear]")?;
+    Ok(())
+}
+
+// trace:STORY-175 | ai:claude
+/// Handle `/objection <text>` from EITHER party: PIN the exchange on the contested
+/// point. The ONE-AT-A-TIME guard refuses a second objection while one is open
+/// ("resolve the open objection first"); a bare `/objection` (empty text) SHOWS the
+/// current open objection (or notes none is open). On success the exchange enters
+/// the OBJECTION state, the questioner narrows to the point, and the gavel motif is
+/// shown. Belief-neutral: the objection names a STRUCTURAL tension, never a belief.
+#[allow(clippy::too_many_arguments)]
+fn raise_objection(
+    objection_state: &mut Option<ObjectionState>,
+    text: &str,
+    objector: ObjectionParty,
+    config: &CliConfig,
+    logger: &mut SessionLogger,
+    turn: u64,
+    output: &mut dyn Write,
+) -> Result<()> {
+    let text = text.trim();
+    // One-at-a-time guard / bare-`/objection` shows the open one.
+    if let Some(open) = objection_state.as_ref() {
+        if text.is_empty() {
+            writeln!(
+                output,
+                "Open objection (raised by {}): {}",
+                open.objector.as_str(),
+                open.text
+            )?;
+        } else {
+            writeln!(
+                output,
+                "An objection is already open — resolve the open objection first (/resolved by the objector, or /judge by the other party) before raising another."
+            )?;
+        }
+        return Ok(());
+    }
+    // No open objection. A bare `/objection` has nothing to pin.
+    if text.is_empty() {
+        writeln!(
+            output,
+            "No objection open. Raise one with `/objection <the contested point>` to pin the exchange on it."
+        )?;
+        return Ok(());
+    }
+    let state = ObjectionState {
+        text: text.to_string(),
+        objector,
+    };
+    logger.objection_raised(
+        &config.session_id,
+        &config.user_id,
+        &config.branch_id,
+        turn,
+        objector.as_str(),
+        text,
+    )?;
+    render_objection_motif(&state, output)?;
+    *objection_state = Some(state);
+    Ok(())
+}
+
+// trace:STORY-175 | ai:claude
+/// Handle `/resolved`: ONLY the OBJECTOR may call it (withdraw / accept the
+/// resolution). A wrong-caller (the OTHER party) is rejected with a helpful note
+/// pointing them at `/judge`. With no objection open it says so. On success the
+/// objection clears, the gavel motif drops, and the resolution is logged. Returns
+/// `true` when the objection was cleared (so the caller drops any tracked thread).
+fn resolve_objection(
+    objection_state: &mut Option<ObjectionState>,
+    caller: ObjectionParty,
+    config: &CliConfig,
+    logger: &mut SessionLogger,
+    turn: u64,
+    output: &mut dyn Write,
+) -> Result<bool> {
+    let Some(open) = objection_state.as_ref() else {
+        writeln!(
+            output,
+            "No objection is open to resolve. Raise one with `/objection <text>` first."
+        )?;
+        return Ok(false);
+    };
+    // ASYMMETRIC caller guard: only the objector may /resolved.
+    if open.objector != caller {
+        writeln!(
+            output,
+            "Only the party who RAISED the objection ({}) may call /resolved. As the other party, use /judge to have the Observer rule on it.",
+            open.objector.as_str()
+        )?;
+        return Ok(false);
+    }
+    let text = open.text.clone();
+    logger.objection_cleared(
+        &config.session_id,
+        &config.user_id,
+        &config.branch_id,
+        turn,
+        "resolved",
+        &text,
+    )?;
+    writeln!(
+        output,
+        "Objection resolved by the objector — \"{text}\" withdrawn/accepted. Returning to normal flow."
+    )?;
+    render_objection_clear_motif(output)?;
+    *objection_state = None;
+    Ok(true)
+}
+
+// trace:STORY-175 | ai:claude
+/// Handle `/judge`: ONLY the OTHER (non-objecting) party may call it, escalating
+/// the open objection to the OBSERVER for a belief-neutral SUSTAINED/OVERRULED
+/// ruling + resolving condition. A wrong-caller (the objector) is rejected with a
+/// helpful note pointing them at `/resolved`. OFFLINE degrades to a "needs an LLM
+/// backend" note WITHOUT clearing the objection (the ruling needs the LLM). On a
+/// successful ruling the objection CLEARS; a SUSTAINED ruling returns the tracked
+/// OPEN THREAD (the resolving condition) so the caller folds it into the gauge.
+/// Belief-neutral: the ruling judges STRUCTURE, never which belief is true.
+#[allow(clippy::too_many_arguments)]
+fn judge_objection(
+    objection_state: &mut Option<ObjectionState>,
+    caller: ObjectionParty,
+    observer: &ObserverEngine,
+    context: &str,
+    goal: Option<&str>,
+    config: &CliConfig,
+    logger: &mut SessionLogger,
+    turn: u64,
+    output: &mut dyn Write,
+) -> Result<JudgeOutcome> {
+    let Some(open) = objection_state.as_ref() else {
+        writeln!(
+            output,
+            "No objection is open to judge. Raise one with `/objection <text>` first."
+        )?;
+        return Ok(JudgeOutcome::default());
+    };
+    // ASYMMETRIC caller guard: only the NON-objecting party may /judge.
+    if open.objector == caller {
+        writeln!(
+            output,
+            "Only the OTHER party (not the objector) may call /judge. As the party who raised it, use /resolved to withdraw/accept it."
+        )?;
+        return Ok(JudgeOutcome::default());
+    }
+    // Offline degrade: the belief-neutral ruling needs the LLM. Report it and leave
+    // the objection OPEN (it can still be /resolved by the objector). `/objection`
+    // and `/resolved` are pure state transitions and keep working offline.
+    if observer.is_offline() {
+        writeln!(
+            output,
+            "Ruling on an objection needs an LLM backend (none reachable). The objection stays open — the objector can still /resolved it."
+        )?;
+        return Ok(JudgeOutcome::default());
+    }
+    let text = open.text.clone();
+    let ruling = {
+        let _spinner = crate::spinner::Spinner::start("ruling");
+        observer.judge(&text, goal, context)
+    };
+    render_judge_ruling(&ruling, output)?;
+    // trace:STORY-175 | ai:claude — DECIDED: a SUSTAINED objection becomes a TRACKED
+    // OPEN THREAD (the resolving condition) that lowers roundedness / widens the
+    // distance-to-goal gauge until addressed; the dialogue PROCEEDS. An OVERRULED
+    // objection just clears (nothing tracked).
+    let open_thread = match ruling.verdict {
+        crate::observer::JudgeVerdict::Sustained => Some(ruling.resolving_condition.clone()),
+        crate::observer::JudgeVerdict::Overruled => None,
+    };
+    logger.objection_cleared(
+        &config.session_id,
+        &config.user_id,
+        &config.branch_id,
+        turn,
+        ruling.verdict.as_str(),
+        &ruling.resolving_condition,
+    )?;
+    render_objection_clear_motif(output)?;
+    *objection_state = None;
+    Ok(JudgeOutcome { open_thread })
+}
+
+// trace:STORY-175 | ai:claude
+/// Render the Observer's belief-neutral `/judge` ruling in the META voice:
+/// SUSTAINED / OVERRULED, the structural rationale, and the resolving condition.
+/// A sustained ruling notes it becomes a tracked open thread that widens the gauge.
+fn render_judge_ruling(
+    ruling: &crate::observer::JudgeRuling,
+    output: &mut dyn Write,
+) -> Result<()> {
+    let verdict = match ruling.verdict {
+        crate::observer::JudgeVerdict::Sustained => "SUSTAINED",
+        crate::observer::JudgeVerdict::Overruled => "OVERRULED",
+    };
+    let mut body = format!(
+        "{} RULING: {} — {}\n  Resolving condition: {}",
+        crate::style::OBJECTION_GAVEL,
+        verdict,
+        ruling.rationale,
+        ruling.resolving_condition
+    );
+    if matches!(ruling.verdict, crate::observer::JudgeVerdict::Sustained) {
+        body.push_str(
+            "\n  (Tracked as an open thread — it widens the distance-to-goal until addressed; the dialogue proceeds.)",
+        );
+    }
+    if ruling.degraded {
+        body.push_str("\n  (offline ruling — needs an LLM backend for a full ruling)");
+    }
+    writeln!(
+        output,
+        "{}",
+        crate::style::paint(crate::style::meta(), &body)
+    )?;
+    Ok(())
+}
+
 // trace:STORY-160 | ai:claude
 /// Which party can call "terminate" in the closing ritual. Belief-neutral: this
 /// is about WHO speaks last, never which belief is right.
@@ -1408,6 +1829,55 @@ fn final_word_speaker(terminator: ClosingParty) -> ClosingParty {
         ClosingParty::User => ClosingParty::Challenger,
         ClosingParty::Challenger => ClosingParty::User,
     }
+}
+
+// trace:STORY-175 | ai:claude
+/// Who raised the OPEN OBJECTION (the court-case `/objection`). Drives the
+/// ASYMMETRIC exits: `/resolved` is the OBJECTOR's call (withdraw/accept), and
+/// `/judge` is the OTHER party's call (escalate to the Observer). A wrong-caller
+/// is rejected with a helpful note. Belief-neutral: the party is a procedural
+/// role, never a belief side.
+#[derive(Debug, Clone, Copy, Eq, PartialEq)]
+enum ObjectionParty {
+    /// The human user raised the objection.
+    User,
+    /// The interrogator raised the objection (rarely — the bounded self-objection).
+    Interrogator,
+}
+
+impl ObjectionParty {
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::User => "user",
+            Self::Interrogator => "interrogator",
+        }
+    }
+}
+
+// trace:STORY-175 | ai:claude
+/// The live OPEN OBJECTION the exchange is PINNED on. Only one is active at a time
+/// (a second `/objection` is refused with "resolve the open objection first"). The
+/// `objector` drives the asymmetric exits. While `Some`, the next-question prompt
+/// NARROWS to `text` (via [`StrategyContext::objection`]) and normal advancement
+/// pauses. Belief-neutral: `text` names a STRUCTURAL tension, never a belief.
+#[derive(Debug, Clone)]
+struct ObjectionState {
+    /// The contested point the exchange is pinned on.
+    text: String,
+    /// Who raised it — the objector (`/resolved`) vs the other party (`/judge`).
+    objector: ObjectionParty,
+}
+
+// trace:STORY-175 | ai:claude
+/// The outcome of handling a `/judge`-ed objection: a SUSTAINED objection becomes a
+/// tracked OPEN THREAD (the resolving condition) that widens the distance-to-goal
+/// gauge until addressed; an OVERRULED objection just clears. `open_thread` is
+/// `Some` only when sustained. Belief-neutral: the thread is a STRUCTURAL gap.
+#[derive(Debug, Clone, Default)]
+struct JudgeOutcome {
+    /// The tracked open thread to fold into the gauge when the objection was
+    /// SUSTAINED; `None` when overruled (nothing tracked).
+    open_thread: Option<String>,
 }
 
 // trace:STORY-160 | ai:claude
@@ -1744,6 +2214,24 @@ fn exchange_for_frontier(current: &Question, recent_path: &[AnsweredQuestion]) -
             rebuttal: current.title.clone(),
         },
     }
+}
+
+// trace:STORY-175 | ai:claude
+/// Build the recent-exchange CONTEXT string the `/judge` ruling reads, so the
+/// Observer can weigh whether the objection's contested point is MATERIAL and
+/// already ADDRESSED. Purely structural — it echoes the user's own recorded
+/// question/answer pairs, inventing nothing. Belief-neutral: it carries positions
+/// taken, never beliefs graded.
+fn judge_context_for_frontier(current: &Question, recent_path: &[AnsweredQuestion]) -> String {
+    let mut context = String::new();
+    for answered in recent_path.iter().rev().take(5).rev() {
+        context.push_str(&format!(
+            "Q: {} A: {}\n",
+            answered.question_text, answered.raw_answer
+        ));
+    }
+    context.push_str(&format!("Current question: {}", current.title));
+    context
 }
 
 // trace:STORY-127 | ai:claude
@@ -2163,6 +2651,19 @@ fn run_session_from_current(
     let mut score_gauge_on = false;
     let mut last_gauge: Option<ScoreGauge> = None;
     let mut turns_since_score: u64 = 0;
+    // trace:STORY-175 | ai:claude
+    // The OPEN OBJECTION the exchange is PINNED on (the court-case `/objection`).
+    // `None` = normal flow; `Some` narrows the questioner to the contested point and
+    // pauses normal advancement until `/resolved` (objector) or `/judge` (other
+    // party). One at a time. `objection_open_threads` collects the resolving
+    // condition of each SUSTAINED `/judge` ruling: a tracked open thread that widens
+    // the distance-to-goal gauge until addressed (DECIDED — STORY-175). The
+    // interrogator's bounded self-objection is one-shot, guarded by
+    // `interrogator_objection_made` (same posture as the goal-offer): it objects
+    // RARELY, never per-turn.
+    let mut objection_state: Option<ObjectionState> = None;
+    let mut objection_open_threads: Vec<String> = Vec::new();
+    let mut interrogator_objection_made = false;
     let mut current = bank.load_question(&config.seed)?;
     let mut settled_terms = Vec::new();
     let mut surfaced_contradictions = BTreeSet::new();
@@ -2252,6 +2753,7 @@ fn run_session_from_current(
                         &config.log_path,
                         Some(&config.branch_id),
                         goal.as_deref(),
+                        objection_open_threads.last().map(String::as_str),
                     ));
                     turns_since_score = 0;
                     true
@@ -2402,6 +2904,7 @@ fn run_session_from_current(
                             &config.log_path,
                             Some(&config.branch_id),
                             goal.as_deref(),
+                            objection_open_threads.last().map(String::as_str),
                         );
                         render_score_gauge(&gauge, true, fe.out())?;
                         last_gauge = Some(gauge);
@@ -2633,6 +3136,69 @@ fn run_session_from_current(
                     render_tutor_reading(&reading, fe.out())?;
                     continue;
                 }
+                AnswerInput::Objection(text) => {
+                    // trace:STORY-175 | ai:claude
+                    // EITHER party raised a court-style `/objection`: PIN the
+                    // exchange on the contested point (the user is the objector
+                    // here). One-at-a-time guard refuses a second; a bare
+                    // `/objection` shows the open one. On success the questioner
+                    // narrows to the point (via StrategyContext) and the gavel motif
+                    // shows. Non-destructive otherwise: the SAME question is
+                    // re-presented. Belief-neutral: the objection is a structural
+                    // tension, never a belief.
+                    raise_objection(
+                        &mut objection_state,
+                        &text,
+                        ObjectionParty::User,
+                        config,
+                        &mut logger,
+                        answered_turn,
+                        fe.out(),
+                    )?;
+                    continue;
+                }
+                AnswerInput::Resolved => {
+                    // trace:STORY-175 | ai:claude
+                    // `/resolved`: ONLY the OBJECTOR may call it. A wrong-caller is
+                    // rejected with a helpful note. On success the objection clears
+                    // and normal flow resumes. Pure state transition — works offline.
+                    resolve_objection(
+                        &mut objection_state,
+                        ObjectionParty::User,
+                        config,
+                        &mut logger,
+                        answered_turn,
+                        fe.out(),
+                    )?;
+                    continue;
+                }
+                AnswerInput::Judge => {
+                    // trace:STORY-175 | ai:claude
+                    // `/judge`: ONLY the OTHER (non-objecting) party may call it ->
+                    // the Observer renders a belief-neutral SUSTAINED/OVERRULED
+                    // ruling + resolving condition, then clears the objection. A
+                    // wrong-caller (the objector) is rejected. Offline degrades to a
+                    // "needs an LLM backend" note (the objection stays open). A
+                    // SUSTAINED ruling tracks the resolving condition as an open
+                    // thread that widens the gauge until addressed; the dialogue
+                    // proceeds.
+                    let context = judge_context_for_frontier(&current, &recent_path);
+                    let outcome = judge_objection(
+                        &mut objection_state,
+                        ObjectionParty::User,
+                        &observer,
+                        &context,
+                        goal.as_deref(),
+                        config,
+                        &mut logger,
+                        answered_turn,
+                        fe.out(),
+                    )?;
+                    if let Some(thread) = outcome.open_thread {
+                        objection_open_threads.push(thread);
+                    }
+                    continue;
+                }
                 AnswerInput::End => {
                     // trace:STORY-80 | ai:claude
                     ended_at_frontier = true;
@@ -2721,6 +3287,8 @@ fn run_session_from_current(
                         goal: goal.clone(),
                         // trace:STORY-161 | ai:claude — carry the live mode.
                         mode,
+                        // trace:STORY-175 | ai:claude — narrow to an open objection.
+                        objection: objection_state.as_ref().map(|o| o.text.clone()),
                     };
                     match dead_end_menu(
                         bank,
@@ -2807,6 +3375,9 @@ fn run_session_from_current(
             // trace:STORY-161 | ai:claude — and follows the live mode so debate
             // mode steelmans the opposing side.
             mode,
+            // trace:STORY-175 | ai:claude — while an objection is pinned the next
+            // question NARROWS to the contested point (priority over the goal).
+            objection: objection_state.as_ref().map(|o| o.text.clone()),
         };
 
         // trace:BUG-100 | ai:claude
@@ -2912,6 +3483,25 @@ fn run_session_from_current(
             &mut logger,
             turn,
             fe,
+        )?;
+
+        // trace:STORY-175 | ai:claude
+        // INTERROGATOR self-objection (raise rarely, on a material tension): with a
+        // fresh answer recorded and the conversation grown, let the questioner raise
+        // its OWN `/objection` AT MOST ONCE — when a genuine material, unaddressed
+        // structural tension exists and none is already open. The one-shot guard
+        // (`interrogator_objection_made`) means it never spams (same bounded posture
+        // as the goal-offer). Offline it never objects. Belief-neutral: it names a
+        // structural tension, never a belief.
+        maybe_interrogator_objection(
+            &mut objection_state,
+            &mut interrogator_objection_made,
+            &observer,
+            &recent_path,
+            config,
+            &mut logger,
+            turn,
+            fe.out(),
         )?;
     }
 
@@ -3094,7 +3684,13 @@ fn ask_contradiction_follow_up(
         // trace:STORY-163 | ai:claude — a stray `/help` / `/tutor` on a transient
         // contradiction follow-up is a no-op here (no LLM channel state in scope).
         | AnswerInput::Help(_)
-        | AnswerInput::Tutor(_) => Ok(false),
+        | AnswerInput::Tutor(_)
+        // trace:STORY-175 | ai:claude — a stray `/objection` / `/resolved` / `/judge`
+        // on a transient contradiction follow-up is a no-op here (no objection state
+        // in scope; the pin lives on the main frontier loop).
+        | AnswerInput::Objection(_)
+        | AnswerInput::Resolved
+        | AnswerInput::Judge => Ok(false),
     }
 }
 
@@ -3419,6 +4015,12 @@ fn browse_answered_path(
                 render_tutor_reading(&reading, fe.out())?;
                 continue;
             }
+            // trace:STORY-175 | ai:claude — the court-case `/objection` controls
+            // take effect at the FRONTIER (where the live objection state pins the
+            // exchange), not from inside the review pane re-walking the saved path.
+            // A stray `/objection` / `/resolved` / `/judge` here is a no-op; the user
+            // returns to the frontier to raise / clear an objection.
+            AnswerInput::Objection(_) | AnswerInput::Resolved | AnswerInput::Judge => continue,
             AnswerInput::End => return Ok(ReviewOutcome::End),
         }
     }
@@ -3557,6 +4159,8 @@ fn resume_session_with_term_persister(
         goal: config.goal.clone(),
         // trace:STORY-161 | ai:claude — and keeps its restored mode.
         mode: config.mode,
+        // trace:STORY-175 | ai:claude — a resumed auto-continue has no live pin.
+        objection: None,
     };
 
     let auto = {
@@ -4116,6 +4720,60 @@ impl SessionLogger {
             "speaker": speaker,
             "statement": statement,
             "final_word": final_word,
+        }))
+    }
+
+    // trace:STORY-175 | ai:claude
+    /// Record an OBJECTION raised (the court-case `/objection`): who raised it and
+    /// the contested point the exchange is now pinned on. Logged so resume / inspect
+    /// see where the exchange was pinned and by whom.
+    fn objection_raised(
+        &mut self,
+        session_id: &str,
+        user_id: &str,
+        branch_id: &str,
+        turn: u64,
+        objector: &str,
+        text: &str,
+    ) -> Result<()> {
+        let event_id = self.event_id();
+        self.write(json!({
+            "event_id": event_id,
+            "event_type": "objection_raised",
+            "occurred_at": Utc::now().to_rfc3339(),
+            "session_id": session_id,
+            "user_id": user_id,
+            "branch_id": branch_id,
+            "turn": turn,
+            "objector": objector,
+            "text": text,
+        }))
+    }
+
+    // trace:STORY-175 | ai:claude
+    /// Record an objection CLEARED: either `/resolved` (the objector withdrew /
+    /// accepted) or a `/judge` ruling (`sustained` / `overruled`). `resolution`
+    /// carries the disposition + (for a sustained ruling) the tracked open thread.
+    fn objection_cleared(
+        &mut self,
+        session_id: &str,
+        user_id: &str,
+        branch_id: &str,
+        turn: u64,
+        disposition: &str,
+        resolution: &str,
+    ) -> Result<()> {
+        let event_id = self.event_id();
+        self.write(json!({
+            "event_id": event_id,
+            "event_type": "objection_cleared",
+            "occurred_at": Utc::now().to_rfc3339(),
+            "session_id": session_id,
+            "user_id": user_id,
+            "branch_id": branch_id,
+            "turn": turn,
+            "disposition": disposition,
+            "resolution": resolution,
         }))
     }
 
@@ -4908,6 +5566,511 @@ mod goal_request_tests {
         );
         assert!(goal.is_none());
         assert!(out.is_empty());
+        let _ = std::fs::remove_file(&path);
+    }
+}
+
+// trace:STORY-175 | ai:claude
+// The court-case `/objection` mechanic: raise+pin, the ASYMMETRIC exits
+// (`/resolved` objector-only, `/judge` other-party-only), the wrong-caller
+// rejections, the SUSTAINED (=> tracked open thread widens the gauge) + OVERRULED
+// rulings, the one-at-a-time guard, the bounded interrogator self-objection, and
+// the offline `/judge` degrade. Drives the objection helpers through the headless
+// line front-end seam with a Mock / MockJudge observer, so the full mechanic is
+// exercised without a live LLM. Belief-neutral throughout: an objection names a
+// STRUCTURAL tension and a ruling judges STANDING, never which belief is true.
+#[cfg(test)]
+mod objection_tests {
+    use super::*;
+    use crate::observer::{JudgeRuling, JudgeVerdict};
+    use crate::strategy::AnsweredQuestion;
+
+    fn unique_log(tag: &str) -> std::path::PathBuf {
+        std::env::temp_dir().join(format!(
+            "quizdom-story-175-{tag}-{}-{}.jsonl",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ))
+    }
+
+    fn test_config(path: &std::path::Path) -> CliConfig {
+        CliConfig {
+            command: SessionCommand::Start,
+            seed: "Q-1".to_string(),
+            user_id: "test-user".to_string(),
+            session_id: "sess-test".to_string(),
+            session_id_provided: true,
+            log_path: path.to_path_buf(),
+            log_path_provided: true,
+            branch_id: "main".to_string(),
+            proposition: None,
+            agree_seed: None,
+            disagree_seed: None,
+            strategy: StrategyKind::Deterministic,
+            strategy_provided: false,
+            llm_backend: LlmBackendKind::ClaudeCli,
+            goal: None,
+            mode: SessionMode::Socratic,
+            mode_provided: false,
+            no_tui: false,
+        }
+    }
+
+    fn sustained_ruling() -> JudgeRuling {
+        JudgeRuling {
+            verdict: JudgeVerdict::Sustained,
+            rationale: "the point is material and was never addressed".to_string(),
+            resolving_condition: "define whether a caused choice counts as free".to_string(),
+            degraded: false,
+        }
+    }
+
+    fn overruled_ruling() -> JudgeRuling {
+        JudgeRuling {
+            verdict: JudgeVerdict::Overruled,
+            rationale: "already addressed two turns ago".to_string(),
+            resolving_condition: "none — it was covered".to_string(),
+            degraded: false,
+        }
+    }
+
+    fn answered(question: &str, answer: &str) -> AnsweredQuestion {
+        AnsweredQuestion {
+            question_ref: "Q-x".to_string(),
+            question_text: question.to_string(),
+            raw_answer: answer.to_string(),
+            normalized_answer: answer.to_string(),
+        }
+    }
+
+    // ---- raise + pin -------------------------------------------------------
+
+    #[test]
+    fn raising_an_objection_pins_the_exchange_and_emits_the_gavel_motif() {
+        let path = unique_log("raise");
+        let config = test_config(&path);
+        let mut logger = SessionLogger::open(&path).expect("logger");
+        let mut state: Option<ObjectionState> = None;
+        let mut out = Vec::new();
+        raise_objection(
+            &mut state,
+            "you never defined what 'free' means",
+            ObjectionParty::User,
+            &config,
+            &mut logger,
+            0,
+            &mut out,
+        )
+        .expect("raise");
+        let state = state.expect("objection must be pinned");
+        assert_eq!(state.text, "you never defined what 'free' means");
+        assert_eq!(state.objector, ObjectionParty::User);
+        let out = String::from_utf8(out).unwrap();
+        // The machine-readable motif the TUI mirrors + the headless gavel footer.
+        assert!(out.contains("[objection: you never defined what 'free' means (user)]"));
+        assert!(out.contains(crate::style::OBJECTION_GAVEL));
+        let _ = std::fs::remove_file(&path);
+    }
+
+    // ---- one-at-a-time guard ----------------------------------------------
+
+    #[test]
+    fn a_second_objection_is_refused_while_one_is_open() {
+        let path = unique_log("one-at-a-time");
+        let config = test_config(&path);
+        let mut logger = SessionLogger::open(&path).expect("logger");
+        let mut state = Some(ObjectionState {
+            text: "first contested point".to_string(),
+            objector: ObjectionParty::User,
+        });
+        let mut out = Vec::new();
+        raise_objection(
+            &mut state,
+            "a different point",
+            ObjectionParty::User,
+            &config,
+            &mut logger,
+            1,
+            &mut out,
+        )
+        .expect("raise");
+        // The open objection is unchanged; the second is refused with the note.
+        assert_eq!(state.as_ref().unwrap().text, "first contested point");
+        let out = String::from_utf8(out).unwrap();
+        assert!(out.contains("resolve the open objection first"));
+        let _ = std::fs::remove_file(&path);
+    }
+
+    // ---- /resolved by the objector ----------------------------------------
+
+    #[test]
+    fn resolved_clears_the_objection_for_the_objector() {
+        let path = unique_log("resolved-ok");
+        let config = test_config(&path);
+        let mut logger = SessionLogger::open(&path).expect("logger");
+        let mut state = Some(ObjectionState {
+            text: "the contested point".to_string(),
+            objector: ObjectionParty::User,
+        });
+        let mut out = Vec::new();
+        let cleared = resolve_objection(
+            &mut state,
+            ObjectionParty::User, // the objector
+            &config,
+            &mut logger,
+            2,
+            &mut out,
+        )
+        .expect("resolve");
+        assert!(cleared);
+        assert!(state.is_none(), "objection must be cleared");
+        let out = String::from_utf8(out).unwrap();
+        assert!(out.contains("Objection resolved by the objector"));
+        assert!(out.contains("[objection: clear]"));
+        let _ = std::fs::remove_file(&path);
+    }
+
+    // ---- wrong-caller rejection for /resolved ------------------------------
+
+    #[test]
+    fn resolved_rejects_the_wrong_caller() {
+        let path = unique_log("resolved-wrong");
+        let config = test_config(&path);
+        let mut logger = SessionLogger::open(&path).expect("logger");
+        let mut state = Some(ObjectionState {
+            text: "the contested point".to_string(),
+            objector: ObjectionParty::Interrogator, // interrogator raised it
+        });
+        let mut out = Vec::new();
+        let cleared = resolve_objection(
+            &mut state,
+            ObjectionParty::User, // the WRONG caller (not the objector)
+            &config,
+            &mut logger,
+            3,
+            &mut out,
+        )
+        .expect("resolve");
+        assert!(!cleared);
+        assert!(
+            state.is_some(),
+            "a wrong-caller must not clear the objection"
+        );
+        let out = String::from_utf8(out).unwrap();
+        assert!(out.contains("Only the party who RAISED the objection"));
+        assert!(out.contains("/judge")); // points them at the right control
+        let _ = std::fs::remove_file(&path);
+    }
+
+    // ---- /judge SUSTAINED => tracked open thread lowers the gauge ----------
+
+    #[test]
+    fn judge_sustained_clears_and_tracks_an_open_thread_that_lowers_the_gauge() {
+        let path = unique_log("judge-sustained");
+        let config = test_config(&path);
+        let mut logger = SessionLogger::open(&path).expect("logger");
+        let observer = ObserverEngine::MockJudge(sustained_ruling());
+        let mut state = Some(ObjectionState {
+            text: "you never reconciled free will with causation".to_string(),
+            objector: ObjectionParty::User, // user objected, so the OTHER party judges
+        });
+        let mut out = Vec::new();
+        let outcome = judge_objection(
+            &mut state,
+            ObjectionParty::Interrogator, // the non-objecting party
+            &observer,
+            "Q: Is free will real? A: yes",
+            Some("can free will survive causation?"),
+            &config,
+            &mut logger,
+            4,
+            &mut out,
+        )
+        .expect("judge");
+        assert!(state.is_none(), "a ruling clears the objection");
+        // SUSTAINED => the resolving condition becomes the tracked open thread.
+        assert_eq!(
+            outcome.open_thread.as_deref(),
+            Some("define whether a caused choice counts as free")
+        );
+        let out = String::from_utf8(out).unwrap();
+        assert!(out.contains("SUSTAINED"));
+        assert!(out.contains("Tracked as an open thread"));
+        assert!(out.contains("[objection: clear]"));
+
+        // The tracked thread WIDENS the gauge: fold it into a scored gauge and the
+        // composite drops + the open thread becomes the named gap.
+        let base = crate::synopsis::ScoreGauge {
+            composite: Some(80),
+            limiting_gap: "completeness".to_string(),
+            goal: Some("can free will survive causation?".to_string()),
+            degraded: false,
+        };
+        let widened = base
+            .clone()
+            .with_open_thread(outcome.open_thread.as_deref().unwrap());
+        assert!(widened.composite.unwrap() < base.composite.unwrap());
+        assert!(widened
+            .status_segment(true)
+            .contains("define whether a caused choice counts as free"));
+        let _ = std::fs::remove_file(&path);
+    }
+
+    // ---- /judge OVERRULED => clears, nothing tracked -----------------------
+
+    #[test]
+    fn judge_overruled_clears_and_tracks_nothing() {
+        let path = unique_log("judge-overruled");
+        let config = test_config(&path);
+        let mut logger = SessionLogger::open(&path).expect("logger");
+        let observer = ObserverEngine::MockJudge(overruled_ruling());
+        let mut state = Some(ObjectionState {
+            text: "an immaterial nitpick".to_string(),
+            objector: ObjectionParty::User,
+        });
+        let mut out = Vec::new();
+        let outcome = judge_objection(
+            &mut state,
+            ObjectionParty::Interrogator,
+            &observer,
+            "",
+            None,
+            &config,
+            &mut logger,
+            5,
+            &mut out,
+        )
+        .expect("judge");
+        assert!(state.is_none(), "a ruling clears the objection");
+        assert!(
+            outcome.open_thread.is_none(),
+            "an overruled objection tracks nothing"
+        );
+        let out = String::from_utf8(out).unwrap();
+        assert!(out.contains("OVERRULED"));
+        assert!(!out.contains("Tracked as an open thread"));
+        let _ = std::fs::remove_file(&path);
+    }
+
+    // ---- wrong-caller rejection for /judge ---------------------------------
+
+    #[test]
+    fn judge_rejects_the_objector_as_the_wrong_caller() {
+        let path = unique_log("judge-wrong");
+        let config = test_config(&path);
+        let mut logger = SessionLogger::open(&path).expect("logger");
+        let observer = ObserverEngine::MockJudge(sustained_ruling());
+        let mut state = Some(ObjectionState {
+            text: "the contested point".to_string(),
+            objector: ObjectionParty::User,
+        });
+        let mut out = Vec::new();
+        let outcome = judge_objection(
+            &mut state,
+            ObjectionParty::User, // the OBJECTOR may NOT judge their own objection
+            &observer,
+            "",
+            None,
+            &config,
+            &mut logger,
+            6,
+            &mut out,
+        )
+        .expect("judge");
+        assert!(outcome.open_thread.is_none());
+        assert!(
+            state.is_some(),
+            "a wrong-caller must not clear the objection"
+        );
+        let out = String::from_utf8(out).unwrap();
+        assert!(out.contains("Only the OTHER party"));
+        assert!(out.contains("/resolved")); // points them at the right control
+        let _ = std::fs::remove_file(&path);
+    }
+
+    // ---- offline /judge degrades to a note, keeps the objection open -------
+
+    #[test]
+    fn judge_offline_degrades_and_keeps_the_objection_open() {
+        let path = unique_log("judge-offline");
+        let config = test_config(&path);
+        let mut logger = SessionLogger::open(&path).expect("logger");
+        let observer = ObserverEngine::Offline; // no LLM to rule
+        let mut state = Some(ObjectionState {
+            text: "the contested point".to_string(),
+            objector: ObjectionParty::User,
+        });
+        let mut out = Vec::new();
+        let outcome = judge_objection(
+            &mut state,
+            ObjectionParty::Interrogator, // the right caller, but offline
+            &observer,
+            "",
+            None,
+            &config,
+            &mut logger,
+            7,
+            &mut out,
+        )
+        .expect("judge");
+        assert!(outcome.open_thread.is_none());
+        // The objection stays OPEN — the objector can still /resolved it.
+        assert!(
+            state.is_some(),
+            "offline /judge must not clear the objection"
+        );
+        let out = String::from_utf8(out).unwrap();
+        assert!(out.contains("needs an LLM backend"));
+        let _ = std::fs::remove_file(&path);
+    }
+
+    // ---- /objection and /resolved are pure state transitions (work offline) --
+
+    #[test]
+    fn objection_and_resolved_are_pure_state_transitions_offline() {
+        // Belief-neutral plumbing: raising and resolving need no LLM — only /judge
+        // does. So with NO observer involved at all, raise+resolve still work.
+        let path = unique_log("offline-transitions");
+        let config = test_config(&path);
+        let mut logger = SessionLogger::open(&path).expect("logger");
+        let mut state: Option<ObjectionState> = None;
+        let mut out = Vec::new();
+        raise_objection(
+            &mut state,
+            "a contested point",
+            ObjectionParty::User,
+            &config,
+            &mut logger,
+            0,
+            &mut out,
+        )
+        .expect("raise");
+        assert!(state.is_some());
+        let cleared = resolve_objection(
+            &mut state,
+            ObjectionParty::User,
+            &config,
+            &mut logger,
+            1,
+            &mut out,
+        )
+        .expect("resolve");
+        assert!(cleared);
+        assert!(state.is_none());
+        let _ = std::fs::remove_file(&path);
+    }
+
+    // ---- bounded interrogator self-objection -------------------------------
+
+    #[test]
+    fn interrogator_objects_once_rarely_and_never_twice() {
+        let path = unique_log("interrogator-once");
+        let config = test_config(&path);
+        let mut logger = SessionLogger::open(&path).expect("logger");
+        // The Mock self-objects when it has a canned proposal + ≥2 positions.
+        let observer = ObserverEngine::Mock(Some(crate::observer::GoalProposal {
+            goal: "whether free will survives causation".to_string(),
+            rationale: "circling".to_string(),
+        }));
+        let recent_path = vec![
+            answered("Is free will real?", "yes"),
+            answered("Can a caused choice be free?", "no"),
+        ];
+        let mut state: Option<ObjectionState> = None;
+        let mut made = false;
+
+        // First turn: the interrogator raises its own objection, spending the guard.
+        let mut out = Vec::new();
+        maybe_interrogator_objection(
+            &mut state,
+            &mut made,
+            &observer,
+            &recent_path,
+            &config,
+            &mut logger,
+            1,
+            &mut out,
+        )
+        .expect("offer");
+        assert!(made, "the first material tension spends the one-shot guard");
+        let raised = state.take().expect("the interrogator must have objected");
+        assert_eq!(raised.objector, ObjectionParty::Interrogator);
+        assert!(String::from_utf8(out)
+            .unwrap()
+            .contains("interrogator raises an objection"));
+
+        // Second turn: NEVER re-objects (the guard is spent), even with substance.
+        let mut state2: Option<ObjectionState> = None;
+        let mut out2 = Vec::new();
+        maybe_interrogator_objection(
+            &mut state2,
+            &mut made,
+            &observer,
+            &recent_path,
+            &config,
+            &mut logger,
+            2,
+            &mut out2,
+        )
+        .expect("offer");
+        assert!(
+            state2.is_none(),
+            "a spent guard must never raise a second interrogator objection"
+        );
+        let _ = std::fs::remove_file(&path);
+    }
+
+    #[test]
+    fn interrogator_stays_quiet_on_a_thin_conversation_and_never_offline() {
+        let path = unique_log("interrogator-thin");
+        let config = test_config(&path);
+        let mut logger = SessionLogger::open(&path).expect("logger");
+        let observer = ObserverEngine::Mock(Some(crate::observer::GoalProposal {
+            goal: "g".to_string(),
+            rationale: "r".to_string(),
+        }));
+        // Thin: a single position must not spend the guard or object.
+        let thin = vec![answered("Is free will real?", "yes")];
+        let mut state: Option<ObjectionState> = None;
+        let mut made = false;
+        let mut out = Vec::new();
+        maybe_interrogator_objection(
+            &mut state,
+            &mut made,
+            &observer,
+            &thin,
+            &config,
+            &mut logger,
+            1,
+            &mut out,
+        )
+        .expect("offer");
+        assert!(!made, "a thin conversation must not spend the guard");
+        assert!(state.is_none());
+
+        // Offline: never objects, even with substance.
+        let recent_path = vec![
+            answered("Is free will real?", "yes"),
+            answered("Can a caused choice be free?", "no"),
+        ];
+        let mut made2 = false;
+        let mut out2 = Vec::new();
+        maybe_interrogator_objection(
+            &mut state,
+            &mut made2,
+            &ObserverEngine::Offline,
+            &recent_path,
+            &config,
+            &mut logger,
+            2,
+            &mut out2,
+        )
+        .expect("offer");
+        assert!(!made2, "offline must never object");
+        assert!(state.is_none());
         let _ = std::fs::remove_file(&path);
     }
 }

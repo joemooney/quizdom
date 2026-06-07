@@ -432,6 +432,232 @@ pub fn structural_objection(position: &str, goal: Option<&str>) -> ClosingObject
     }
 }
 
+// trace:STORY-175 | ai:claude
+/// The Observer's belief-neutral ruling on a contested `/objection` when the
+/// NON-objecting party calls `/judge`. The Observer never decides which belief is
+/// true — it judges the objection's STRUCTURAL STANDING: is the contested point
+/// MATERIAL to the exchange and STILL UNADDRESSED (SUSTAINED), or immaterial /
+/// already addressed (OVERRULED)? Either way it names the RESOLVING CONDITION —
+/// what would settle the objection — so the dialogue can proceed against it.
+#[derive(Debug, Clone, Copy, Eq, PartialEq)]
+pub enum JudgeVerdict {
+    /// The objection is MATERIAL to the exchange and NOT yet addressed — it stands
+    /// as an open structural gap. A sustained objection becomes a tracked open
+    /// thread that widens the distance-to-goal gauge until addressed (STORY-174).
+    Sustained,
+    /// The objection is immaterial to the goal, or already addressed by the
+    /// exchange so far — it does not stand, and the dialogue proceeds unburdened.
+    Overruled,
+}
+
+impl JudgeVerdict {
+    /// The lowercase token used in logs / breadcrumbs / status motifs.
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Self::Sustained => "sustained",
+            Self::Overruled => "overruled",
+        }
+    }
+}
+
+// trace:STORY-175 | ai:claude
+/// The Observer's belief-neutral ruling on a `/judge`-ed objection: the verdict
+/// (SUSTAINED / OVERRULED), a one-line belief-neutral RATIONALE for the standing,
+/// and the RESOLVING CONDITION (what would settle the contested point). Degrades
+/// to a structural note when no LLM is reachable — but `/judge` is gated upstream
+/// so the offline path normally reports "needs an LLM backend" before reaching the
+/// Observer at all; the structural fallback is the belt-and-braces default.
+#[derive(Debug, Clone, Eq, PartialEq)]
+pub struct JudgeRuling {
+    /// SUSTAINED (material + unaddressed) or OVERRULED (immaterial / addressed).
+    pub verdict: JudgeVerdict,
+    /// A one-line belief-neutral rationale for the standing — about the STRUCTURE
+    /// of the exchange (was the point material, was it answered), never which
+    /// belief is true.
+    pub rationale: String,
+    /// What would RESOLVE the contested point — the condition that settles the
+    /// objection. For a sustained objection this becomes the tracked open thread.
+    pub resolving_condition: String,
+    /// True when the ruling was synthesized structurally (offline / degraded)
+    /// rather than ruled by the LLM.
+    pub degraded: bool,
+}
+
+/// System prompt pinning the `/judge` ruling to its belief-neutral, STRUCTURAL
+/// contract. The Observer judges STANDING, not truth.
+const JUDGE_SYSTEM_PROMPT: &str = "You are quizdom's OBSERVER, ruling on an OBJECTION one party raised mid-dialogue, now escalated to you by the OTHER party. You are STRICTLY belief-neutral: you NEVER decide which belief is true. You judge only the objection's STRUCTURAL STANDING in the exchange. Rule SUSTAINED when the contested point is MATERIAL to the question being resolved AND has NOT yet been addressed by the exchange. Rule OVERRULED when the point is immaterial to the question, or has already been addressed. Either way, name the RESOLVING CONDITION — the concrete thing that would settle the contested point. Judge structure (materiality, whether it was addressed), never which side is right.";
+
+/// Build the `/judge` ruling prompt from the contested objection text, the goal
+/// being resolved, and the recent exchange context (so the Observer can judge
+/// whether the point is material + already addressed).
+fn judge_prompt(objection: &str, goal: Option<&str>, context: &str) -> String {
+    let mut prompt = String::new();
+    if let Some(goal) = goal.map(str::trim).filter(|g| !g.is_empty()) {
+        prompt.push_str(&format!("The question being resolved (the goal): {goal}\n"));
+    }
+    prompt.push_str(&format!("The contested objection: {objection}\n"));
+    if !context.trim().is_empty() {
+        prompt.push_str(&format!("Recent exchange context:\n{}\n", context.trim()));
+    }
+    prompt.push_str(
+        "\nReturn only JSON: {\"verdict\":\"sustained|overruled\",\"rationale\":\"one belief-neutral line on the objection's STRUCTURAL standing — was it MATERIAL and UNADDRESSED (sustained) or immaterial/already-addressed (overruled), never which belief is true\",\"resolving_condition\":\"what would settle the contested point\"}.",
+    );
+    prompt
+}
+
+/// Ask the Observer to rule on a `/judge`-ed objection, degrading to a structural
+/// ruling when the call fails or returns something unusable — so a ruling always
+/// lands, online or off. Belief-neutral: judges STRUCTURE, never which belief is
+/// true.
+pub fn read_judge_ruling<C: LLMClient>(
+    client: &C,
+    objection: &str,
+    goal: Option<&str>,
+    context: &str,
+) -> JudgeRuling {
+    match llm_judge_ruling(client, objection, goal, context) {
+        Some(ruling) => ruling,
+        None => structural_judge_ruling(objection, goal),
+    }
+}
+
+/// The LLM leg of [`read_judge_ruling`]. Returns `None` on any failure so the
+/// caller degrades to the structural ruling.
+fn llm_judge_ruling<C: LLMClient>(
+    client: &C,
+    objection: &str,
+    goal: Option<&str>,
+    context: &str,
+) -> Option<JudgeRuling> {
+    let prompt = judge_prompt(objection, goal, context);
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_time()
+        .build()
+        .ok()?;
+    let (text, _tool_calls) = runtime
+        .block_on(client.call(JUDGE_SYSTEM_PROMPT, &[Message::user(prompt)], &[]))
+        .ok()?;
+    parse_judge_ruling(&text)
+}
+
+/// Parse the Observer's JSON into a [`JudgeRuling`]. Returns `None` when the
+/// payload is not the expected object or carries no verdict, so the caller
+/// degrades. An unrecognized verdict token also degrades rather than guessing.
+pub fn parse_judge_ruling(text: &str) -> Option<JudgeRuling> {
+    let value: Value = serde_json::from_str(text.trim()).ok()?;
+    if !value.is_object() {
+        return None;
+    }
+    let verdict = match value
+        .get("verdict")
+        .and_then(Value::as_str)
+        .map(|raw| raw.trim().to_ascii_lowercase())?
+        .as_str()
+    {
+        "sustained" => JudgeVerdict::Sustained,
+        "overruled" => JudgeVerdict::Overruled,
+        _ => return None,
+    };
+    let rationale = value
+        .get("rationale")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|r| !r.is_empty())
+        .unwrap_or("(no rationale stated)")
+        .to_string();
+    let resolving_condition = value
+        .get("resolving_condition")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|r| !r.is_empty())
+        .unwrap_or("(no resolving condition stated)")
+        .to_string();
+    Some(JudgeRuling {
+        verdict,
+        rationale,
+        resolving_condition,
+        degraded: false,
+    })
+}
+
+/// The offline / degraded `/judge` ruling: a minimal STRUCTURAL ruling derived
+/// purely from the objection text (and goal). With no LLM to weigh materiality it
+/// SUSTAINS conservatively — an unjudged objection is treated as still-open rather
+/// than silently dismissed — and names the objection itself as the resolving
+/// condition. Belief-neutral: it judges standing, never which belief is true.
+pub fn structural_judge_ruling(objection: &str, goal: Option<&str>) -> JudgeRuling {
+    let point = first_sentence(objection);
+    let point = if point.is_empty() {
+        "the contested point".to_string()
+    } else {
+        point
+    };
+    let rationale = match goal.map(str::trim).filter(|g| !g.is_empty()) {
+        Some(goal) => format!(
+            "Offline ruling: with no model to weigh materiality, \"{}\" is treated as still-open against \"{}\" — it stands until addressed.",
+            point,
+            first_sentence(goal)
+        ),
+        None => format!(
+            "Offline ruling: with no model to weigh materiality, \"{point}\" is treated as still-open — it stands until addressed."
+        ),
+    };
+    JudgeRuling {
+        verdict: JudgeVerdict::Sustained,
+        rationale,
+        resolving_condition: format!("Address \"{point}\" directly, then it can be cleared."),
+        degraded: true,
+    }
+}
+
+// trace:STORY-175 | ai:claude
+/// Whether the interrogator should RAISE its own `/objection` this turn — the
+/// bounded-proactivity check. The interrogator objects RARELY (same one-shot-ish
+/// posture as the goal-offer): only when a genuine material, unaddressed tension
+/// exists, never per-turn. With no LLM (offline) it never objects. Returns the
+/// objection TEXT to raise, or `None` to stay quiet. Belief-neutral: the objection
+/// names a STRUCTURAL tension, never asserts a belief.
+pub fn propose_interrogator_objection<C: LLMClient>(
+    client: &C,
+    positions: &[String],
+) -> Option<String> {
+    if positions.len() < 2 {
+        return None;
+    }
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_time()
+        .build()
+        .ok()?;
+    let mut prompt = String::from("The user has taken these positions in the dialogue so far:\n");
+    for position in positions {
+        prompt.push_str(&format!("- {position}\n"));
+    }
+    prompt.push_str(
+        "\nIs there a GENUINE, MATERIAL, still-UNADDRESSED structural tension worth raising a formal OBJECTION over right now? Object RARELY — only when the tension is real and unaddressed, never routinely. Return only JSON: {\"object\":true|false,\"objection\":\"if object is true, the single material unaddressed tension, phrased belief-neutrally as a structural challenge — never a counter-belief\"}.",
+    );
+    let (text, _tool_calls) = runtime
+        .block_on(client.call(
+            INTERROGATOR_OBJECTION_SYSTEM_PROMPT,
+            &[Message::user(prompt)],
+            &[],
+        ))
+        .ok()?;
+    let value: Value = serde_json::from_str(text.trim()).ok()?;
+    if value.get("object").and_then(Value::as_bool) != Some(true) {
+        return None;
+    }
+    value
+        .get("objection")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|o| !o.is_empty())
+        .map(str::to_string)
+}
+
+/// System prompt for the interrogator's bounded self-objection: it presses
+/// STRUCTURE, sparingly, and never asserts a belief.
+const INTERROGATOR_OBJECTION_SYSTEM_PROMPT: &str = "You are quizdom's interrogator, deciding whether to raise a FORMAL OBJECTION mid-dialogue. You raise objections RARELY — only when a genuine, material, still-unaddressed structural tension exists in the user's positions. You are STRICTLY belief-neutral: an objection names a STRUCTURAL tension (an inconsistency, an unmet burden, an ambiguity), NEVER a counter-belief and NEVER an assertion that the user's belief is false. When in doubt, do not object.";
+
 // trace:STORY-164 | ai:claude
 /// An answer from the `/help` channel: a belief-neutral explanation of HOW the
 /// tool / dialogue works, sourced from TOOL-CONTEXT (the design: controls, the
@@ -1228,5 +1454,86 @@ mod tests {
         assert!(reading.degraded);
         assert!(reading.reflection.contains("not put your point into words"));
         assert!(reading.reflection.contains("never supplies it"));
+    }
+
+    // ---- STORY-175: the /judge ruling --------------------------------------
+
+    #[test]
+    fn judge_rules_sustained_from_the_llm() {
+        // trace:STORY-175 | ai:claude — a SUSTAINED ruling parses the verdict +
+        // rationale + resolving condition; the prompt carries the goal + objection.
+        let client = MockClient::ok(
+            r#"{"verdict":"sustained","rationale":"the point is material and unanswered","resolving_condition":"define whether a caused choice counts as free"}"#,
+        );
+        let ruling = read_judge_ruling(
+            &client,
+            "you never said whether a caused choice can be free",
+            Some("can free will survive causation?"),
+            "Q: Is free will real? A: yes",
+        );
+        assert_eq!(ruling.verdict, JudgeVerdict::Sustained);
+        assert!(!ruling.degraded);
+        assert!(ruling.rationale.contains("material"));
+        assert!(ruling.resolving_condition.contains("caused choice"));
+        let prompt = client.last_prompt.borrow().clone().unwrap();
+        assert!(prompt.contains("can free will survive causation?"));
+        assert!(prompt.contains("you never said whether a caused choice can be free"));
+    }
+
+    #[test]
+    fn judge_rules_overruled_from_the_llm() {
+        // trace:STORY-175 | ai:claude — an OVERRULED ruling parses cleanly too.
+        let client = MockClient::ok(
+            r#"{"verdict":"overruled","rationale":"already addressed two turns ago","resolving_condition":"none — it was covered"}"#,
+        );
+        let ruling = read_judge_ruling(&client, "obj", None, "");
+        assert_eq!(ruling.verdict, JudgeVerdict::Overruled);
+        assert!(!ruling.degraded);
+    }
+
+    #[test]
+    fn judge_degrades_to_a_structural_sustain_when_offline_or_unparseable() {
+        // trace:STORY-175 | ai:claude — no model / bad JSON: SUSTAIN conservatively
+        // (an unjudged objection is still-open) and name the objection as the
+        // resolving condition. Belief-neutral: judges standing, never belief.
+        let ruling = read_judge_ruling(&MockClient::err(), "a real tension", Some("the goal"), "");
+        assert!(ruling.degraded);
+        assert_eq!(ruling.verdict, JudgeVerdict::Sustained);
+        assert!(ruling.rationale.to_lowercase().contains("offline"));
+        for body in ["not json", "{}", r#"{"verdict":"maybe"}"#] {
+            let degraded = read_judge_ruling(&MockClient::ok(body), "x", None, "");
+            assert!(degraded.degraded, "{body} must degrade");
+        }
+    }
+
+    #[test]
+    fn interrogator_objects_only_when_the_llm_says_so_and_never_offline() {
+        // trace:STORY-175 | ai:claude — the bounded self-objection: object only on a
+        // genuine material tension, and never offline (the err path stays quiet).
+        let positions = vec![
+            "free will is real".to_string(),
+            "every choice is fully caused".to_string(),
+        ];
+        let raised = propose_interrogator_objection(
+            &MockClient::ok(
+                r#"{"object":true,"objection":"you affirm both free will and full causation without reconciling them"}"#,
+            ),
+            &positions,
+        );
+        assert_eq!(
+            raised.as_deref(),
+            Some("you affirm both free will and full causation without reconciling them")
+        );
+        // object:false stays quiet; offline (err) stays quiet; thin convo stays quiet.
+        assert!(
+            propose_interrogator_objection(&MockClient::ok(r#"{"object":false}"#), &positions)
+                .is_none()
+        );
+        assert!(propose_interrogator_objection(&MockClient::err(), &positions).is_none());
+        assert!(propose_interrogator_objection(
+            &MockClient::ok(r#"{"object":true,"objection":"x"}"#),
+            &["only one".to_string()]
+        )
+        .is_none());
     }
 }

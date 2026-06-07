@@ -1482,9 +1482,10 @@ fn renders_all_question_kinds() {
         // the advertised free-text control set.
         // trace:STORY-173 | ai:claude — `/request-goal` joins the advertised set.
         // trace:STORY-174 | ai:claude — `/score` (the gauge toggle) joins the set.
+        // trace:STORY-175 | ai:claude — `/objection`, `/resolved`, `/judge` join.
         (
             AnswerKind::FreeText,
-            "Answer in your own words, or / (palette), /help, /tutor, /observe, /synopsis, /score, /goal, /request-goal, /mode, /rest, /explore, /add, /punt, /back, /quit",
+            "Answer in your own words, or / (palette), /help, /tutor, /observe, /synopsis, /score, /goal, /request-goal, /mode, /objection, /resolved, /judge, /rest, /explore, /add, /punt, /back, /quit",
         ),
     ];
 
@@ -3247,6 +3248,8 @@ fn strategy_context(raw: &str) -> StrategyContext {
         goal: None,
         // trace:STORY-161 | ai:claude
         mode: SessionMode::Socratic,
+        // trace:STORY-175 | ai:claude
+        objection: None,
     }
 }
 
