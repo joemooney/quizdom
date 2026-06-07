@@ -16,12 +16,12 @@ description: |-
   - Box height is clamped to a max, then scrolls internally; transcript pane shrinks/grows complementarily.
   - Enter submits (no newline inserted); single-key Y/N/MC paths unaffected; '/'-from-empty still opens the palette.
   - Tests: wrapped-height computation for a given width/text (pure), layout reflects the dynamic input height, clamp at max.
-status: InProgress
+status: Completed
 priority: High
 owner: ''
 feature: Uncategorized
 created_at: 2026-06-07T16:24:37.083646748Z
-modified_at: 2026-06-07T16:25:21.335100914Z
+modified_at: 2026-06-07T16:48:38.346305559Z
 req_type: Bug
 tags:
 - bug
