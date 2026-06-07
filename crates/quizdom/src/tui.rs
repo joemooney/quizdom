@@ -692,10 +692,10 @@ fn parse_control(raw: &str, context: InputContext) -> Option<AnswerInput> {
 // trace:STORY-171 | ai:claude
 /// Build a styled ratatui [`Line`] for one transcript row: attribute the row to
 /// a voice ([`theme::classify_line`]) and split it into colored spans
-/// ([`theme::line_fragments`]) — applying QUOTE ATTRIBUTION inside the user's
-/// answer (a quoted span renders in the interrogator's color). Pure over the
-/// plain text the engine emitted, so the per-role coloring is testable without a
-/// terminal.
+/// ([`theme::line_fragments`]) — applying SYMMETRIC QUOTE ATTRIBUTION across the
+/// interrogator<->user pair (a quoted span renders in the OPPOSING role's color,
+/// since each party quotes the other). Pure over the plain text the engine
+/// emitted, so the per-role coloring is testable without a terminal.
 fn styled_transcript_line(text: &str) -> Line<'static> {
     let role = theme::classify_line(text);
     let spans: Vec<Span<'static>> = theme::line_fragments(role, text)
@@ -991,6 +991,20 @@ mod tests {
         assert_eq!(line.spans[1].style.fg, Some(theme::INTERROGATOR));
         assert_eq!(line.spans[1].content, r#""it is free""#);
         assert_eq!(line.spans[2].style.fg, Some(theme::USER));
+    }
+
+    // trace:BUG-172 | ai:claude
+    #[test]
+    fn styled_transcript_line_attributes_an_interrogator_quote_to_the_user() {
+        // SYMMETRIC complement: a quoted span inside the INTERROGATOR's line
+        // renders in the user's color (the interrogator is quoting the user);
+        // the surrounding framing stays the interrogator color.
+        let line = styled_transcript_line(r#"You said "it is free" — really?"#);
+        assert_eq!(line.spans.len(), 3);
+        assert_eq!(line.spans[0].style.fg, Some(theme::INTERROGATOR));
+        assert_eq!(line.spans[1].style.fg, Some(theme::USER));
+        assert_eq!(line.spans[1].content, r#""it is free""#);
+        assert_eq!(line.spans[2].style.fg, Some(theme::INTERROGATOR));
     }
 
     // trace:STORY-171 | ai:claude
