@@ -73,3 +73,6 @@ relationships:
   target_id: 019e8c0e-e9f6-74f1-9eaa-913868627751
   created_at: 2026-06-07T02:27:52.972350277Z
   created_by: joe
+- rel_type: Parent
+  target_id: 019e9fe8-7c5e-7541-95f6-a6cd09e0975e
+  created_at: 2026-06-07T02:27:58.579453199Z
