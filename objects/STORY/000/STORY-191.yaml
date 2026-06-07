@@ -1,0 +1,36 @@
+id: 019ea3ff-2fc0-77d2-a99c-f5325963544d
+spec_id: STORY-191
+agreed_id: STORY-191
+title: Transcript pane = full conversation, clean & scrollable — hydrate prior history on resume as the styled transcript (not the debug replay), render the visible window efficiently
+description: |-
+  The transcript pane should be the FULL conversation, scrollable up/down through the entire history.
+
+  CURRENT: in-session it accumulates all lines (good, scroll works via STORY-176). On RESUME, SessionReplay::render() dumps the full prior history but in a DEBUG format ('Replaying previous session path...', '[turn N] <question>', 'question_ref: ...', 'answer: ...') plus a short RECAP (last exchange). So the full history is present but not the clean styled transcript.
+
+  CHANGE:
+  - On resume (and start), hydrate the transcript pane with the full prior conversation rendered as the CLEAN STYLED transcript — the same role-colored, markdown-rendered (STORY-179) Q/A the live session shows — NOT the '[turn N]/question_ref:' replay debug dump. Drop/condense the debug replay lines in the TUI; an optional compact 'resumed — N turns' marker at the top is fine.
+  - Scroll (Ctrl-up/down, PageUp/Down, follow mode, the STORY-176 re-read highlight) must span the ENTIRE transcript including hydrated history; follow-mode lands at the NEWEST exchange on resume with the full backlog scrollable above.
+  - PERFORMANCE: render only the VISIBLE window through the markdown renderer, or CACHE parsed lines, so a long (150+ turn) transcript stays smooth on every keystroke redraw — do NOT re-parse the whole history each frame.
+
+  Lane: tui.rs (transcript hydration on resume + windowed/cached markdown render) + session.rs (the TUI resume path feeds the styled transcript instead of the debug replay; keep the headless LineFrontEnd replay output BYTE-UNCHANGED for the piped tests) + transcript/replay rendering.
+
+  ## Acceptance
+  - On resume, the pane shows the full prior conversation as the clean styled transcript; scrolling up reveals the entire history back to turn 1.
+  - The '[turn N]/question_ref:' debug replay format is gone from the TUI (a compact resumed-marker may remain); the HEADLESS replay output is unchanged (existing piped tests pass).
+  - Scroll + re-read highlight span the full hydrated transcript; follow-mode starts at the newest exchange.
+  - A long transcript renders smoothly (visible-window render or cached lines), not re-parsing all history per frame.
+  - Tests: resume hydrates N turns into the pane as styled lines; scroll reaches turn 1; only the viewport is parsed/rendered per frame (or a render cache is hit).
+status: Approved
+priority: High
+owner: ''
+feature: Uncategorized
+created_at: 2026-06-07T21:31:10.656119931Z
+modified_at: 2026-06-07T21:31:10.656119931Z
+req_type: Story
+tags:
+- performance
+- resume
+- scroll
+- story
+- transcript
+- tui
