@@ -15,7 +15,7 @@ priority: High
 owner: ''
 feature: Uncategorized
 created_at: 2026-06-07T06:46:03.174173134Z
-modified_at: 2026-06-07T06:46:03.174173134Z
+modified_at: 2026-06-07T06:47:34.348014451Z
 req_type: Story
 tags:
 - goal
@@ -23,3 +23,9 @@ tags:
 - post-v1
 - request
 - story
+comments:
+- id: 019ea0d6-38cc-7100-9eda-e1f672c3b960
+  author: joe
+  content: 'UX refinement (user): the user-requested path is — typing ''/goal'' when NO goal is set first PROMPTS ''No goal set — request one? [y/N]''; on yes, run observer::propose_goal and offer accept/edit/decline. Also add a ''/request-goal'' alias that does the same directly (skips the confirm). When a goal IS set, ''/goal'' still shows the current one.'
+  created_at: 2026-06-07T06:47:34.348014451Z
+  modified_at: 2026-06-07T06:47:34.348014451Z
