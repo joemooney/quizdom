@@ -187,6 +187,41 @@ pub(crate) mod theme {
         Style::default().fg(BORDER)
     }
 
+    // trace:STORY-193 | ai:claude
+    /// The BRIGHT GOLD accent for the FOCUSED pane's border (Tab/Shift-Tab focus
+    /// model). Bold + the bright-gold cursor hue so the focused pane is
+    /// unmistakable against the dim border of the unfocused pane. Belief-neutral
+    /// chrome: it marks WHERE keystrokes go, never which belief is true.
+    pub(crate) fn focused_border() -> Style {
+        Style::default().fg(CURSOR).add_modifier(Modifier::BOLD)
+    }
+
+    // trace:STORY-193 | ai:claude
+    /// The DIM border for an UNFOCUSED pane — dark gray so it recedes behind the
+    /// bright-gold focused pane.
+    pub(crate) fn unfocused_border() -> Style {
+        Style::default().fg(Color::DarkGray)
+    }
+
+    // trace:STORY-193 | ai:claude
+    /// Pick the focused vs unfocused border style for a pane given whether it
+    /// currently holds focus. One helper so the transcript and input panes stay
+    /// consistent.
+    pub(crate) fn border_for(focused: bool) -> Style {
+        if focused {
+            focused_border()
+        } else {
+            unfocused_border()
+        }
+    }
+
+    // trace:STORY-193 | ai:claude
+    /// The style for the transcript scrollbar's thumb + track — the gold border
+    /// accent so the scrollbar reads as the transcript's own chrome.
+    pub(crate) fn scrollbar() -> Style {
+        Style::default().fg(BORDER)
+    }
+
     // trace:STORY-176 | ai:claude
     /// The background accent for the re-read HIGHLIGHT line (the exchange the user
     /// is re-reading via Ctrl-←/→). A subtle dark-gray band so the highlighted row

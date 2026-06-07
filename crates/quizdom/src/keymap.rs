@@ -188,6 +188,25 @@ pub(crate) fn keymap_registry() -> Vec<KeyBinding> {
             KeyGroup::Answering,
         ),
         // ----- Navigation -----------------------------------------------------
+        // trace:STORY-193 | ai:claude — the FOCUS model: Tab/Shift-Tab cycle focus
+        // between the input box and the transcript pane; Esc from the transcript
+        // returns focus to the input. Documented (the event loop owns the keys, so
+        // no triggers here) so the cheat-sheet teaches the multi-pane navigation.
+        doc(
+            "Tab / Shift-Tab",
+            "Switch focus between the input box and the transcript pane",
+            KeyGroup::Navigation,
+        ),
+        doc(
+            "Esc",
+            "From the transcript: return focus to the input box",
+            KeyGroup::Navigation,
+        ),
+        doc(
+            "Home / End",
+            "Jump the transcript to the top / bottom (when it is focused)",
+            KeyGroup::Navigation,
+        ),
         key(
             "Ctrl-←",
             KeyAction::HighlightPrev,
@@ -279,6 +298,15 @@ pub(crate) fn keymap_registry() -> Vec<KeyBinding> {
             KeyAction::CheatSheet,
             &[(KeyCode::Char('?'), NONE)],
             "Show this keyboard cheat-sheet",
+            KeyGroup::Session,
+        ),
+        // trace:STORY-193 | ai:claude — the MOUSE-capture toggle (DECIDED: ON by
+        // default). F2 or `/mouse` flips capture OFF (native terminal selection /
+        // copy) and back ON. The TUI handles it locally (it never reaches the
+        // engine), so it carries no dispatch trigger here — documented only.
+        doc(
+            "F2 / /mouse",
+            "Toggle mouse capture (ON: wheel scrolls, click focuses · OFF: native selection)",
             KeyGroup::Session,
         ),
         doc("/quit", "End the session (Q / Esc also)", KeyGroup::Session),
