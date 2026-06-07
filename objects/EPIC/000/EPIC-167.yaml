@@ -1,0 +1,61 @@
+id: 019ea07d-90fc-7b53-ad38-d8979d58a26f
+spec_id: EPIC-167
+agreed_id: EPIC-167
+title: Full ratatui TUI front-end (engine/front-end split)
+description: |
+  Rebuild the INTERACTIVE front-end as a real full-screen TUI (ratatui + crossterm),
+  replacing the line-based prompt + the failed crossterm-overlay palette (EPIC-162
+  STORY-163: opened only on Enter, line-printed/stacked). The TUI owns the event
+  loop, so `/` pops a live palette on the keystroke, everything redraws in place,
+  and there's room for a proper layout.
+
+  ## The crucial architecture: one engine, two front-ends
+
+  Keep the session ENGINE (loop control flow, strategy, observer/help/tutor,
+  synopsis/roundedness, goal/mode/closing logic) FRONT-END-AGNOSTIC behind a small
+  front-end interface (it emits "render this" + requests "get input / control").
+  Then:
+
+  - **Headless line front-end** (behind the interface) preserves today's behavior
+    for: the ~336 piped/byte tests, non-TTY / scripting, a `--no-tui` flag, and the
+    non-interactive standalone commands (`contradictions`, `curate`, `synopsis`,
+    `question add`, `session list/show`). NOTHING in those paths changes.
+  - **ratatui TUI front-end** becomes the DEFAULT for an interactive TTY
+    (`session start/resume/fork`).
+
+  The LLM engines (observe/tutor/help/synopsis/roundedness) are already
+  front-end-agnostic — only RENDERING + INPUT move into the TUI.
+
+  ## The TUI
+
+  - Layout: a scrollable transcript/dialogue pane (Q&A + meta-channel outputs), an
+    input box, and a status bar/sidebar (goal · breadcrumb topic/depth/branch ·
+    roundedness · mode).
+  - Live `/` command palette OVERLAY: opens on the keystroke, filter-as-you-type,
+    arrow-nav, Enter runs, `?` shows per-command detail, Esc cancels — redrawn in
+    place.
+  - Meta-channels (`/observe` `/tutor` `/help` `/synopsis`), the closing ritual +
+    verdict, and the dead-end menu render as panes/popups, in the META voice.
+
+  ## Acceptance
+
+  - Interactive sessions run in a full-screen ratatui TUI; `/` opens the palette on
+    the keystroke and redraws in place (no stacking, no Enter-to-open).
+  - `--no-tui` and all non-TTY / piped / scripted paths + standalone commands use
+    the headless line front-end unchanged; ALL existing tests still pass.
+  - The engine is front-end-agnostic; the two front-ends share it.
+  - Graceful: non-TTY auto-selects headless; the TUI restores the terminal cleanly
+    on exit/panic.
+status: Approved
+priority: High
+owner: ''
+feature: Uncategorized
+created_at: 2026-06-07T05:10:44.220751890Z
+modified_at: 2026-06-07T05:10:44.220751890Z
+req_type: Epic
+tags:
+- architecture
+- epic
+- front-end
+- ratatui
+- tui
