@@ -23,7 +23,7 @@ priority: High
 owner: ''
 feature: Uncategorized
 created_at: 2026-06-07T21:28:26.036889056Z
-modified_at: 2026-06-07T21:28:58.423715505Z
+modified_at: 2026-06-07T21:29:01.103281580Z
 req_type: Story
 tags:
 - context
@@ -35,4 +35,8 @@ relationships:
 - rel_type: Parent
   target_id: 019ea07d-90fc-7b53-ad38-d8979d58a26f
   created_at: 2026-06-07T21:28:58.423710936Z
+  created_by: joe
+- rel_type: References
+  target_id: 019ea0dd-a991-7550-90c9-dd11f717cefa
+  created_at: 2026-06-07T21:29:01.103272119Z
   created_by: joe
