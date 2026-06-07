@@ -1,0 +1,66 @@
+id: 019e9fe7-ea5f-7732-9b22-0adc78b3c2a0
+spec_id: EPIC-162
+agreed_id: EPIC-162
+title: 'TUI overlays: slash-command palette, /help, and /tutor'
+description: |
+  Grow the interface toward a TUI INCREMENTALLY (no full rewrite) via focused
+  crossterm OVERLAYS on the existing line-based flow (crossterm is already a dep
+  from STORY-51). Adds a slash-command PALETTE and two help channels — `/help`
+  (how the tool works) and `/tutor` (articulation + nuance coach).
+
+  ## Slash-command palette
+
+  - Typing `/` as the FIRST character at a prompt opens a POPUP overlay listing the
+    available commands (`/observe /synopsis /explore /add /punt /back /quit /help
+    /tutor ...`) each with a one-line description.
+  - Filter-as-you-type narrows the list; arrow keys navigate; Enter selects/runs the
+    highlighted command; Esc cancels back to the prompt.
+  - `?` on the HIGHLIGHTED command shows its DETAILED help + rationale (what it does,
+    when to use it, why it exists).
+  - Built as a self-contained crossterm overlay (take over the terminal for the
+    menu, render, handle keys, return the choice, restore the prompt) — NOT a
+    ratatui rewrite. Degrades on non-TTY (the typed slash-commands still work).
+
+  ## /help — tool/process help (belief-neutral)
+
+  Free-form: prompt for a question about HOW the tool/dialogue works (controls,
+  flow, what a feature does, how to rest your case), answered by the LLM using
+  TOOL-CONTEXT (the design), NOT your belief content. Out-of-band, non-destructive
+  (returns to the question). Complements the palette's per-command `?` (static help)
+  with free-form Q&A. Also good signal: confusing questions reveal weak help text.
+
+  ## /tutor — articulation & nuance coach (content-aware; still not a belief-supplier)
+
+  A more ACTIVE teaching aid than `/observe`: helps you ARTICULATE the point you're
+  reaching for and surfaces the NUANCE you might be MISSING. Reflects your own
+  half-formed view back more precisely ("you seem to be getting at X — is that
+  it?"), teaches the relevant distinction, and names what you haven't addressed —
+  WITHOUT telling you what to believe (asks "is this what you mean?", never supplies
+  the belief or takes a side). Distinct from `/observe` (neutral diagnostic) and
+  `/help` (process). LLM-backed (observer-engine variant). Non-destructive.
+
+  ## Acceptance
+
+  - `/` opens a palette overlay of commands + descriptions; filter/arrow/Enter/Esc
+    work; `?` shows detailed per-command help.
+  - `/help` answers free-form process questions (tool-context, belief-neutral);
+    `/tutor` reflects + sharpens the user's own point + surfaces the missing nuance
+    without supplying a belief.
+  - Non-TTY/offline degrade (typed commands still work; palette/LLM features show a
+    graceful note). Tests cover the palette interactions (where testable) +
+    mocked-LLM `/help` and `/tutor`.
+status: Approved
+priority: High
+owner: ''
+feature: Uncategorized
+created_at: 2026-06-07T02:27:16.703193777Z
+modified_at: 2026-06-07T02:27:16.703193777Z
+req_type: Epic
+tags:
+- crossterm
+- epic
+- help
+- overlay
+- palette
+- tui
+- tutor
