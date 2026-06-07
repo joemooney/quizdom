@@ -582,6 +582,182 @@ fn help_match_score(line: &str, needle: &[String]) -> usize {
     needle.iter().filter(|term| line.contains(*term)).count()
 }
 
+// trace:STORY-165 | ai:claude
+/// The input to the `/tutor` articulation & nuance coach: the question on screen
+/// and the user's OWN half-formed point (the text they typed after `/tutor`, or
+/// their most recent answer). The coach reads these — it never mutates them.
+#[derive(Debug, Clone, Eq, PartialEq)]
+pub struct TutorContext {
+    /// The question currently on screen — what the user is reaching to answer.
+    pub question: String,
+    /// The user's OWN point: the text typed after `/tutor`, or their most recent
+    /// answer when they typed a bare `/tutor`. This is the thing to be sharpened —
+    /// never replaced with a belief.
+    pub point: String,
+}
+
+// trace:STORY-165 | ai:claude
+/// A `/tutor` coaching reading: a more ACTIVE teaching aid than the Observer.
+///
+/// Every field is about the user's OWN point — reflecting it back more precisely,
+/// teaching the relevant distinction, and naming the nuance they have not yet
+/// addressed. It is STILL belief-neutral: it never supplies the belief, never
+/// takes a side, and asks "is this what you mean?" rather than asserting what the
+/// user should think.
+#[derive(Debug, Clone, Eq, PartialEq)]
+pub struct TutorReading {
+    /// The user's own half-formed point reflected back MORE PRECISELY, framed as a
+    /// check ("you seem to be getting at X — is that it?"), never a belief to adopt.
+    pub reflection: String,
+    /// The relevant DISTINCTION the user's point turns on (the conceptual line they
+    /// are reaching for) — taught descriptively, without picking which side is right.
+    pub distinction: String,
+    /// The NUANCE the user has not yet addressed: the axes / considerations their
+    /// point leaves open. Naming a gap, never filling it with a belief.
+    pub missing_nuance: Vec<String>,
+    /// True when this reading was synthesized structurally (offline / degraded)
+    /// rather than by the LLM.
+    pub degraded: bool,
+}
+
+/// System prompt pinning the `/tutor` coach to its content-aware-but-still-neutral
+/// contract. The coach engages the user's OWN point (unlike `/help`, which is
+/// tool-only) but MUST NOT supply a belief or take a side. The guarantees here are
+/// mirrored by [`scrub_supplied_answer`] and the structural fallback so a model
+/// that ignores them still cannot leak a belief through.
+const TUTOR_SYSTEM_PROMPT: &str = "You are quizdom's /tutor: an ARTICULATION and NUANCE coach. You help the user SHARPEN the point THEY are reaching for and surface the nuance they may be MISSING — you are an ACTIVE teaching aid, more than a neutral diagnostic. You engage the user's OWN half-formed point. But you are STILL belief-neutral: you MUST NOT supply the user's belief, MUST NOT take a side, MUST NOT say which position is correct or which they 'should' hold, and MUST NOT answer the underlying question for them. Reflect their own point back MORE PRECISELY, always as a CHECK they confirm ('you seem to be getting at X — is that it?'), never as an assertion. Teach the relevant DISTINCTION descriptively (name the conceptual line, do not pick a side of it). Name the NUANCE they have not yet addressed — the considerations their point leaves open — without filling those gaps with a belief. Stay on THEIR point; never substitute your own.";
+
+/// Build the `/tutor` prompt from the [`TutorContext`]: the question on screen and
+/// the user's own point. The prompt pins the no-belief-supplied guarantee so even
+/// the request never invites the model to take a side.
+fn tutor_prompt(context: &TutorContext) -> String {
+    let point = context.point.trim();
+    let point = if point.is_empty() {
+        "(the user has not articulated a point yet — help them START to articulate one, still without supplying a belief)"
+    } else {
+        point
+    };
+    format!(
+        "Question on screen: {question}\nThe user's OWN half-formed point (the thing to sharpen — NEVER replace it with your own): {point}\n\nReturn only JSON with these fields: {{\"reflection\":\"the user's own point reflected back MORE PRECISELY, framed as a check ('you seem to be getting at X — is that it?'), never a belief to adopt\",\"distinction\":\"the relevant distinction their point turns on, taught descriptively without picking a side\",\"missing_nuance\":[\"a consideration their point has not yet addressed\"]}}. Do NOT supply a belief, take a side, say which position is correct, or answer the question for them — sharpen THEIR point and name what it leaves open.",
+        question = context.question,
+        point = point,
+    )
+}
+
+// trace:STORY-165 | ai:claude
+/// Read a [`TutorContext`] with the supplied LLM client, degrading to a structural
+/// coaching note when the call fails or returns something unusable. The
+/// articulation/nuance counterpart to [`read_exchange`]: same belief-neutral
+/// guarantee, content-aware focus on the user's OWN point.
+pub fn read_tutor<C: LLMClient>(client: &C, context: &TutorContext) -> TutorReading {
+    match llm_read_tutor(client, context) {
+        Some(reading) => reading,
+        // Offline / not-logged-in / malformed: fall back to the structural coaching
+        // note rather than failing the keypress mid-session.
+        None => structural_tutor(context),
+    }
+}
+
+/// The LLM leg of [`read_tutor`]: run the call on a current-thread runtime, parse
+/// the JSON, and enforce the no-belief-supplied guarantee. Returns `None` on any
+/// failure so the caller degrades gracefully.
+fn llm_read_tutor<C: LLMClient>(client: &C, context: &TutorContext) -> Option<TutorReading> {
+    let prompt = tutor_prompt(context);
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_time()
+        .build()
+        .ok()?;
+    let (text, _tool_calls) = runtime
+        .block_on(client.call(TUTOR_SYSTEM_PROMPT, &[Message::user(prompt)], &[]))
+        .ok()?;
+    parse_tutor(&text, context)
+}
+
+/// Parse the `/tutor` JSON into a [`TutorReading`], enforcing the belief-neutral /
+/// no-belief-supplied guarantee on every text field.
+///
+/// Returns `None` when the payload is not the expected JSON object (so the caller
+/// degrades to the structural note). The coach must SHARPEN the user's point, not
+/// hand a belief back, so a field that merely echoes the user's point verbatim is
+/// scrubbed (see [`scrub_supplied_answer`]) — it is not a sharpening.
+pub fn parse_tutor(text: &str, context: &TutorContext) -> Option<TutorReading> {
+    let value: Value = serde_json::from_str(text.trim()).ok()?;
+    if !value.is_object() {
+        return None;
+    }
+    let field = |key: &str| -> String {
+        value
+            .get(key)
+            .and_then(Value::as_str)
+            .map(str::trim)
+            .map(|raw| scrub_supplied_answer(raw, &context.point))
+            .unwrap_or_default()
+    };
+    let missing_nuance = value
+        .get("missing_nuance")
+        .and_then(Value::as_array)
+        .map(|items| {
+            items
+                .iter()
+                .filter_map(Value::as_str)
+                .map(str::trim)
+                .filter(|item| !item.is_empty())
+                .map(|item| scrub_supplied_answer(item, &context.point))
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_default();
+
+    let reflection = field("reflection");
+    let distinction = field("distinction");
+
+    // A reading with no usable coaching content is no better than the structural
+    // note; let the caller degrade instead of rendering an empty box.
+    if reflection.is_empty() && distinction.is_empty() && missing_nuance.is_empty() {
+        return None;
+    }
+
+    Some(TutorReading {
+        reflection,
+        distinction,
+        missing_nuance,
+        degraded: false,
+    })
+}
+
+// trace:STORY-165 | ai:claude
+/// The offline / degraded `/tutor` note: a minimal STRUCTURAL coaching note derived
+/// purely from the question and the user's own point. It invents no belief — it
+/// reflects the shape of the user's point back as a CHECK, names the act of drawing
+/// a distinction (without drawing it for them), and points at the axes any precise
+/// articulation must address. So `/tutor` still does something useful with no model
+/// available, and stays belief-neutral by construction.
+pub fn structural_tutor(context: &TutorContext) -> TutorReading {
+    let asked = first_sentence(&context.question);
+    let point = context.point.trim();
+    let reflection = if point.is_empty() {
+        format!(
+            "You have not put your point into words yet. Try finishing: \"On \\\"{asked}\\\", I'm getting at …\" — then /tutor again to sharpen it. (You shape it; the tutor never supplies it.)"
+        )
+    } else {
+        format!(
+            "You seem to be reaching for: \"{}\" — is that the point you mean? Restate it in one precise sentence and check it still feels true.",
+            first_sentence(point)
+        )
+    };
+    TutorReading {
+        reflection,
+        distinction: format!(
+            "The sharper version turns on the KEY TERM in \"{asked}\": name exactly what you mean by it and what it rules out — that distinction is yours to draw, not the tutor's."
+        ),
+        missing_nuance: vec![
+            "A case where your point would NOT hold (the boundary it has not addressed)".to_string(),
+            "What someone who saw it differently would press on first".to_string(),
+            "Which part of the question your point speaks to — and which part it leaves open".to_string(),
+        ],
+        degraded: true,
+    }
+}
+
 /// The first sentence (or the whole string if it has no terminator), trimmed,
 /// used to keep the structural note compact without echoing a long prompt.
 fn first_sentence(text: &str) -> String {
@@ -943,5 +1119,114 @@ mod tests {
         assert!(!answer.answer.to_lowercase().contains("determinism is"));
         assert!(answer.answer.contains("about the tool, not your belief"));
         assert!(answer.answer.contains("/goal"));
+    }
+
+    // ---- STORY-165: /tutor (articulation & nuance coach) -------------------
+
+    fn tutor_context() -> TutorContext {
+        TutorContext {
+            question: "Is free will real?".to_string(),
+            point: "free will is just choosing without being forced".to_string(),
+        }
+    }
+
+    #[test]
+    fn tutor_reflects_and_sharpens_the_users_own_point_and_surfaces_nuance() {
+        // trace:STORY-165 | ai:claude — /tutor reflects the user's OWN point back
+        // more precisely, teaches the relevant distinction, and names the missing
+        // nuance — the core acceptance criterion. The output flows through.
+        let client = MockClient::ok(
+            r#"{
+                "reflection": "You seem to be getting at free will as the absence of external coercion — is that it?",
+                "distinction": "There's a line between being uncaused and being merely unconstrained — your point so far speaks to the second.",
+                "missing_nuance": ["Whether an unforced choice can still be fully caused", "What 'forced' includes (only people, or prior causes too?)"]
+            }"#,
+        );
+        let reading = read_tutor(&client, &tutor_context());
+        assert!(!reading.degraded);
+        assert!(reading.reflection.to_lowercase().contains("is that it"));
+        assert!(reading.distinction.to_lowercase().contains("uncaused"));
+        assert_eq!(reading.missing_nuance.len(), 2);
+    }
+
+    #[test]
+    fn tutor_prompt_pins_the_no_belief_supplied_guarantee() {
+        // trace:STORY-165 | ai:claude — the prompt carries the user's OWN point and
+        // pins belief-neutrality: sharpen THEIR point, never supply a belief or take
+        // a side.
+        let client = MockClient::ok(r#"{"reflection":"r"}"#);
+        let _ = read_tutor(&client, &tutor_context());
+        let prompt = client.last_prompt.borrow().clone().unwrap();
+        assert!(prompt.contains("free will is just choosing without being forced"));
+        assert!(prompt.contains("Do NOT supply a belief"));
+        assert!(prompt.contains("take a side"));
+        assert!(prompt.contains("NEVER replace it with your own"));
+    }
+
+    #[test]
+    fn tutor_system_prompt_forbids_supplying_a_belief_or_taking_a_side() {
+        // trace:STORY-165 | ai:claude — the belief-neutral contract lives in the
+        // system prompt: content-aware (engages the user's OWN point) but never a
+        // belief-supplier.
+        assert!(TUTOR_SYSTEM_PROMPT.contains("belief-neutral"));
+        assert!(TUTOR_SYSTEM_PROMPT.contains("MUST NOT supply"));
+        assert!(TUTOR_SYSTEM_PROMPT.contains("MUST NOT take a side"));
+        assert!(TUTOR_SYSTEM_PROMPT.contains("OWN"));
+    }
+
+    #[test]
+    fn tutor_never_supplies_a_belief_back_as_the_users_point() {
+        // trace:STORY-165 | ai:claude — a misbehaving model that just parrots the
+        // user's point verbatim into a field is NOT a sharpening; it is SCRUBBED so
+        // the user's own words are never handed back as coaching.
+        let client = MockClient::ok(
+            r#"{"reflection":"free will is just choosing without being forced","distinction":"the line between caused and uncaused","missing_nuance":["free will is just choosing without being forced"]}"#,
+        );
+        let reading = read_tutor(&client, &tutor_context());
+        assert!(
+            !reading
+                .reflection
+                .contains("free will is just choosing without being forced"),
+            "the user's verbatim point must be withheld, got: {}",
+            reading.reflection
+        );
+        assert!(reading.reflection.contains("withheld"));
+        assert!(
+            reading
+                .missing_nuance
+                .iter()
+                .all(|n| n != "free will is just choosing without being forced"),
+            "missing_nuance must not echo the user's point verbatim"
+        );
+    }
+
+    #[test]
+    fn tutor_degrades_to_a_structural_note_when_offline() {
+        // trace:STORY-165 | ai:claude — offline still yields a belief-neutral
+        // STRUCTURAL coaching note (reflect + distinction + nuance), never a belief.
+        let reading = read_tutor(&MockClient::err(), &tutor_context());
+        assert!(reading.degraded);
+        assert!(reading.reflection.to_lowercase().contains("is that"));
+        assert!(!reading.missing_nuance.is_empty());
+        // The distinction is left for the USER to draw — the tutor never draws it.
+        assert!(reading.distinction.to_lowercase().contains("yours to draw"));
+    }
+
+    #[test]
+    fn tutor_degrades_when_the_llm_returns_unparseable_or_empty() {
+        assert!(read_tutor(&MockClient::ok("not json"), &tutor_context()).degraded);
+        assert!(read_tutor(&MockClient::ok("{}"), &tutor_context()).degraded);
+    }
+
+    #[test]
+    fn structural_tutor_handles_an_empty_point() {
+        // A bare /tutor (no point yet) coaches the user to START articulating one —
+        // still without supplying a belief.
+        let mut context = tutor_context();
+        context.point = String::new();
+        let reading = structural_tutor(&context);
+        assert!(reading.degraded);
+        assert!(reading.reflection.contains("not put your point into words"));
+        assert!(reading.reflection.contains("never supplies it"));
     }
 }
