@@ -791,7 +791,7 @@ fn first_sentence(text: &str) -> String {
 /// Belief-neutral and clarify-only: it lists positions, describes the arc, names
 /// tensions, and lists open threads — it never advocates a belief. Pure over the
 /// buffer + synopsis, so it is unit-testable without a live LLM.
-pub fn render_synopsis(synopsis: &SessionSynopsis, output: &mut impl Write) -> Result<()> {
+pub fn render_synopsis(synopsis: &SessionSynopsis, output: &mut dyn Write) -> Result<()> {
     // trace:STORY-161 | ai:claude — in debate mode the header pins the
     // better-argued-case framing (argument STRUCTURE, never which belief is true);
     // Socratic mode keeps the original belief-neutral reading header.
@@ -870,7 +870,7 @@ pub fn render_synopsis(synopsis: &SessionSynopsis, output: &mut impl Write) -> R
 /// carries no score (offline / degraded), surfaces a "needs LLM" note in its
 /// place rather than a fabricated number. Pure over the synopsis, so the score
 /// rendering is unit-testable without a live LLM.
-fn render_roundedness(synopsis: &SessionSynopsis, output: &mut impl Write) -> Result<()> {
+fn render_roundedness(synopsis: &SessionSynopsis, output: &mut dyn Write) -> Result<()> {
     let meta = crate::style::meta();
     let Some(rounded) = &synopsis.roundedness else {
         // Belief-neutral, no fabricated score: structural-only sessions get a
@@ -963,7 +963,7 @@ fn render_roundedness(synopsis: &SessionSynopsis, output: &mut impl Write) -> Re
 pub fn render_conclusion(
     synopsis: &SessionSynopsis,
     arc: &SessionArc,
-    output: &mut impl Write,
+    output: &mut dyn Write,
 ) -> Result<()> {
     let meta = crate::style::meta();
     writeln!(
@@ -1183,7 +1183,7 @@ fn synopsize_with_backend(backend: SynopsisBackend, arc: &SessionArc) -> Session
 /// global synopsis. Read-only: like `session show`, it never mutates anything.
 pub fn run_session_synopsis(
     args: impl IntoIterator<Item = String>,
-    output: &mut impl Write,
+    output: &mut dyn Write,
 ) -> Result<()> {
     let config = SynopsisConfig::parse(args)?;
     let path = config.log_path()?;

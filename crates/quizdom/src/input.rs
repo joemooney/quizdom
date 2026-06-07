@@ -17,7 +17,7 @@ pub(crate) enum InputContext {
     Review,
 }
 
-pub(crate) fn render_question(question: &Question, output: &mut impl Write) -> Result<()> {
+pub(crate) fn render_question(question: &Question, output: &mut dyn Write) -> Result<()> {
     render_question_for(question, InputContext::Frontier, output)
 }
 
@@ -35,7 +35,7 @@ pub(crate) fn render_breadcrumb(
     // trace:STORY-159 | ai:claude — the live session goal, shown in the
     // breadcrumb so the user always sees the thesis they are orienting toward.
     goal: Option<&str>,
-    output: &mut impl Write,
+    output: &mut dyn Write,
 ) -> Result<()> {
     let line = breadcrumb_line(question, depth, branch_id, goal);
     writeln!(output, "{}", style::paint(style::breadcrumb(), &line))?;
@@ -86,7 +86,7 @@ fn breadcrumb_topic(question: &Question) -> String {
 pub(crate) fn render_question_for(
     question: &Question,
     context: InputContext,
-    output: &mut impl Write,
+    output: &mut dyn Write,
 ) -> Result<()> {
     // trace:STORY-76 | ai:claude — a surfaced contradiction reuses this
     // renderer; style its prompt distinctly so the tension reads as a flag,
@@ -206,6 +206,9 @@ fn free_text_controls(context: InputContext) -> String {
     }
 }
 
+// trace:STORY-168 | ai:claude — Debug lets the front-end seam's tests assert on
+// the parsed control variant; all payloads (Answer / String) are already Debug.
+#[derive(Debug)]
 pub(crate) enum AnswerInput {
     Answer(Answer),
     Back,
@@ -314,7 +317,7 @@ impl FreeTextInput {
     pub(crate) fn read_line(
         &mut self,
         input: &mut impl BufRead,
-        output: &mut impl Write,
+        output: &mut dyn Write,
         prompt: &str,
     ) -> Result<Option<String>> {
         match self {
@@ -371,7 +374,7 @@ pub(crate) fn read_answer_or_end(
     context: InputContext,
     input: &mut impl BufRead,
     free_text_input: &mut FreeTextInput,
-    output: &mut impl Write,
+    output: &mut dyn Write,
 ) -> Result<AnswerInput> {
     loop {
         let mut raw = match kind {
@@ -462,7 +465,7 @@ pub(crate) fn read_answer_or_end(
 
 fn read_control_answer_or_line(
     input: &mut impl BufRead,
-    output: &mut impl Write,
+    output: &mut dyn Write,
     kind: &AnswerKind,
     context: InputContext,
 ) -> Result<String> {
@@ -480,7 +483,7 @@ fn read_control_answer_or_line(
 }
 
 fn read_single_key_answer(
-    output: &mut impl Write,
+    output: &mut dyn Write,
     kind: &AnswerKind,
     context: InputContext,
 ) -> Result<Option<String>> {

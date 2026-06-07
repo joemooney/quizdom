@@ -9,9 +9,11 @@ use crate::honing::{
     definitions_for_loaded_terms, load_probed_terms, prompt_for_term_meaning,
     render_settled_term_definition, render_term_definitions, term_label, SettledTermDefinition,
 };
+// trace:STORY-168 | ai:claude — the engine now talks to the FrontEnd seam; the
+// raw input readers (read_answer_or_end / FreeTextInput) live behind LineFrontEnd.
+use crate::frontend::FrontEnd;
 use crate::input::{
-    read_answer_or_end, render_breadcrumb, render_question, render_question_for, AnswerInput,
-    FreeTextInput, InputContext,
+    render_breadcrumb, render_question, render_question_for, AnswerInput, InputContext,
 };
 use crate::model::{Answer, AnswerKind, Question, TermDefinition};
 // trace:STORY-127 | ai:claude
@@ -249,7 +251,7 @@ impl CliConfig {
 fn render_session_end(
     preface: Option<&str>,
     session_id: &str,
-    output: &mut impl Write,
+    output: &mut dyn Write,
 ) -> Result<()> {
     if let Some(preface) = preface {
         writeln!(output, "{preface}")?;
@@ -665,7 +667,7 @@ impl Drop for SessionActiveGuard {
     }
 }
 
-pub(crate) fn list_sessions(config: &CliConfig, output: &mut impl Write) -> Result<()> {
+pub(crate) fn list_sessions(config: &CliConfig, output: &mut dyn Write) -> Result<()> {
     let summaries = session_summaries(&session_log_dir(&config.user_id))?;
     writeln!(output, "Sessions for user {}:", config.user_id)?;
     if summaries.is_empty() {
@@ -869,7 +871,7 @@ fn render_session_synopsis(
     observer: &ObserverEngine,
     log_path: &Path,
     branch: Option<&str>,
-    output: &mut impl Write,
+    output: &mut dyn Write,
 ) -> Result<Option<(SessionSynopsis, SessionArc)>> {
     let arc = match File::open(log_path) {
         Ok(file) => arc_from_session_log(file, branch).unwrap_or_default(),
@@ -908,13 +910,10 @@ fn render_session_synopsis(
 /// blank line, `keep`, or `no` — keeps probing. Degrades gracefully on a
 /// non-TTY / EOF prompt (no answer): treated as "keep exploring", so a piped or
 /// offline run never gets stuck or auto-concludes against the user's wishes.
-fn prompt_to_conclude(
-    input: &mut impl BufRead,
-    free_text_input: &mut FreeTextInput,
-    output: &mut impl Write,
-) -> Result<bool> {
+// trace:STORY-168 | ai:claude — front-end seam.
+fn prompt_to_conclude(fe: &mut dyn FrontEnd) -> Result<bool> {
     let prompt = "Conclude with a summary? [c]onclude / [k]eep exploring (default keep): ";
-    let choice = match free_text_input.read_line(input, output, prompt)? {
+    let choice = match fe.read_line(prompt)? {
         Some(line) => line.trim().to_ascii_lowercase(),
         // EOF / non-TTY: do not conclude on the user's behalf.
         None => return Ok(false),
@@ -936,7 +935,7 @@ fn set_goal_in_session(
     config: &CliConfig,
     logger: &mut SessionLogger,
     turn: u64,
-    output: &mut impl Write,
+    output: &mut dyn Write,
 ) -> Result<()> {
     let text = text.trim();
     if text.is_empty() {
@@ -978,7 +977,7 @@ fn set_mode_in_session(
     config: &CliConfig,
     logger: &mut SessionLogger,
     turn: u64,
-    output: &mut impl Write,
+    output: &mut dyn Write,
 ) -> Result<()> {
     let token = token.trim();
     if token.is_empty() {
@@ -1017,6 +1016,7 @@ fn set_mode_in_session(
 /// offline / no crystallized thesis / EOF prompt → no goal is set, the session
 /// stays free-flowing. Belief-neutral: the proposed goal is a QUESTION to settle,
 /// never a belief to adopt.
+// trace:STORY-168 | ai:claude — front-end seam.
 #[allow(clippy::too_many_arguments)]
 fn maybe_propose_goal(
     goal: &mut Option<String>,
@@ -1025,9 +1025,7 @@ fn maybe_propose_goal(
     config: &CliConfig,
     logger: &mut SessionLogger,
     turn: u64,
-    input: &mut impl BufRead,
-    free_text_input: &mut FreeTextInput,
-    output: &mut impl Write,
+    fe: &mut dyn FrontEnd,
 ) -> Result<()> {
     // Only propose when free-flowing — a session that already has a goal does not
     // get nagged with another.
@@ -1054,7 +1052,7 @@ fn maybe_propose_goal(
         return Ok(());
     };
     writeln!(
-        output,
+        fe.out(),
         "\n{}",
         crate::style::paint(
             crate::style::meta(),
@@ -1066,7 +1064,7 @@ fn maybe_propose_goal(
     )?;
     if !proposal.rationale.trim().is_empty() {
         writeln!(
-            output,
+            fe.out(),
             "{}",
             crate::style::paint(
                 crate::style::meta(),
@@ -1075,7 +1073,7 @@ fn maybe_propose_goal(
         )?;
     }
     let prompt = "Make that the session goal? [y]es / [k]eep exploring (default keep): ";
-    let accepted = match free_text_input.read_line(input, output, prompt)? {
+    let accepted = match fe.read_line(prompt)? {
         Some(line) => matches!(
             line.trim().to_ascii_lowercase().as_str(),
             "y" | "yes" | "g" | "goal"
@@ -1091,7 +1089,7 @@ fn maybe_propose_goal(
             config,
             logger,
             turn,
-            output,
+            fe.out(),
         )?;
     }
     Ok(())
@@ -1157,7 +1155,8 @@ struct ClosingOutcome {
 /// offline (the challenger's objection and the verdict both fall back to
 /// structural notes) and on a non-TTY / EOF prompt (treated as a request for the
 /// verdict, so a piped run renders the verdict rather than hanging).
-#[allow(clippy::too_many_arguments)]
+// trace:STORY-168 | ai:claude — front-end seam (the I/O triple collapsed into one
+// `fe`, leaving 7 args, so the prior too-many-arguments allow is no longer needed).
 fn run_closing_phase(
     config: &CliConfig,
     observer: &ObserverEngine,
@@ -1165,9 +1164,7 @@ fn run_closing_phase(
     rester: ClosingParty,
     logger: &mut SessionLogger,
     turn: u64,
-    input: &mut impl BufRead,
-    free_text_input: &mut FreeTextInput,
-    output: &mut impl Write,
+    fe: &mut dyn FrontEnd,
 ) -> Result<ClosingOutcome> {
     logger.phase_changed(
         &config.session_id,
@@ -1177,7 +1174,7 @@ fn run_closing_phase(
         "closing",
         rester.as_str(),
     )?;
-    render_closing_banner(output)?;
+    render_closing_banner(fe.out())?;
 
     // The most recent settled position the user stated, fed to the challenger so
     // its objection presses on THIS case. Empty until the user makes a statement.
@@ -1186,19 +1183,19 @@ fn run_closing_phase(
     loop {
         // The user makes (the next) closing statement: their final / settled
         // position. They can instead request the verdict or call terminate.
-        render_closing_user_prompt(output)?;
-        let line = free_text_input.read_line(input, output, "> ")?;
+        render_closing_user_prompt(fe.out())?;
+        let line = fe.read_line("> ")?;
         let raw = match line {
             Some(raw) => raw,
             // EOF / non-TTY: do not hang. Render the verdict on what we have.
             None => {
-                return finish_with_verdict(config, observer, goal, output);
+                return finish_with_verdict(config, observer, goal, fe.out());
             }
         };
         if crate::input::is_verdict_command(&raw) {
             // A direct request for the FINAL VERDICT — no terminator, no forfeited
             // last word; render the belief-neutral assessment and end.
-            return finish_with_verdict(config, observer, goal, output);
+            return finish_with_verdict(config, observer, goal, fe.out());
         }
         if crate::input::is_terminate_command(&raw) {
             // The USER terminates: the fairness rule gives the CHALLENGER the final
@@ -1206,12 +1203,12 @@ fn run_closing_phase(
             // does NOT get to add another statement.
             let final_speaker = final_word_speaker(ClosingParty::User);
             debug_assert_eq!(final_speaker, ClosingParty::Challenger);
-            render_terminate_note(ClosingParty::User, output)?;
+            render_terminate_note(ClosingParty::User, fe.out())?;
             let objection = {
                 let _spinner = crate::spinner::Spinner::start("closing objection");
                 observer.closing_objection(&last_position, goal)
             };
-            render_closing_objection(&objection, true, output)?;
+            render_closing_objection(&objection, true, fe.out())?;
             logger.closing_statement(
                 &config.session_id,
                 &config.user_id,
@@ -1221,7 +1218,7 @@ fn run_closing_phase(
                 &objection.objection,
                 true,
             )?;
-            return finish_with_verdict(config, observer, goal, output);
+            return finish_with_verdict(config, observer, goal, fe.out());
         }
         if crate::input::is_end_command(&raw) {
             // A plain quit during the closing ritual: end without a verdict (the
@@ -1237,7 +1234,7 @@ fn run_closing_phase(
             continue;
         }
         last_position = statement.to_string();
-        render_recorded_user_statement(statement, output)?;
+        render_recorded_user_statement(statement, fe.out())?;
         logger.closing_statement(
             &config.session_id,
             &config.user_id,
@@ -1251,7 +1248,7 @@ fn run_closing_phase(
             let _spinner = crate::spinner::Spinner::start("closing objection");
             observer.closing_objection(&last_position, goal)
         };
-        render_closing_objection(&objection, false, output)?;
+        render_closing_objection(&objection, false, fe.out())?;
         logger.closing_statement(
             &config.session_id,
             &config.user_id,
@@ -1275,7 +1272,7 @@ fn finish_with_verdict(
     config: &CliConfig,
     observer: &ObserverEngine,
     goal: Option<&str>,
-    output: &mut impl Write,
+    output: &mut dyn Write,
 ) -> Result<ClosingOutcome> {
     render_verdict(
         observer,
@@ -1301,7 +1298,7 @@ fn render_verdict(
     log_path: &Path,
     branch: Option<&str>,
     goal: Option<&str>,
-    output: &mut impl Write,
+    output: &mut dyn Write,
 ) -> Result<()> {
     let meta = crate::style::meta();
     let arc = match File::open(log_path) {
@@ -1351,7 +1348,7 @@ fn render_verdict(
 // trace:STORY-160 | ai:claude
 /// The closing-phase opening banner: announce the PHASE TRANSITION so the user
 /// knows the exchange is now closing statements, not questions.
-fn render_closing_banner(output: &mut impl Write) -> Result<()> {
+fn render_closing_banner(output: &mut dyn Write) -> Result<()> {
     writeln!(
         output,
         "\n{}",
@@ -1365,7 +1362,7 @@ fn render_closing_banner(output: &mut impl Write) -> Result<()> {
 
 // trace:STORY-160 | ai:claude
 /// Prompt the user for their next closing statement.
-fn render_closing_user_prompt(output: &mut impl Write) -> Result<()> {
+fn render_closing_user_prompt(output: &mut dyn Write) -> Result<()> {
     writeln!(
         output,
         "{}",
@@ -1379,7 +1376,7 @@ fn render_closing_user_prompt(output: &mut impl Write) -> Result<()> {
 
 // trace:STORY-160 | ai:claude
 /// Echo the user's recorded closing statement back as a labeled closing turn.
-fn render_recorded_user_statement(statement: &str, output: &mut impl Write) -> Result<()> {
+fn render_recorded_user_statement(statement: &str, output: &mut dyn Write) -> Result<()> {
     writeln!(
         output,
         "{}",
@@ -1398,7 +1395,7 @@ fn render_recorded_user_statement(statement: &str, output: &mut impl Write) -> R
 fn render_closing_objection(
     objection: &crate::observer::ClosingObjection,
     final_word: bool,
-    output: &mut impl Write,
+    output: &mut dyn Write,
 ) -> Result<()> {
     let meta = crate::style::meta();
     let header = match (objection.degraded, final_word) {
@@ -1425,7 +1422,7 @@ fn render_closing_objection(
 // trace:STORY-160 | ai:claude
 /// Note that a party terminated, naming the fairness rule before the other side
 /// makes its final closing statement.
-fn render_terminate_note(terminator: ClosingParty, output: &mut impl Write) -> Result<()> {
+fn render_terminate_note(terminator: ClosingParty, output: &mut dyn Write) -> Result<()> {
     let other = final_word_speaker(terminator);
     let body = match (terminator, other) {
         (ClosingParty::User, _) => {
@@ -1474,7 +1471,7 @@ fn exchange_for_frontier(current: &Question, recent_path: &[AnsweredQuestion]) -
 /// answer. Pure over the buffer + reading, so it is unit-testable without a
 /// live LLM. The caller re-presents the SAME question afterwards (non-
 /// destructive), so this only writes; it never consumes input or mutates state.
-fn render_exchange_reading(reading: &ExchangeReading, output: &mut impl Write) -> Result<()> {
+fn render_exchange_reading(reading: &ExchangeReading, output: &mut dyn Write) -> Result<()> {
     let header = if reading.degraded {
         "META (observer, offline) — a belief-neutral reading of this exchange:"
     } else {
@@ -1525,7 +1522,7 @@ fn render_exchange_reading(reading: &ExchangeReading, output: &mut impl Write) -
 /// re-presents the SAME question afterwards (non-destructive), so this only
 /// writes; it never consumes input or mutates state. The header flags the offline
 /// degraded mode (the static help index) so the user knows when no model answered.
-fn render_help_answer(answer: &HelpAnswer, output: &mut impl Write) -> Result<()> {
+fn render_help_answer(answer: &HelpAnswer, output: &mut dyn Write) -> Result<()> {
     let header = if answer.degraded {
         "META (/help, offline) — process help (belief-neutral; about the tool, not your belief):"
     } else {
@@ -1582,7 +1579,7 @@ fn tutor_context_for_frontier(
 /// re-presents the SAME question afterwards (non-destructive). The header flags the
 /// offline degraded mode (the structural note) so the user knows when no model
 /// coached.
-fn render_tutor_reading(reading: &TutorReading, output: &mut impl Write) -> Result<()> {
+fn render_tutor_reading(reading: &TutorReading, output: &mut dyn Write) -> Result<()> {
     let header = if reading.degraded {
         "META (/tutor, offline) — articulation & nuance coach (sharpens YOUR point; never supplies it):"
     } else {
@@ -1628,7 +1625,7 @@ pub(crate) fn run_session(
     bank: &dyn QuestionBank,
     strategy: &dyn NextQuestionStrategy,
     input: impl Read,
-    output: &mut impl Write,
+    output: &mut dyn Write,
 ) -> Result<()> {
     // trace:STORY-17 | ai:codex
     run_session_with_term_persister(
@@ -1647,7 +1644,7 @@ pub(crate) fn run_session_with_term_persister(
     strategy: &dyn NextQuestionStrategy,
     term_persister: &dyn UserSpecificTermPersister,
     input: impl Read,
-    output: &mut impl Write,
+    output: &mut dyn Write,
 ) -> Result<()> {
     let contradiction_edges = AidaCliContradictsEdges::default();
     let contradiction_resolution_persister = AidaCliContradictionResolutionPersister::default();
@@ -1678,7 +1675,7 @@ pub(crate) fn run_session_with_contradiction_edges(
     strategy: &dyn NextQuestionStrategy,
     edges: &dyn ContradictsEdges,
     input: impl Read,
-    output: &mut impl Write,
+    output: &mut dyn Write,
 ) -> Result<()> {
     run_session_with_contradiction_edges_and_resolution_persister(
         config,
@@ -1699,7 +1696,7 @@ pub(crate) fn run_session_with_contradiction_edges_and_resolution_persister(
     edges: &dyn ContradictsEdges,
     resolution_persister: &dyn ContradictionResolutionPersister,
     input: impl Read,
-    output: &mut impl Write,
+    output: &mut dyn Write,
 ) -> Result<()> {
     run_session_from_current(
         config,
@@ -1726,7 +1723,7 @@ pub(crate) fn run_session_with_user_authored_persister(
     strategy: &dyn NextQuestionStrategy,
     user_authored_persister: &dyn UserAuthoredQuestionPersister,
     input: impl Read,
-    output: &mut impl Write,
+    output: &mut dyn Write,
 ) -> Result<()> {
     run_session_from_current(
         config,
@@ -1752,7 +1749,7 @@ pub(crate) fn run_session_with_question_reweighter(
     strategy: &dyn NextQuestionStrategy,
     question_reweighter: &dyn QuestionReweighter,
     input: impl Read,
-    output: &mut impl Write,
+    output: &mut dyn Write,
 ) -> Result<()> {
     run_session_from_current(
         config,
@@ -1782,13 +1779,19 @@ fn run_session_from_current(
     question_reweighter: &dyn QuestionReweighter,
     user_authored_persister: &dyn UserAuthoredQuestionPersister,
     input: impl Read,
-    output: &mut impl Write,
+    output: &mut dyn Write,
     mut turn: u64,
     write_start_event: bool,
     mut recent_path: Vec<AnsweredQuestion>,
 ) -> Result<()> {
-    let mut input = BufReader::new(input);
-    let mut free_text_input = FreeTextInput::from_stdin()?;
+    // trace:STORY-168 | ai:claude
+    // Build the HEADLESS LINE front-end at the engine boundary and route ALL
+    // session I/O through it: the engine below renders via `fe.out()` and
+    // requests input/control via `fe.read_answer` / `fe.read_line`. The line
+    // front-end owns the `BufReader` + `FreeTextInput` and reproduces today's
+    // byte-for-byte behavior, so the ~336 piped/byte tests stay green.
+    let mut fe = crate::frontend::LineFrontEnd::new(input, output)?;
+    let fe: &mut dyn crate::frontend::FrontEnd = &mut fe;
     // trace:STORY-82 | ai:claude
     // Mark this session active for its whole lifetime; the guard clears the
     // marker on clean end so concurrent bare-resume never picks a live session.
@@ -1893,22 +1896,16 @@ fn run_session_from_current(
                 recent_path.len(),
                 &config.branch_id,
                 goal.as_deref(),
-                output,
+                fe.out(),
             )?;
             let probed_terms = load_probed_terms(bank, &current);
             if let Some(settled) = settled_definition_for(&probed_terms, &settled_terms) {
-                render_settled_term_definition(settled, output)?;
+                render_settled_term_definition(settled, fe.out())?;
             } else {
-                render_term_definitions(&probed_terms, output)?;
+                render_term_definitions(&probed_terms, fe.out())?;
             }
-            render_question_for(&current, InputContext::Frontier, output)?;
-            let answer = match read_answer_or_end(
-                &current.answer_kind,
-                InputContext::Frontier,
-                &mut input,
-                &mut free_text_input,
-                output,
-            )? {
+            render_question_for(&current, InputContext::Frontier, fe.out())?;
+            let answer = match fe.read_answer(&current.answer_kind, InputContext::Frontier)? {
                 AnswerInput::Answer(answer) => answer,
                 AnswerInput::Back => {
                     match browse_answered_path(
@@ -1920,9 +1917,7 @@ fn run_session_from_current(
                             log_path: &config.log_path,
                             branch: &config.branch_id,
                         },
-                        &mut input,
-                        &mut free_text_input,
-                        output,
+                        fe,
                     )? {
                         ReviewOutcome::Frontier => continue,
                         ReviewOutcome::Revised {
@@ -1955,14 +1950,7 @@ fn run_session_from_current(
                     // resumes exactly where they paused. The persisted
                     // Q-object is tagged `source:user-authored` (STORY-85)
                     // and shows up as a begets successor in later sessions.
-                    quick_add_from_current(
-                        bank,
-                        strategy,
-                        user_authored_persister,
-                        &current,
-                        &mut input,
-                        output,
-                    )?;
+                    quick_add_from_current(bank, strategy, user_authored_persister, &current, fe)?;
                     continue;
                 }
                 AnswerInput::Observe => {
@@ -1975,7 +1963,7 @@ fn run_session_from_current(
                         let _spinner = crate::spinner::Spinner::start("observing");
                         observer.read(&exchange)
                     };
-                    render_exchange_reading(&reading, output)?;
+                    render_exchange_reading(&reading, fe.out())?;
                     continue;
                 }
                 AnswerInput::Synopsis => {
@@ -1988,7 +1976,7 @@ fn run_session_from_current(
                         &observer,
                         &config.log_path,
                         Some(&config.branch_id),
-                        output,
+                        fe.out(),
                     )?;
                     // trace:STORY-156 | ai:claude
                     // CONVERGENCE terminal: when the synopsis crossed the
@@ -2014,15 +2002,11 @@ fn run_session_from_current(
                                 config,
                                 &mut logger,
                                 answered_turn,
-                                &mut input,
-                                &mut free_text_input,
-                                output,
+                                fe,
                             )?;
                         }
-                        if synopsis.offers_conclude()
-                            && prompt_to_conclude(&mut input, &mut free_text_input, output)?
-                        {
-                            crate::synopsis::render_conclusion(&synopsis, &arc, output)?;
+                        if synopsis.offers_conclude() && prompt_to_conclude(fe)? {
+                            crate::synopsis::render_conclusion(&synopsis, &arc, fe.out())?;
                             ended_at_frontier = true;
                             concluded = true;
                             logger.session_ended(
@@ -2057,7 +2041,7 @@ fn run_session_from_current(
                         config,
                         &mut logger,
                         answered_turn,
-                        output,
+                        fe.out(),
                     )?;
                     continue;
                 }
@@ -2078,7 +2062,7 @@ fn run_session_from_current(
                         config,
                         &mut logger,
                         answered_turn,
-                        output,
+                        fe.out(),
                     )?;
                     continue;
                 }
@@ -2099,9 +2083,7 @@ fn run_session_from_current(
                         ClosingParty::User,
                         &mut logger,
                         answered_turn,
-                        &mut input,
-                        &mut free_text_input,
-                        output,
+                        fe,
                     )?;
                     // trace:STORY-160 | ai:claude — a rested case is meaningful
                     // session activity even if no question was answered, so the
@@ -2132,7 +2114,8 @@ fn run_session_from_current(
                         "closing",
                         ClosingParty::User.as_str(),
                     )?;
-                    let outcome = finish_with_verdict(config, &observer, goal.as_deref(), output)?;
+                    let outcome =
+                        finish_with_verdict(config, &observer, goal.as_deref(), fe.out())?;
                     // trace:STORY-160 | ai:claude — keep the rested/verdict
                     // session (it carries the phase transition + verdict).
                     answer_recorded = true;
@@ -2161,13 +2144,13 @@ fn run_session_from_current(
                         "closing",
                         ClosingParty::User.as_str(),
                     )?;
-                    render_closing_banner(output)?;
-                    render_terminate_note(ClosingParty::User, output)?;
+                    render_closing_banner(fe.out())?;
+                    render_terminate_note(ClosingParty::User, fe.out())?;
                     let objection = {
                         let _spinner = crate::spinner::Spinner::start("closing objection");
                         observer.closing_objection("", goal.as_deref())
                     };
-                    render_closing_objection(&objection, true, output)?;
+                    render_closing_objection(&objection, true, fe.out())?;
                     logger.closing_statement(
                         &config.session_id,
                         &config.user_id,
@@ -2177,7 +2160,8 @@ fn run_session_from_current(
                         &objection.objection,
                         true,
                     )?;
-                    let outcome = finish_with_verdict(config, &observer, goal.as_deref(), output)?;
+                    let outcome =
+                        finish_with_verdict(config, &observer, goal.as_deref(), fe.out())?;
                     // trace:STORY-160 | ai:claude — keep the terminated session.
                     answer_recorded = true;
                     ended_at_frontier = true;
@@ -2199,7 +2183,7 @@ fn run_session_from_current(
                         let _spinner = crate::spinner::Spinner::start("helping");
                         observer.help(&question)
                     };
-                    render_help_answer(&answer, output)?;
+                    render_help_answer(&answer, fe.out())?;
                     continue;
                 }
                 AnswerInput::Tutor(text) => {
@@ -2213,7 +2197,7 @@ fn run_session_from_current(
                         let _spinner = crate::spinner::Spinner::start("tutoring");
                         observer.tutor(&context)
                     };
-                    render_tutor_reading(&reading, output)?;
+                    render_tutor_reading(&reading, fe.out())?;
                     continue;
                 }
                 AnswerInput::End => {
@@ -2235,15 +2219,10 @@ fn run_session_from_current(
         if answer.normalized == "explore" {
             // trace:STORY-52 | ai:codex
             if let Some(settled) = settled_definition_for(&probed_terms, &settled_terms) {
-                render_settled_term_definition(settled, output)?;
-            } else if let Some(settled) = prompt_for_term_meaning(
-                &probed_terms,
-                strategy,
-                term_persister,
-                &mut input,
-                &mut free_text_input,
-                output,
-            )? {
+                render_settled_term_definition(settled, fe.out())?;
+            } else if let Some(settled) =
+                prompt_for_term_meaning(&probed_terms, strategy, term_persister, fe)?
+            {
                 logger.term_interpreted(
                     &config.session_id,
                     &config.user_id,
@@ -2313,9 +2292,7 @@ fn run_session_from_current(
                         &current,
                         &context,
                         &recent_path,
-                        &mut input,
-                        &mut free_text_input,
-                        output,
+                        fe,
                     )? {
                         DeadEndOutcome::Continue(next) => {
                             logger.next_question_selected(
@@ -2366,10 +2343,8 @@ fn run_session_from_current(
                 &mut logger,
                 turn,
                 &contradiction,
-                &mut input,
-                &mut free_text_input,
                 contradiction_resolution_persister,
-                output,
+                fe,
             )? {
                 break;
             }
@@ -2378,9 +2353,9 @@ fn run_session_from_current(
             let flagged_terms = strategy.loaded_terms(&current, &answer).unwrap_or_default();
             let definitions = definitions_for_loaded_terms(&probed_terms, &flagged_terms);
             if let Some(settled) = settled_definition_for(&definitions, &settled_terms) {
-                render_settled_term_definition(settled, output)?;
+                render_settled_term_definition(settled, fe.out())?;
             } else {
-                render_term_definitions(&definitions, output)?;
+                render_term_definitions(&definitions, fe.out())?;
             }
         }
         let context = StrategyContext {
@@ -2442,9 +2417,7 @@ fn run_session_from_current(
                     &current,
                     &context,
                     &recent_path,
-                    &mut input,
-                    &mut free_text_input,
-                    output,
+                    fe,
                 )? {
                     DeadEndOutcome::Continue(next) => {
                         logger.next_question_selected(
@@ -2502,7 +2475,7 @@ fn run_session_from_current(
     // exact resume command so the user always has a way back in.
     if ended_at_frontier {
         if discarded {
-            writeln!(output, "Session ended.")?;
+            writeln!(fe.out(), "Session ended.")?;
         } else {
             // trace:STORY-156 | ai:claude — a concluded session reached a GOOD
             // (convergence) terminal, so preface the resume footer with a
@@ -2513,7 +2486,7 @@ fn run_session_from_current(
             } else {
                 None
             };
-            render_session_end(preface, &config.session_id, output)?;
+            render_session_end(preface, &config.session_id, fe.out())?;
         }
     }
 
@@ -2564,15 +2537,14 @@ fn contradiction_pair_key(contradiction: &Contradiction) -> (String, String) {
     }
 }
 
+// trace:STORY-168 | ai:claude — front-end seam.
 fn ask_contradiction_follow_up(
     config: &CliConfig,
     logger: &mut SessionLogger,
     turn: u64,
     contradiction: &Contradiction,
-    input: &mut impl BufRead,
-    free_text_input: &mut FreeTextInput,
     resolution_persister: &dyn ContradictionResolutionPersister,
-    output: &mut impl Write,
+    fe: &mut dyn FrontEnd,
 ) -> Result<bool> {
     let question = Question {
         id: format!("contradiction-{turn}"),
@@ -2591,14 +2563,8 @@ fn ask_contradiction_follow_up(
         turn,
         &question,
     )?;
-    render_question(&question, output)?;
-    match read_answer_or_end(
-        &question.answer_kind,
-        InputContext::Frontier,
-        input,
-        free_text_input,
-        output,
-    )? {
+    render_question(&question, fe.out())?;
+    match fe.read_answer(&question.answer_kind, InputContext::Frontier)? {
         AnswerInput::Answer(answer) => {
             let resolution = resolution_persister.persist_resolution(contradiction, &answer.raw)?;
             logger.contradiction_resolved(
@@ -2622,7 +2588,7 @@ fn ask_contradiction_follow_up(
         }
         AnswerInput::End => {
             // trace:STORY-80 | ai:claude
-            render_session_end(None, &config.session_id, output)?;
+            render_session_end(None, &config.session_id, fe.out())?;
             logger.session_ended(
                 &config.session_id,
                 &config.user_id,
@@ -2680,16 +2646,18 @@ fn ask_contradiction_follow_up(
 /// Degrades gracefully: a bank read failure simply yields an empty dedup
 /// snapshot (no duplicate), and the offline / non-TTY paths are inherited from
 /// the authoring core, which reads every prompt from `input`.
+// trace:STORY-168 | ai:claude — front-end seam: the quick-add banner renders via
+// `fe.out()`, then the STORY-87 authoring core runs against the front-end's raw
+// line channels (`fe.author_io`) so that shared, standalone-also core is unchanged.
 fn quick_add_from_current(
     bank: &dyn QuestionBank,
     strategy: &dyn NextQuestionStrategy,
     user_authored_persister: &dyn UserAuthoredQuestionPersister,
     current: &Question,
-    input: &mut impl BufRead,
-    output: &mut impl Write,
+    fe: &mut dyn FrontEnd,
 ) -> Result<()> {
     writeln!(
-        output,
+        fe.out(),
         "Quick-add: authoring a new question linked from {}.",
         current.id
     )?;
@@ -2700,6 +2668,7 @@ fn quick_add_from_current(
     let link = QuestionLink::Begets {
         origin_id: current.id.clone(),
     };
+    let (input, output) = fe.author_io();
     crate::question_add::author_question(
         &existing,
         strategy,
@@ -2739,7 +2708,7 @@ enum DeadEndOutcome {
 // trace:BUG-136 | ai:claude
 /// Render the dead-end menu. Plain text so it reads correctly under NO_COLOR /
 /// non-TTY (matching the rest of the session controls).
-fn render_dead_end_menu(output: &mut impl Write) -> Result<()> {
+fn render_dead_end_menu(output: &mut dyn Write) -> Result<()> {
     writeln!(
         output,
         "\nNo further questions on this path — but you're not stuck. What next?"
@@ -2765,6 +2734,7 @@ fn render_dead_end_menu(output: &mut impl Write) -> Result<()> {
 /// strategy from `current` — with `--strategy llm` that generates and persists a
 /// fresh follow-on; a deterministic/exhausted bank simply reports it has nothing
 /// and the menu stays open (the offline-degrade path).
+// trace:STORY-168 | ai:claude — front-end seam.
 #[allow(clippy::too_many_arguments)]
 fn dead_end_menu(
     bank: &dyn QuestionBank,
@@ -2776,13 +2746,11 @@ fn dead_end_menu(
     current: &Question,
     context: &StrategyContext,
     recent_path: &[AnsweredQuestion],
-    input: &mut impl BufRead,
-    free_text_input: &mut FreeTextInput,
-    output: &mut impl Write,
+    fe: &mut dyn FrontEnd,
 ) -> Result<DeadEndOutcome> {
     loop {
-        render_dead_end_menu(output)?;
-        let choice = match free_text_input.read_line(input, output, "> ")? {
+        render_dead_end_menu(fe.out())?;
+        let choice = match fe.read_line("> ")? {
             Some(line) => line.trim().to_ascii_lowercase(),
             None => return Ok(DeadEndOutcome::Quit),
         };
@@ -2795,37 +2763,30 @@ fn dead_end_menu(
                 match generated {
                     Some(next) => return Ok(DeadEndOutcome::Continue(next)),
                     None => writeln!(
-                        output,
+                        fe.out(),
                         "Couldn't generate a new question here (this strategy is exhausted — try `--strategy llm`)."
                     )?,
                 }
             }
             Some('p') => match different_topic_punt_question(current, recent_path, bank)? {
                 Some(next) => return Ok(DeadEndOutcome::Continue(next)),
-                None => writeln!(output, "No different-topic question to punt to.")?,
+                None => writeln!(fe.out(), "No different-topic question to punt to.")?,
             },
             Some('a') => {
                 // Author + link a begets follow-on from the current node; it
                 // becomes a successor in later sessions. Stay in the menu so the
                 // user can [G]enerate into it (or pick another exit).
-                quick_add_from_current(
-                    bank,
-                    strategy,
-                    user_authored_persister,
-                    current,
-                    input,
-                    output,
-                )?;
+                quick_add_from_current(bank, strategy, user_authored_persister, current, fe)?;
             }
             Some('s') => {
                 // trace:STORY-156 | ai:claude — the dead-end menu surfaces the
                 // synopsis (with its conclude OFFER line when well-rounded) but
                 // stays in the menu; the graceful conclude path lives at the
                 // frontier handler, so the return is intentionally ignored here.
-                render_session_synopsis(observer, log_path, Some(branch), output)?;
+                render_session_synopsis(observer, log_path, Some(branch), fe.out())?;
             }
             Some('q') => return Ok(DeadEndOutcome::Quit),
-            _ => writeln!(output, "Pick one of G, P, A, S, or Q.")?,
+            _ => writeln!(fe.out(), "Pick one of G, P, A, S, or Q.")?,
         }
     }
 }
@@ -2851,36 +2812,29 @@ struct ReviewContext<'a> {
     branch: &'a str,
 }
 
+// trace:STORY-168 | ai:claude — front-end seam.
 fn browse_answered_path(
     bank: &dyn QuestionBank,
     recent_path: &[AnsweredQuestion],
     // trace:STORY-127 | ai:claude — the `?` observer and (STORY-128) the `S`
     // synopsis both live in this session-level context.
     review: &ReviewContext<'_>,
-    input: &mut impl BufRead,
-    free_text_input: &mut FreeTextInput,
-    output: &mut impl Write,
+    fe: &mut dyn FrontEnd,
 ) -> Result<ReviewOutcome> {
     if recent_path.is_empty() {
-        writeln!(output, "No previous answers to review.")?;
+        writeln!(fe.out(), "No previous answers to review.")?;
         return Ok(ReviewOutcome::Frontier);
     }
     let mut cursor = recent_path.len() - 1;
     loop {
         let reviewed = &recent_path[cursor];
         let question = bank.load_question(&reviewed.question_ref)?;
-        render_reviewed_answer(cursor, recent_path.len(), reviewed, output)?;
-        render_question_for(&question, InputContext::Review, output)?;
-        match read_answer_or_end(
-            &question.answer_kind,
-            InputContext::Review,
-            input,
-            free_text_input,
-            output,
-        )? {
+        render_reviewed_answer(cursor, recent_path.len(), reviewed, fe.out())?;
+        render_question_for(&question, InputContext::Review, fe.out())?;
+        match fe.read_answer(&question.answer_kind, InputContext::Review)? {
             AnswerInput::Back => {
                 if cursor == 0 {
-                    writeln!(output, "Already at the first answered question.")?;
+                    writeln!(fe.out(), "Already at the first answered question.")?;
                 } else {
                     cursor -= 1;
                 }
@@ -2893,7 +2847,10 @@ fn browse_answered_path(
             }
             AnswerInput::Answer(answer) => {
                 if answer.normalized == reviewed.normalized_answer {
-                    writeln!(output, "Answer unchanged; still reviewing the saved path.")?;
+                    writeln!(
+                        fe.out(),
+                        "Answer unchanged; still reviewing the saved path."
+                    )?;
                     continue;
                 }
                 return Ok(ReviewOutcome::Revised {
@@ -2923,7 +2880,7 @@ fn browse_answered_path(
                     let _spinner = crate::spinner::Spinner::start("observing");
                     review.observer.read(&exchange)
                 };
-                render_exchange_reading(&reading, output)?;
+                render_exchange_reading(&reading, fe.out())?;
                 continue;
             }
             // trace:STORY-128 | ai:claude — non-destructive GLOBAL synopsis in
@@ -2934,7 +2891,7 @@ fn browse_answered_path(
                     review.observer,
                     review.log_path,
                     Some(review.branch),
-                    output,
+                    fe.out(),
                 )?;
                 continue;
             }
@@ -2963,7 +2920,7 @@ fn browse_answered_path(
                     let _spinner = crate::spinner::Spinner::start("helping");
                     review.observer.help(&question)
                 };
-                render_help_answer(&answer, output)?;
+                render_help_answer(&answer, fe.out())?;
                 continue;
             }
             // trace:STORY-165 | ai:claude — `/tutor` in review coaches the user's
@@ -2985,7 +2942,7 @@ fn browse_answered_path(
                     let _spinner = crate::spinner::Spinner::start("tutoring");
                     review.observer.tutor(&context)
                 };
-                render_tutor_reading(&reading, output)?;
+                render_tutor_reading(&reading, fe.out())?;
                 continue;
             }
             AnswerInput::End => return Ok(ReviewOutcome::End),
@@ -2997,7 +2954,7 @@ fn render_reviewed_answer(
     cursor: usize,
     total: usize,
     answer: &AnsweredQuestion,
-    output: &mut impl Write,
+    output: &mut dyn Write,
 ) -> Result<()> {
     // trace:STORY-69 | ai:codex
     writeln!(output, "\nReviewing answer {}/{}:", cursor + 1, total)?;
@@ -3044,7 +3001,7 @@ pub(crate) fn resume_session(
     bank: &dyn QuestionBank,
     strategy: &dyn NextQuestionStrategy,
     input: impl Read,
-    output: &mut impl Write,
+    output: &mut dyn Write,
 ) -> Result<()> {
     resume_session_with_term_persister(
         config,
@@ -3062,7 +3019,7 @@ fn resume_session_with_term_persister(
     strategy: &dyn NextQuestionStrategy,
     term_persister: &dyn UserSpecificTermPersister,
     input: impl Read,
-    output: &mut impl Write,
+    output: &mut dyn Write,
 ) -> Result<()> {
     // trace:STORY-20 | ai:codex
     let replay = SessionReplay::load(&config.log_path, &config.branch_id)?;
@@ -3137,22 +3094,28 @@ fn resume_session_with_term_persister(
     let next = match auto {
         Some(next) => next,
         None => {
-            let mut free_text_input = FreeTextInput::from_stdin()?;
             let observer = ObserverEngine::for_config(config);
-            match dead_end_menu(
-                bank,
-                strategy,
-                &user_authored_persister,
-                &observer,
-                &config.log_path,
-                &config.branch_id,
-                &last_question,
-                &context,
-                &prior_path,
-                &mut input,
-                &mut free_text_input,
-                output,
-            )? {
+            // trace:STORY-168 | ai:claude — the resume dead-end menu now runs
+            // against a headless line front-end built over the SAME input stream;
+            // it is dropped before `run_session_from_current` builds its own front
+            // end over the remaining bytes (reproducing the prior split: the menu
+            // and the resumed loop shared one reader).
+            let outcome = {
+                let mut fe = crate::frontend::LineFrontEnd::new(&mut input, &mut *output)?;
+                dead_end_menu(
+                    bank,
+                    strategy,
+                    &user_authored_persister,
+                    &observer,
+                    &config.log_path,
+                    &config.branch_id,
+                    &last_question,
+                    &context,
+                    &prior_path,
+                    &mut fe,
+                )?
+            };
+            match outcome {
                 DeadEndOutcome::Continue(next) => next,
                 DeadEndOutcome::Quit => {
                     // trace:STORY-80 | ai:claude — surviving session keeps its
@@ -3306,7 +3269,7 @@ impl SessionSummary {
     }
 }
 
-pub(crate) fn fork_session(config: &CliConfig, output: &mut impl Write) -> Result<()> {
+pub(crate) fn fork_session(config: &CliConfig, output: &mut dyn Write) -> Result<()> {
     // trace:STORY-19 | ai:codex
     let proposition = config
         .proposition
@@ -3442,7 +3405,7 @@ impl SessionReplay {
         })
     }
 
-    pub(crate) fn render(&self, output: &mut impl Write) -> Result<()> {
+    pub(crate) fn render(&self, output: &mut dyn Write) -> Result<()> {
         writeln!(
             output,
             "Replaying previous session path for branch '{}':",
@@ -3459,7 +3422,7 @@ impl SessionReplay {
         Ok(())
     }
 
-    pub(crate) fn render_recap(&self, output: &mut impl Write) -> Result<()> {
+    pub(crate) fn render_recap(&self, output: &mut dyn Write) -> Result<()> {
         writeln!(output, "RECAP:")?;
         writeln!(output, "branch: {}", self.branch_id)?;
         if let Some(answer) = self.answers.last() {
@@ -3920,11 +3883,12 @@ fn next_event_number(path: &Path) -> Result<u64> {
 mod conclude_tests {
     use super::*;
 
+    // trace:STORY-168 | ai:claude — drive the helper through the headless line
+    // front-end seam (the engine no longer hands it a raw I/O triple).
     fn ask(line: &str) -> bool {
-        let mut input = std::io::Cursor::new(format!("{line}\n"));
-        let mut free_text = FreeTextInput::Plain;
-        let mut out = Vec::new();
-        prompt_to_conclude(&mut input, &mut free_text, &mut out).expect("prompt")
+        let input = std::io::Cursor::new(format!("{line}\n"));
+        let mut fe = crate::frontend::LineFrontEnd::new(input, Vec::new()).expect("front end");
+        prompt_to_conclude(&mut fe).expect("prompt")
     }
 
     #[test]
@@ -3948,10 +3912,9 @@ mod conclude_tests {
     fn eof_offline_does_not_conclude() {
         // Non-TTY / piped / EOF: degrade gracefully — never conclude on the
         // user's behalf when there is no answer to read.
-        let mut input = std::io::Cursor::new(Vec::new());
-        let mut free_text = FreeTextInput::Plain;
-        let mut out = Vec::new();
-        assert!(!prompt_to_conclude(&mut input, &mut free_text, &mut out).expect("prompt"));
+        let input = std::io::Cursor::new(Vec::new());
+        let mut fe = crate::frontend::LineFrontEnd::new(input, Vec::new()).expect("front end");
+        assert!(!prompt_to_conclude(&mut fe).expect("prompt"));
     }
 
     // ---- STORY-164: /help engine (tool-context, belief-neutral) ------------
