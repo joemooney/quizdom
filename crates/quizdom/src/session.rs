@@ -763,6 +763,12 @@ enum ObserverEngine {
     Anthropic(AnthropicClient),
     /// No backend configured / available — structural-only readings.
     Offline,
+    // trace:STORY-173 | ai:claude — a test-only backend that returns a CANNED
+    // goal proposal (or `None`), so the user-requested + interrogator goal-offer
+    // flows can be exercised end-to-end without a live LLM. Belief-neutral: the
+    // canned proposal is still a QUESTION to settle, never a belief.
+    #[cfg(test)]
+    Mock(Option<crate::observer::GoalProposal>),
 }
 
 impl ObserverEngine {
@@ -788,6 +794,8 @@ impl ObserverEngine {
             Self::ClaudeCli(client) => read_exchange(client, exchange),
             Self::Anthropic(client) => read_exchange(client, exchange),
             Self::Offline => structural_reading(exchange),
+            #[cfg(test)]
+            Self::Mock(_) => structural_reading(exchange),
         }
     }
 
@@ -799,6 +807,8 @@ impl ObserverEngine {
             Self::ClaudeCli(client) => synopsize(client, arc),
             Self::Anthropic(client) => synopsize(client, arc),
             Self::Offline => structural_synopsis(arc),
+            #[cfg(test)]
+            Self::Mock(_) => structural_synopsis(arc),
         }
     }
 
@@ -812,6 +822,17 @@ impl ObserverEngine {
             Self::ClaudeCli(client) => crate::observer::propose_goal(client, positions),
             Self::Anthropic(client) => crate::observer::propose_goal(client, positions),
             Self::Offline => None,
+            // trace:STORY-173 | ai:claude — the canned proposal, gated on having
+            // SOME positions (mirrors the real path, which never proposes from an
+            // empty conversation: `propose_goal` returns `None` with no positions).
+            #[cfg(test)]
+            Self::Mock(proposal) => {
+                if positions.is_empty() {
+                    None
+                } else {
+                    proposal.clone()
+                }
+            }
         }
     }
 
@@ -835,6 +856,8 @@ impl ObserverEngine {
                 crate::observer::read_closing_objection(client, position, goal)
             }
             Self::Offline => crate::observer::structural_objection(position, goal),
+            #[cfg(test)]
+            Self::Mock(_) => crate::observer::structural_objection(position, goal),
         }
     }
 
@@ -850,6 +873,8 @@ impl ObserverEngine {
             Self::ClaudeCli(client) => answer_help(client, question, &tool_context),
             Self::Anthropic(client) => answer_help(client, question, &tool_context),
             Self::Offline => crate::observer::static_help_index(question, &tool_context),
+            #[cfg(test)]
+            Self::Mock(_) => crate::observer::static_help_index(question, &tool_context),
         }
     }
 
@@ -865,6 +890,22 @@ impl ObserverEngine {
             Self::ClaudeCli(client) => read_tutor(client, context),
             Self::Anthropic(client) => read_tutor(client, context),
             Self::Offline => crate::observer::structural_tutor(context),
+            #[cfg(test)]
+            Self::Mock(_) => crate::observer::structural_tutor(context),
+        }
+    }
+
+    // trace:STORY-173 | ai:claude
+    /// True when this engine has NO LLM backend reachable, so a goal proposal is
+    /// impossible. Drives the offline degrade on the on-demand `/goal` /
+    /// `/request-goal` paths: instead of proposing, the session reports "no goal"
+    /// with a "needs an LLM backend" note rather than silently doing nothing.
+    fn is_offline(&self) -> bool {
+        match self {
+            Self::Offline => true,
+            Self::ClaudeCli(_) | Self::Anthropic(_) => false,
+            #[cfg(test)]
+            Self::Mock(_) => false,
         }
     }
 }
@@ -1040,31 +1081,13 @@ fn set_mode_in_session(
 }
 
 // trace:STORY-159 | ai:claude
-/// When no goal is set yet, ask the Observer whether a thesis has crystallized
-/// and, if so, OFFER it as the session goal. The user decides (agency: the
-/// default is to keep exploring free-flowing). Accepting sets the goal exactly as
-/// the `/goal` command would (logged `source:"observer"`). Degrades gracefully:
-/// offline / no crystallized thesis / EOF prompt → no goal is set, the session
-/// stays free-flowing. Belief-neutral: the proposed goal is a QUESTION to settle,
-/// never a belief to adopt.
-// trace:STORY-168 | ai:claude — front-end seam.
-#[allow(clippy::too_many_arguments)]
-fn maybe_propose_goal(
-    goal: &mut Option<String>,
-    observer: &ObserverEngine,
-    arc: &SessionArc,
-    config: &CliConfig,
-    logger: &mut SessionLogger,
-    turn: u64,
-    fe: &mut dyn FrontEnd,
-) -> Result<()> {
-    // Only propose when free-flowing — a session that already has a goal does not
-    // get nagged with another.
-    if goal.is_some() {
-        return Ok(());
-    }
-    let positions: Vec<String> = arc
-        .turns
+/// Flatten an arc's recorded turns into the belief-neutral POSITION strings the
+/// goal-proposal prompt reads. Each turn becomes `On "<question>": <position>`
+/// (or just the bare position when no question is attached); empty positions are
+/// dropped. Shared by every goal-proposal path so they read the conversation the
+/// same way.
+fn positions_from_arc(arc: &SessionArc) -> Vec<String> {
+    arc.turns
         .iter()
         .filter(|turn| !turn.position.is_empty())
         .map(|turn| {
@@ -1074,21 +1097,46 @@ fn maybe_propose_goal(
                 format!("On \"{}\": {}", turn.question, turn.position)
             }
         })
-        .collect();
-    let proposal = {
-        let _spinner = crate::spinner::Spinner::start("reading for a thesis");
-        observer.propose_goal(&positions)
-    };
-    let Some(proposal) = proposal else {
-        return Ok(());
-    };
+        .collect()
+}
+
+// trace:STORY-173 | ai:claude
+/// Build the session arc for an on-demand goal request: re-read the whole session
+/// log so the proposal sees every recorded position so far (the same source the
+/// synopsis reads). A missing / unreadable log yields an empty arc, so the caller
+/// degrades to "nothing recorded yet" rather than failing.
+fn arc_for_goal_request(log_path: &Path, branch: &str) -> SessionArc {
+    match File::open(log_path) {
+        Ok(file) => arc_from_session_log(file, Some(branch)).unwrap_or_default(),
+        Err(_) => SessionArc::default(),
+    }
+}
+
+// trace:STORY-173 | ai:claude
+/// Render a `GoalProposal` and offer it to the user with three choices:
+/// **accept** (sets the goal exactly as `/goal <text>` would, logged with the
+/// given `source`), **edit** (the user rephrases; the edited text is set), or
+/// **decline** (nothing changes — agency: the default is to keep exploring). EOF
+/// / a non-TTY prompt is treated as decline, so a piped or offline run never sets
+/// a goal on the user's behalf. Returns `true` when a goal was set. Belief-neutral
+/// throughout: the proposal (and any edit) is the QUESTION being resolved.
+#[allow(clippy::too_many_arguments)]
+fn offer_goal_proposal(
+    goal: &mut Option<String>,
+    proposal: &crate::observer::GoalProposal,
+    source: &str,
+    config: &CliConfig,
+    logger: &mut SessionLogger,
+    turn: u64,
+    fe: &mut dyn FrontEnd,
+) -> Result<bool> {
     writeln!(
         fe.out(),
         "\n{}",
         crate::style::paint(
             crate::style::meta(),
             &format!(
-                "META (observer) — it sounds like you're trying to settle: {}",
+                "META (observer) — we seem to be exploring: {}",
                 proposal.goal
             )
         )
@@ -1103,26 +1151,161 @@ fn maybe_propose_goal(
             )
         )?;
     }
-    let prompt = "Make that the session goal? [y]es / [k]eep exploring (default keep): ";
-    let accepted = match fe.read_line(prompt)? {
-        Some(line) => matches!(
-            line.trim().to_ascii_lowercase().as_str(),
-            "y" | "yes" | "g" | "goal"
-        ),
+    let prompt =
+        "Make resolving it the session goal? [a]ccept / [e]dit / [d]ecline (default decline): ";
+    let choice = match fe.read_line(prompt)? {
+        Some(line) => line.trim().to_ascii_lowercase(),
         // EOF / non-TTY: never set a goal on the user's behalf.
-        None => false,
+        None => return Ok(false),
     };
-    if accepted {
-        set_goal_in_session(
-            goal,
-            &proposal.goal,
-            "observer",
-            config,
-            logger,
-            turn,
-            fe.out(),
-        )?;
+    let to_set = match choice.as_str() {
+        "a" | "accept" | "y" | "yes" => proposal.goal.clone(),
+        "e" | "edit" => {
+            // The user rephrases the proposed QUESTION in their own words. An
+            // empty edit (or EOF) declines rather than setting a blank goal.
+            match fe.read_line("Edit the goal (the question to settle): ")? {
+                Some(edited) if !edited.trim().is_empty() => edited.trim().to_string(),
+                _ => return Ok(false),
+            }
+        }
+        // Anything else — including `d`/`decline`/a blank line — keeps exploring.
+        _ => return Ok(false),
+    };
+    set_goal_in_session(goal, &to_set, source, config, logger, turn, fe.out())?;
+    Ok(true)
+}
+
+// trace:STORY-159 | ai:claude
+/// When no goal is set yet, ask the Observer whether a thesis has crystallized
+/// and, if so, OFFER it as the session goal (accept / edit / decline). The user
+/// decides (agency: the default is to keep exploring free-flowing). Degrades
+/// gracefully: offline / no crystallized thesis / EOF prompt → no goal is set,
+/// the session stays free-flowing. Belief-neutral: the proposed goal is a QUESTION
+/// to settle, never a belief to adopt. Used on the `/synopsis` way-3 path.
+// trace:STORY-168 | ai:claude — front-end seam.
+fn maybe_propose_goal(
+    goal: &mut Option<String>,
+    observer: &ObserverEngine,
+    arc: &SessionArc,
+    config: &CliConfig,
+    logger: &mut SessionLogger,
+    turn: u64,
+    fe: &mut dyn FrontEnd,
+) -> Result<()> {
+    // Only propose when free-flowing — a session that already has a goal does not
+    // get nagged with another.
+    if goal.is_some() {
+        return Ok(());
     }
+    let positions = positions_from_arc(arc);
+    let proposal = {
+        let _spinner = crate::spinner::Spinner::start("reading for a thesis");
+        observer.propose_goal(&positions)
+    };
+    let Some(proposal) = proposal else {
+        return Ok(());
+    };
+    offer_goal_proposal(goal, &proposal, "observer", config, logger, turn, fe)?;
+    Ok(())
+}
+
+// trace:STORY-173 | ai:claude
+/// The ON-DEMAND goal request: the user typed bare `/goal` with no goal set (and
+/// confirmed the `[y/N]` prompt) or `/request-goal` (which skips that confirm).
+/// Re-reads the session arc, asks the Observer to propose a goal, and offers it
+/// (accept / edit / decline). Degrades when no LLM backend is reachable: instead
+/// of proposing, it reports "no goal" with a "needs an LLM backend" note, so the
+/// user understands WHY no proposal came rather than seeing silence. Likewise a
+/// thin / un-crystallized conversation reports that no thesis has emerged yet.
+/// Belief-neutral: any goal set is the QUESTION being resolved, never a belief.
+fn request_goal_on_demand(
+    goal: &mut Option<String>,
+    observer: &ObserverEngine,
+    config: &CliConfig,
+    logger: &mut SessionLogger,
+    turn: u64,
+    fe: &mut dyn FrontEnd,
+) -> Result<()> {
+    // A goal is already set — show it (the on-demand request never overrides a
+    // live goal without the user re-stating one).
+    if let Some(current) = goal.as_deref() {
+        writeln!(fe.out(), "Current goal: {current}")?;
+        return Ok(());
+    }
+    // Offline degrade: no LLM to read for a thesis. Report "no goal" with the
+    // backend note rather than silently doing nothing.
+    if observer.is_offline() {
+        writeln!(
+            fe.out(),
+            "No goal set — proposing one needs an LLM backend (none reachable). State one directly with `/goal <the question you're resolving>`."
+        )?;
+        return Ok(());
+    }
+    let arc = arc_for_goal_request(&config.log_path, &config.branch_id);
+    let positions = positions_from_arc(&arc);
+    let proposal = {
+        let _spinner = crate::spinner::Spinner::start("reading for a thesis");
+        observer.propose_goal(&positions)
+    };
+    let Some(proposal) = proposal else {
+        writeln!(
+            fe.out(),
+            "No goal set — no single thesis has crystallized yet. Keep exploring, or state one with `/goal <the question you're resolving>`."
+        )?;
+        return Ok(());
+    };
+    offer_goal_proposal(goal, &proposal, "user", config, logger, turn, fe)?;
+    Ok(())
+}
+
+// trace:STORY-173 | ai:claude
+/// The INTERROGATOR's bounded goal offer: when no goal is set and a thesis has
+/// CRYSTALLIZED (the Observer's `propose_goal` returns one — the same signal the
+/// synopsis path reads), the questioner offers EXACTLY ONCE to make resolving it
+/// the goal. `offer_made` tracks the one-shot guard: it is set the first time an
+/// offer is actually surfaced and the offer is NEVER repeated, so the user is
+/// never nagged. No offer happens early (a thin conversation yields no crystallized
+/// thesis), honoring free-flow. Belief-neutral: the offer names the QUESTION being
+/// circled, never a belief to adopt.
+#[allow(clippy::too_many_arguments)]
+fn maybe_offer_goal_on_crystallize(
+    goal: &mut Option<String>,
+    offer_made: &mut bool,
+    observer: &ObserverEngine,
+    recent_path: &[AnsweredQuestion],
+    config: &CliConfig,
+    logger: &mut SessionLogger,
+    turn: u64,
+    fe: &mut dyn FrontEnd,
+) -> Result<()> {
+    // One-shot guard: never offer again once an offer has been surfaced, and never
+    // offer over a goal that is already set.
+    if *offer_made || goal.is_some() {
+        return Ok(());
+    }
+    // Honor free-flow: only consider an offer once there is real substance to read
+    // (a couple of recorded positions). An early, thin conversation is left alone.
+    let positions: Vec<String> = recent_path
+        .iter()
+        .filter(|answered| !answered.normalized_answer.is_empty())
+        .map(|answered| format!("On \"{}\": {}", answered.question_text, answered.raw_answer))
+        .collect();
+    if positions.len() < 2 {
+        return Ok(());
+    }
+    let proposal = {
+        let _spinner = crate::spinner::Spinner::start("reading for a thesis");
+        observer.propose_goal(&positions)
+    };
+    let Some(proposal) = proposal else {
+        // No thesis has crystallized yet — stay free-flowing and DO NOT burn the
+        // one-shot. The offer can still surface on a later, more-formed turn.
+        return Ok(());
+    };
+    // A thesis crystallized: this is the single offer. Mark it spent BEFORE
+    // surfacing it so a declined (or accepted) offer is never repeated.
+    *offer_made = true;
+    offer_goal_proposal(goal, &proposal, "observer", config, logger, turn, fe)?;
     Ok(())
 }
 
@@ -1887,6 +2070,12 @@ fn run_session_from_current(
     // breadcrumb. `None` = free-flowing. Belief-neutral: the question being
     // resolved, never a belief.
     let mut goal: Option<String> = config.goal.clone();
+    // trace:STORY-173 | ai:claude
+    // The interrogator's bounded goal-offer guard: the questioner offers to make a
+    // crystallized thesis the goal AT MOST ONCE per session (never re-offered).
+    // Set the first time an offer is actually surfaced. Seeded `true` when the
+    // session already starts with a goal — there is nothing to offer.
+    let mut goal_offer_made = goal.is_some();
     // trace:STORY-161 | ai:claude
     // The live session MODE. Seeded from `--mode` / the resumed start
     // (config.mode) and updated in-session by the `/mode` toggle. It drives the
@@ -2099,12 +2288,36 @@ fn run_session_from_current(
                     // thesis. A non-empty text SETS the goal — logged as a
                     // `goal_set` event (so resume restores it and the arc /
                     // synopsis orient to it) — then the SAME question is
-                    // re-presented, now oriented toward the goal. A bare
-                    // `/goal` (empty text) just SHOWS the current goal; it
-                    // never clears one (agency: a goal is removed only by
-                    // setting a new one). Non-destructive: nothing else
-                    // changes. Belief-neutral: the goal is the question being
-                    // settled, never a belief.
+                    // re-presented, now oriented toward the goal. Non-destructive:
+                    // nothing else changes. Belief-neutral: the goal is the
+                    // question being settled, never a belief.
+                    // trace:STORY-173 | ai:claude
+                    // A bare `/goal` (empty text) now branches on whether a goal
+                    // is set: WITH a goal it still just SHOWS the current one
+                    // (unchanged), but with NO goal it first PROMPTS "No goal set —
+                    // request one? [y/N]" and, on yes, proposes one on demand
+                    // (accept / edit / decline). It never clears a goal.
+                    if text.trim().is_empty() && goal.is_none() {
+                        let prompt = "No goal set — request one? [y/N]: ";
+                        let wants = match fe.read_line(prompt)? {
+                            Some(line) => {
+                                matches!(line.trim().to_ascii_lowercase().as_str(), "y" | "yes")
+                            }
+                            // EOF / non-TTY: do not propose on the user's behalf.
+                            None => false,
+                        };
+                        if wants {
+                            request_goal_on_demand(
+                                &mut goal,
+                                &observer,
+                                config,
+                                &mut logger,
+                                answered_turn,
+                                fe,
+                            )?;
+                        }
+                        continue;
+                    }
                     set_goal_in_session(
                         &mut goal,
                         &text,
@@ -2113,6 +2326,23 @@ fn run_session_from_current(
                         &mut logger,
                         answered_turn,
                         fe.out(),
+                    )?;
+                    continue;
+                }
+                AnswerInput::RequestGoal => {
+                    // trace:STORY-173 | ai:claude
+                    // The on-demand `/request-goal` alias: propose a goal DIRECTLY
+                    // (skipping the bare-`/goal` `[y/N]` confirm), then offer it
+                    // (accept / edit / decline). With a goal already set it just
+                    // shows the current one. Offline degrades to a "needs an LLM
+                    // backend" note. Non-destructive: nothing else changes.
+                    request_goal_on_demand(
+                        &mut goal,
+                        &observer,
+                        config,
+                        &mut logger,
+                        answered_turn,
+                        fe,
                     )?;
                     continue;
                 }
@@ -2525,6 +2755,25 @@ fn run_session_from_current(
                 }
             }
         }
+
+        // trace:STORY-173 | ai:claude
+        // INTERROGATOR-offered goal (offer once, on crystallize): with a fresh
+        // answer recorded and the conversation grown, let the questioner offer a
+        // goal AT MOST ONCE — when a thesis has crystallized and none is set. The
+        // one-shot guard (`goal_offer_made`) means the offer never repeats, so the
+        // user is never nagged; an early, thin conversation yields no crystallized
+        // thesis, honoring free-flow. Declining keeps exploring. Belief-neutral:
+        // the offer names the QUESTION being circled, never a belief.
+        maybe_offer_goal_on_crystallize(
+            &mut goal,
+            &mut goal_offer_made,
+            &observer,
+            &recent_path,
+            config,
+            &mut logger,
+            turn,
+            fe,
+        )?;
     }
 
     // trace:STORY-81 | ai:claude
@@ -2691,6 +2940,9 @@ fn ask_contradiction_follow_up(
         | AnswerInput::Observe
         | AnswerInput::Synopsis
         | AnswerInput::Goal(_)
+        // trace:STORY-173 | ai:claude — a stray `/request-goal` on a transient
+        // contradiction follow-up is a no-op here (no loop goal state in scope).
+        | AnswerInput::RequestGoal
         // trace:STORY-161 | ai:claude — a stray `/mode` toggle on a transient
         // contradiction follow-up is a no-op here (no loop mode state in scope).
         | AnswerInput::Mode(_)
@@ -2971,6 +3223,10 @@ fn browse_answered_path(
             // here is a no-op rather than re-orienting from inside review. (The
             // goal is set at the frontier, where it can orient the next question.)
             AnswerInput::Goal(_) => continue,
+            // trace:STORY-173 | ai:claude — `/request-goal`, like `/goal`, takes
+            // effect at the FRONTIER (where the live goal state is in scope), so a
+            // stray one in the review pane is a no-op.
+            AnswerInput::RequestGoal => continue,
             // trace:STORY-161 | ai:claude — the mode toggle, like `/goal`, takes
             // effect at the FRONTIER (where the live mode drives the next-question
             // prompt), so a stray `/mode` in the review pane is a no-op.
@@ -4139,5 +4395,372 @@ mod conclude_tests {
         assert!(!reading.missing_nuance.is_empty());
         // Belief-neutral: the distinction is the USER's to draw, not the tutor's.
         assert!(reading.distinction.to_lowercase().contains("yours to draw"));
+    }
+}
+
+// trace:STORY-173 | ai:claude
+// Request-a-goal-when-none-is-set: the user-requested proposal (bare `/goal`
+// confirm + `/request-goal` direct) and the bounded interrogator offer. Drives
+// the helpers through the headless line front-end seam with a CANNED-proposal
+// Observer (`ObserverEngine::Mock`), so both request paths and the bounded-offer
+// guard are exercised without a live LLM. Belief-neutral throughout: every goal
+// set is the QUESTION being resolved, never a belief.
+#[cfg(test)]
+mod goal_request_tests {
+    use super::*;
+    use crate::observer::GoalProposal;
+    use crate::strategy::AnsweredQuestion;
+
+    fn unique_log(tag: &str) -> std::path::PathBuf {
+        std::env::temp_dir().join(format!(
+            "quizdom-story-173-{tag}-{}-{}.jsonl",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ))
+    }
+
+    fn test_config(path: &std::path::Path) -> CliConfig {
+        CliConfig {
+            command: SessionCommand::Start,
+            seed: "Q-1".to_string(),
+            user_id: "test-user".to_string(),
+            session_id: "sess-test".to_string(),
+            session_id_provided: true,
+            log_path: path.to_path_buf(),
+            log_path_provided: true,
+            branch_id: "main".to_string(),
+            proposition: None,
+            agree_seed: None,
+            disagree_seed: None,
+            strategy: StrategyKind::Deterministic,
+            strategy_provided: false,
+            llm_backend: LlmBackendKind::ClaudeCli,
+            goal: None,
+            mode: SessionMode::Socratic,
+            mode_provided: false,
+            no_tui: false,
+        }
+    }
+
+    fn proposal() -> GoalProposal {
+        GoalProposal {
+            goal: "can libertarian free will be held consistently?".to_string(),
+            rationale: "the user keeps circling whether uncaused choice survives causation"
+                .to_string(),
+        }
+    }
+
+    fn answered(question: &str, answer: &str) -> AnsweredQuestion {
+        AnsweredQuestion {
+            question_ref: "Q-x".to_string(),
+            question_text: question.to_string(),
+            raw_answer: answer.to_string(),
+            normalized_answer: answer.to_string(),
+        }
+    }
+
+    /// Seed a session log with a couple of recorded positions so the on-demand
+    /// arc has substance to read (the `arc_from_session_log` reader builds turns
+    /// from `question_presented` + `answer_recorded` pairs). Belief-neutral: these
+    /// are positions taken, not beliefs graded.
+    fn seed_positions(path: &std::path::Path) {
+        use std::io::Write as _;
+        let mut file = std::fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(path)
+            .expect("open log");
+        for (turn, (question, answer)) in [
+            ("Is free will real?", "yes"),
+            ("Can a caused choice be free?", "no"),
+        ]
+        .iter()
+        .enumerate()
+        {
+            writeln!(
+                file,
+                r#"{{"event_type":"question_presented","branch_id":"main","turn":{turn},"question_ref":"Q-{turn}","question_text":"{question}","occurred_at":"2026-01-01T00:00:00Z"}}"#
+            )
+            .unwrap();
+            writeln!(
+                file,
+                r#"{{"event_type":"answer_recorded","branch_id":"main","turn":{turn},"question_ref":"Q-{turn}","raw_answer":"{answer}","normalized_answer":"{answer}","occurred_at":"2026-01-01T00:00:01Z"}}"#
+            )
+            .unwrap();
+        }
+    }
+
+    /// Drive `request_goal_on_demand` with a canned proposal and a scripted input
+    /// line. The log is seeded with positions so the on-demand arc is non-empty.
+    /// Returns `(resulting goal, rendered output)`.
+    fn run_request(engine: ObserverEngine, input: &str, tag: &str) -> (Option<String>, String) {
+        let path = unique_log(tag);
+        seed_positions(&path);
+        let config = test_config(&path);
+        let mut logger = SessionLogger::open(&path).expect("logger");
+        let mut goal: Option<String> = None;
+        let fe_input = std::io::Cursor::new(input.as_bytes().to_vec());
+        let mut fe = crate::frontend::LineFrontEnd::new(fe_input, Vec::new()).expect("front end");
+        request_goal_on_demand(&mut goal, &engine, &config, &mut logger, 0, &mut fe)
+            .expect("request");
+        let out = String::from_utf8(fe.into_output()).unwrap();
+        let _ = std::fs::remove_file(&path);
+        (goal, out)
+    }
+
+    // ---- (1)+(2): the user-requested proposal — accept / edit / decline -------
+
+    #[test]
+    fn request_goal_direct_accept_sets_the_goal() {
+        // `/request-goal` (and the confirmed bare `/goal`) propose directly; an
+        // `accept` sets the goal exactly as `/goal <text>` would.
+        let (goal, out) = run_request(ObserverEngine::Mock(Some(proposal())), "a\n", "accept");
+        assert_eq!(
+            goal.as_deref(),
+            Some("can libertarian free will be held consistently?")
+        );
+        // The proposal was surfaced belief-neutrally as the QUESTION being settled.
+        assert!(out.contains("can libertarian free will be held consistently?"));
+        assert!(out.contains("Goal set:"));
+    }
+
+    #[test]
+    fn request_goal_decline_leaves_no_goal() {
+        // Declining keeps the session free-flowing — no goal is set on the user's
+        // behalf (agency preserved).
+        let (goal, _out) = run_request(ObserverEngine::Mock(Some(proposal())), "d\n", "decline");
+        assert!(goal.is_none());
+    }
+
+    #[test]
+    fn request_goal_edit_sets_the_edited_question() {
+        // Editing lets the user rephrase the proposed QUESTION; the edited text is
+        // what gets set, not the original proposal.
+        let (goal, _out) = run_request(
+            ObserverEngine::Mock(Some(proposal())),
+            "e\nis determinism compatible with deliberation?\n",
+            "edit",
+        );
+        assert_eq!(
+            goal.as_deref(),
+            Some("is determinism compatible with deliberation?")
+        );
+    }
+
+    #[test]
+    fn request_goal_blank_or_eof_declines() {
+        // A blank choice / EOF declines rather than setting a goal — never set on
+        // the user's behalf.
+        let (goal, _out) = run_request(ObserverEngine::Mock(Some(proposal())), "\n", "blank");
+        assert!(goal.is_none());
+        let (goal, _out) = run_request(ObserverEngine::Mock(Some(proposal())), "", "eof");
+        assert!(goal.is_none());
+    }
+
+    // ---- (4): offline degrades to a "needs an LLM backend" note ---------------
+
+    #[test]
+    fn request_goal_offline_degrades_to_a_note_not_a_proposal() {
+        // No LLM backend reachable: report "no goal" with the backend note instead
+        // of silently doing nothing. No goal is set.
+        let (goal, out) = run_request(ObserverEngine::Offline, "a\n", "offline");
+        assert!(goal.is_none());
+        assert!(out.contains("needs an LLM backend"));
+    }
+
+    #[test]
+    fn request_goal_reports_when_no_thesis_has_crystallized() {
+        // An LLM is present but no single thesis has formed (`None` proposal): say
+        // so rather than fabricating a goal. Belief-neutral: never invents a thesis.
+        let (goal, out) = run_request(ObserverEngine::Mock(None), "a\n", "uncrystallized");
+        assert!(goal.is_none());
+        assert!(out.contains("no single thesis has crystallized"));
+    }
+
+    // ---- (3): the bounded interrogator offer — offer once, never twice --------
+
+    /// Drive `maybe_offer_goal_on_crystallize` once with a scripted input and the
+    /// given recorded positions. Returns `(goal, offer_made, output)`.
+    fn run_offer(
+        engine: &ObserverEngine,
+        path: &std::path::Path,
+        goal: &mut Option<String>,
+        offer_made: &mut bool,
+        recent_path: &[AnsweredQuestion],
+        input: &str,
+    ) -> String {
+        let config = test_config(path);
+        let mut logger = SessionLogger::open(path).expect("logger");
+        let fe_input = std::io::Cursor::new(input.as_bytes().to_vec());
+        let mut fe = crate::frontend::LineFrontEnd::new(fe_input, Vec::new()).expect("front end");
+        maybe_offer_goal_on_crystallize(
+            goal,
+            offer_made,
+            engine,
+            recent_path,
+            &config,
+            &mut logger,
+            1,
+            &mut fe,
+        )
+        .expect("offer");
+        String::from_utf8(fe.into_output()).unwrap()
+    }
+
+    #[test]
+    fn interrogator_offers_a_goal_once_and_not_twice() {
+        // With a crystallized thesis and no goal, the interrogator offers ONCE.
+        // After that single offer the one-shot guard is spent — a second call never
+        // re-offers (never nags), even though a thesis is still available.
+        let path = unique_log("offer-once");
+        let engine = ObserverEngine::Mock(Some(proposal()));
+        let recent_path = vec![
+            answered("Is free will real?", "yes"),
+            answered("Can a caused choice be free?", "no"),
+        ];
+        let mut goal: Option<String> = None;
+        let mut offer_made = false;
+
+        // First call: a goal is offered (user declines), and the guard is spent.
+        let first = run_offer(
+            &engine,
+            &path,
+            &mut goal,
+            &mut offer_made,
+            &recent_path,
+            "d\n",
+        );
+        assert!(offer_made, "the first offer must spend the one-shot guard");
+        assert!(goal.is_none(), "declining leaves the session free-flowing");
+        assert!(
+            first.contains("can libertarian free will be held consistently?"),
+            "the first call must surface the offer: {first}"
+        );
+
+        // Second call: NEVER re-offered — no proposal is surfaced again.
+        let second = run_offer(
+            &engine,
+            &path,
+            &mut goal,
+            &mut offer_made,
+            &recent_path,
+            "a\n",
+        );
+        assert!(
+            !second.contains("we seem to be exploring"),
+            "the offer must never repeat: {second}"
+        );
+        assert!(goal.is_none(), "a spent offer never sets a goal");
+
+        let _ = std::fs::remove_file(&path);
+    }
+
+    #[test]
+    fn interrogator_offer_accepts_and_sets_the_goal() {
+        // Accepting the single offer sets the goal (logged source observer), which
+        // then orients questioning + roundedness per STORY-159.
+        let path = unique_log("offer-accept");
+        let engine = ObserverEngine::Mock(Some(proposal()));
+        let recent_path = vec![
+            answered("Is free will real?", "yes"),
+            answered("Can a caused choice be free?", "no"),
+        ];
+        let mut goal: Option<String> = None;
+        let mut offer_made = false;
+        let out = run_offer(
+            &engine,
+            &path,
+            &mut goal,
+            &mut offer_made,
+            &recent_path,
+            "a\n",
+        );
+        assert!(offer_made);
+        assert_eq!(
+            goal.as_deref(),
+            Some("can libertarian free will be held consistently?")
+        );
+        assert!(out.contains("Goal set:"));
+        let _ = std::fs::remove_file(&path);
+    }
+
+    #[test]
+    fn interrogator_does_not_offer_early_on_a_thin_conversation() {
+        // Honor free-flow: a thin conversation (fewer than two recorded positions)
+        // yields no offer, and the one-shot guard is NOT spent — the offer can still
+        // surface on a later, more-formed turn.
+        let path = unique_log("offer-thin");
+        let engine = ObserverEngine::Mock(Some(proposal()));
+        let recent_path = vec![answered("Is free will real?", "yes")];
+        let mut goal: Option<String> = None;
+        let mut offer_made = false;
+        let out = run_offer(
+            &engine,
+            &path,
+            &mut goal,
+            &mut offer_made,
+            &recent_path,
+            "a\n",
+        );
+        assert!(!offer_made, "a thin conversation must not spend the guard");
+        assert!(goal.is_none());
+        assert!(out.is_empty(), "no offer should be surfaced: {out}");
+        let _ = std::fs::remove_file(&path);
+    }
+
+    #[test]
+    fn interrogator_does_not_offer_when_a_goal_is_already_set() {
+        // A session that already has a goal is never offered another (no nag).
+        let path = unique_log("offer-has-goal");
+        let engine = ObserverEngine::Mock(Some(proposal()));
+        let recent_path = vec![
+            answered("Is free will real?", "yes"),
+            answered("Can a caused choice be free?", "no"),
+        ];
+        let mut goal: Option<String> = Some("is determinism true?".to_string());
+        let mut offer_made = false;
+        let out = run_offer(
+            &engine,
+            &path,
+            &mut goal,
+            &mut offer_made,
+            &recent_path,
+            "a\n",
+        );
+        assert_eq!(goal.as_deref(), Some("is determinism true?"));
+        assert!(out.is_empty());
+        let _ = std::fs::remove_file(&path);
+    }
+
+    #[test]
+    fn interrogator_does_not_spend_the_guard_until_a_thesis_crystallizes() {
+        // Enough substance but NO crystallized thesis (`None` proposal): no offer is
+        // surfaced and the guard is preserved, so a later turn can still offer.
+        let path = unique_log("offer-none");
+        let engine = ObserverEngine::Mock(None);
+        let recent_path = vec![
+            answered("Is free will real?", "yes"),
+            answered("Can a caused choice be free?", "no"),
+        ];
+        let mut goal: Option<String> = None;
+        let mut offer_made = false;
+        let out = run_offer(
+            &engine,
+            &path,
+            &mut goal,
+            &mut offer_made,
+            &recent_path,
+            "a\n",
+        );
+        assert!(
+            !offer_made,
+            "an un-crystallized turn must not spend the guard"
+        );
+        assert!(goal.is_none());
+        assert!(out.is_empty());
+        let _ = std::fs::remove_file(&path);
     }
 }

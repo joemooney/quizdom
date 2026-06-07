@@ -36,9 +36,9 @@ use crate::error::{QuizdomError, Result};
 use crate::frontend::FrontEnd;
 use crate::input::{
     goal_command_text, help_command_text, is_add_command, is_back_command, is_end_command,
-    is_forward_command, is_observe_command, is_rest_command, is_synopsis_command,
-    is_terminate_command, is_verdict_command, mode_command_text, normalize_answer,
-    tutor_command_text, AnswerInput, InputContext,
+    is_forward_command, is_observe_command, is_request_goal_command, is_rest_command,
+    is_synopsis_command, is_terminate_command, is_verdict_command, mode_command_text,
+    normalize_answer, tutor_command_text, AnswerInput, InputContext,
 };
 use crate::model::{Answer, AnswerKind};
 use crate::palette::{command_registry, PaletteState};
@@ -658,6 +658,12 @@ fn parse_control(raw: &str, context: InputContext) -> Option<AnswerInput> {
     }
     if is_synopsis_command(raw) {
         return Some(AnswerInput::Synopsis);
+    }
+    // trace:STORY-173 | ai:claude — `/request-goal` checked before `/goal` so the
+    // on-demand alias routes to the direct-propose path (mirrors the line
+    // front-end recognizer order exactly).
+    if is_request_goal_command(raw) {
+        return Some(AnswerInput::RequestGoal);
     }
     if let Some(goal) = goal_command_text(raw) {
         return Some(AnswerInput::Goal(goal));

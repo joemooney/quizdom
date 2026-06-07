@@ -1480,9 +1480,10 @@ fn renders_all_question_kinds() {
         // trace:STORY-161 | ai:claude — `/mode` joins the advertised set.
         // trace:STORY-163 | ai:claude — `/` (palette), `/help`, and `/tutor` join
         // the advertised free-text control set.
+        // trace:STORY-173 | ai:claude — `/request-goal` joins the advertised set.
         (
             AnswerKind::FreeText,
-            "Answer in your own words, or / (palette), /help, /tutor, /observe, /synopsis, /goal, /mode, /rest, /explore, /add, /punt, /back, /quit",
+            "Answer in your own words, or / (palette), /help, /tutor, /observe, /synopsis, /goal, /request-goal, /mode, /rest, /explore, /add, /punt, /back, /quit",
         ),
     ];
 
@@ -2457,6 +2458,24 @@ fn goal_command_parses_the_in_session_form() {
     // not a command.
     assert!(goal_command_text("my goal is happiness").is_none());
     assert!(goal_command_text("yes").is_none());
+}
+
+// trace:STORY-173 | ai:claude — the on-demand `/request-goal` alias is recognized
+// in its slash forms (case-insensitively) and is distinct from `/goal`: an
+// ordinary answer that merely mentions "request" is NOT a command.
+#[test]
+fn request_goal_command_parses_the_on_demand_alias() {
+    assert!(is_request_goal_command("/request-goal"));
+    assert!(is_request_goal_command("/request goal"));
+    assert!(is_request_goal_command("request-goal"));
+    assert!(is_request_goal_command("/REQUEST-GOAL"));
+    // Not the alias: a bare `/goal`, a mid-sentence "request", or noise.
+    assert!(!is_request_goal_command("/goal"));
+    assert!(!is_request_goal_command("please request a goal"));
+    assert!(!is_request_goal_command("yes"));
+    // The `/request-goal` keyword is NOT swallowed by the bare-`goal` recognizer
+    // (which only matches a leading `goal`/`/goal` token) — they stay distinct.
+    assert!(goal_command_text("/request-goal").is_none());
 }
 
 // trace:STORY-159 | ai:claude — once a goal is set, the breadcrumb shows it so

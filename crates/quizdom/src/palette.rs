@@ -112,8 +112,18 @@ when the tool has not asked the question you most want to explore.",
             description: "State or show the session goal/thesis",
             detail: "States the session GOAL — the question or thesis the exploration is \
 orienting toward — phrased belief-neutrally as a question to settle, never a belief to adopt. \
-A bare /goal shows the current goal. Once set, the goal orients the next questions and the \
-breadcrumb.",
+With a goal set, a bare /goal shows the current goal. With none set, a bare /goal offers to \
+REQUEST one (the Observer proposes from the conversation so far). Once set, the goal orients \
+the next questions and the breadcrumb.",
+        },
+        // trace:STORY-173 | ai:claude
+        PaletteCommand {
+            command: "/request-goal",
+            description: "Propose a session goal from the conversation so far",
+            detail: "Asks the Observer to PROPOSE a session goal directly from the conversation \
+so far, skipping the bare-/goal confirm. It offers the proposal to accept, edit, or decline; \
+nothing is set unless you accept. Belief-neutral: the proposed goal is the QUESTION being \
+resolved, never a belief to adopt.",
         },
         PaletteCommand {
             command: "/mode",
