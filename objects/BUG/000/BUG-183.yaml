@@ -1,0 +1,31 @@
+id: 019ea2e6-85db-7d11-b98d-6f268c312514
+spec_id: BUG-183
+agreed_id: BUG-183
+title: TUI free-text answer box doesn't wrap or grow — long answers overflow horizontally on a fixed 1-row box
+description: |-
+  OBSERVED (screenshot): a long free-text answer runs off the right edge on a SINGLE line with the cursor pushed to the margin, instead of wrapping. The 'your answer' box is fixed-height.
+
+  ROOT CAUSE: tui.rs layout() pins the input pane to Constraint::Length(3) (1 content row + borders), and the tui-textarea widget (STORY-180) horizontally-scrolls a long logical line rather than soft-wrapping it.
+
+  DESIRED: the free-text box treats the answer as ONE logical line that SOFT-WRAPS to the box width, and the box GROWS VERTICALLY as wrapped rows accumulate (transcript pane shrinks to match), clamped to a max height (e.g. ~1/3 of the screen) after which the box scrolls internally. Enter still SUBMITS (it does not insert a newline); Ctrl-X Ctrl-E still escapes to $EDITOR for long-form.
+
+  IMPLEMENTATION NOTES: make the input pane constraint DYNAMIC — compute wrapped row count for the current width and use min(max_rows, wrapped+borders). tui-textarea may not soft-wrap natively (it h-scrolls to keep the cursor visible) — INVESTIGATE: enable wrapping if the widget supports it, else render the buffer wrapped ourselves (wrap to width, place the cursor on the wrapped grid) while keeping tui-textarea as the edit model. Keep the gold border + 'your answer · <model>' title.
+
+  ## Acceptance
+  - A long answer WRAPS within the box width (no horizontal overflow); the box grows vertically as it wraps.
+  - Box height is clamped to a max, then scrolls internally; transcript pane shrinks/grows complementarily.
+  - Enter submits (no newline inserted); single-key Y/N/MC paths unaffected; '/'-from-empty still opens the palette.
+  - Tests: wrapped-height computation for a given width/text (pure), layout reflects the dynamic input height, clamp at max.
+status: Approved
+priority: High
+owner: ''
+feature: Uncategorized
+created_at: 2026-06-07T16:24:37.083646748Z
+modified_at: 2026-06-07T16:24:37.083646748Z
+req_type: Bug
+tags:
+- bug
+- editor
+- layout
+- tui
+- wrap
