@@ -16,6 +16,8 @@ use crate::input::{
 use crate::model::{Answer, AnswerKind, Question, TermDefinition};
 // trace:STORY-127 | ai:claude
 use crate::observer::{read_exchange, structural_reading, Exchange, ExchangeReading};
+// trace:STORY-164 | ai:claude
+use crate::observer::{answer_help, HelpAnswer};
 // trace:STORY-128 | ai:claude
 use crate::persist::{
     AidaCliGeneratedQuestionPersister, AidaCliQuestionReweighter,
@@ -800,6 +802,40 @@ impl ObserverEngine {
             Self::Offline => crate::observer::structural_objection(position, goal),
         }
     }
+
+    // trace:STORY-164 | ai:claude
+    /// Answer a free-form `/help` process question from TOOL-CONTEXT (the design),
+    /// belief-neutral. Uses the LLM when present and falls back to the STATIC help
+    /// index offline, so `/help` always answers, online or off. The PROCESS-HELP
+    /// counterpart to [`read`]. Belief-neutral by construction: the tool-context
+    /// carries no belief content and the system prompt forbids engaging any belief.
+    fn help(&self, question: &str) -> HelpAnswer {
+        let tool_context = help_tool_context();
+        match self {
+            Self::ClaudeCli(client) => answer_help(client, question, &tool_context),
+            Self::Anthropic(client) => answer_help(client, question, &tool_context),
+            Self::Offline => crate::observer::static_help_index(question, &tool_context),
+        }
+    }
+}
+
+// trace:STORY-164 | ai:claude
+/// Build the TOOL-CONTEXT the `/help` channel answers from: one line per command
+/// in the palette registry (the single source of truth for the controls), pairing
+/// each command with its one-line description. This is the DESIGN of the tool —
+/// the controls and what they do — and it carries no belief content, so `/help`
+/// answers (online or via the offline static index) stay strictly belief-neutral.
+/// Sourcing it from the same registry the palette renders keeps `/help` in sync
+/// with the live command set automatically.
+fn help_tool_context() -> String {
+    let mut context = String::from(
+        "quizdom is a Socratic belief-exploration tool. At each question you can answer, \
+         or use these controls (a bare '/' opens a palette of them):\n",
+    );
+    for command in crate::palette::command_registry() {
+        context.push_str(&format!("{} — {}\n", command.command, command.description));
+    }
+    context
 }
 
 // trace:STORY-128 | ai:claude
@@ -1463,42 +1499,33 @@ fn render_exchange_reading(reading: &ExchangeReading, output: &mut impl Write) -
     Ok(())
 }
 
-// trace:STORY-163 | ai:claude
-/// Render the graceful placeholder for the `/help` channel.
-///
-/// STORY-163 wires `/help` through the palette + the command recognizer; the
-/// belief-neutral, TOOL-CONTEXT LLM answer is STORY-164's job. Until that lands,
-/// selecting / typing `/help` is NON-DESTRUCTIVE: it prints this note (in the
-/// secondary META voice, so it never reads as the question) and the caller
-/// re-presents the SAME question. The note is belief-neutral by construction —
-/// it talks only about the TOOL, never about any belief — and points the user at
-/// the palette's per-command `?` help, which is already live, so the channel is
-/// useful even before the LLM leg ships.
-fn render_help_placeholder(question: &str, output: &mut impl Write) -> Result<()> {
-    let header = "META (/help) — process help (belief-neutral; about the tool, not your belief):";
+// trace:STORY-164 | ai:claude
+/// Render a [`HelpAnswer`] from the `/help` channel as a clearly-labeled META
+/// voice, visually distinct from the question (style::meta). Belief-neutral and
+/// process-focused: the answer talks about HOW THE TOOL WORKS (controls, flow),
+/// sourced from TOOL-CONTEXT — it never supplies a belief or takes a side. Pure
+/// over the buffer + answer, so it is unit-testable without a live LLM. The caller
+/// re-presents the SAME question afterwards (non-destructive), so this only
+/// writes; it never consumes input or mutates state. The header flags the offline
+/// degraded mode (the static help index) so the user knows when no model answered.
+fn render_help_answer(answer: &HelpAnswer, output: &mut impl Write) -> Result<()> {
+    let header = if answer.degraded {
+        "META (/help, offline) — process help (belief-neutral; about the tool, not your belief):"
+    } else {
+        "META (/help) — process help (belief-neutral; about the tool, not your belief):"
+    };
     writeln!(
         output,
         "\n{}",
         crate::style::paint(crate::style::meta(), header)
     )?;
-    let body = if question.trim().is_empty() {
-        "Ask how the tool works — controls, the flow, what a feature does, how to rest your case. \
-Free-form answers from the tool's design arrive with /help <question> (coming soon); for now, \
-open the palette with '/' and press '?' on any command for its detailed help."
-            .to_string()
-    } else {
-        format!(
-            "Your question — \"{}\" — is a process question (how the tool works), and is answered \
-belief-neutrally from the tool's design. The free-form /help answer is coming soon; for now, \
-open the palette with '/' and press '?' on any command for its detailed help.",
-            question.trim()
-        )
-    };
-    writeln!(
-        output,
-        "{}",
-        crate::style::paint(crate::style::meta(), &format!("  {body}"))
-    )?;
+    for line in answer.answer.trim().lines() {
+        writeln!(
+            output,
+            "{}",
+            crate::style::paint(crate::style::meta(), &format!("  {line}"))
+        )?;
+    }
     Ok(())
 }
 
@@ -2116,10 +2143,15 @@ fn run_session_from_current(
                     break;
                 }
                 AnswerInput::Help(question) => {
-                    // trace:STORY-163 | ai:claude — non-destructive process-help
-                    // channel; render the graceful placeholder and re-present the
-                    // SAME question (like Observe). The LLM answer lands in STORY-164.
-                    render_help_placeholder(&question, output)?;
+                    // trace:STORY-164 | ai:claude — non-destructive process-help
+                    // channel: answer the free-form question from TOOL-CONTEXT (the
+                    // design), belief-neutral, then re-present the SAME question
+                    // (like Observe). Offline degrades to a static help index.
+                    let answer = {
+                        let _spinner = crate::spinner::Spinner::start("helping");
+                        observer.help(&question)
+                    };
+                    render_help_answer(&answer, output)?;
                     continue;
                 }
                 AnswerInput::Tutor(text) => {
@@ -2866,12 +2898,17 @@ fn browse_answered_path(
             // rest / verdict / terminate here is a no-op; the user returns to the
             // frontier (Forward / Back to the live edge) to rest their case.
             AnswerInput::Rest | AnswerInput::Verdict | AnswerInput::Terminate => continue,
-            // trace:STORY-163 | ai:claude — `/help` (process) and `/tutor`
-            // (articulation coach) are non-destructive out-of-band channels that
-            // apply anywhere, including the review pane: render the graceful
-            // placeholder and stay on the same reviewed answer.
+            // trace:STORY-164 | ai:claude — `/help` (process) is a non-destructive
+            // out-of-band channel that applies anywhere, including the review pane:
+            // answer the free-form question from TOOL-CONTEXT (belief-neutral; the
+            // static index offline) and stay on the same reviewed answer. `/tutor`
+            // stays a placeholder until STORY-165 ships its coaching engine.
             AnswerInput::Help(question) => {
-                render_help_placeholder(&question, output)?;
+                let answer = {
+                    let _spinner = crate::spinner::Spinner::start("helping");
+                    review.observer.help(&question)
+                };
+                render_help_answer(&answer, output)?;
                 continue;
             }
             AnswerInput::Tutor(text) => {
@@ -3844,31 +3881,70 @@ mod conclude_tests {
         assert!(!prompt_to_conclude(&mut input, &mut free_text, &mut out).expect("prompt"));
     }
 
-    // ---- STORY-163: /help + /tutor graceful placeholders -------------------
+    // ---- STORY-164: /help engine (tool-context, belief-neutral) ------------
 
     #[test]
-    fn help_placeholder_is_belief_neutral_and_about_the_tool() {
-        // trace:STORY-163 | ai:claude — the /help channel is belief-neutral by
-        // construction: the note talks only about the TOOL/process, points at the
-        // palette's per-command `?` help, and never references any belief content.
+    fn help_tool_context_is_built_from_the_palette_registry() {
+        // trace:STORY-164 | ai:claude — the TOOL-CONTEXT /help answers from is the
+        // palette command registry (the single source of truth for the controls),
+        // so /help stays in sync with the live command set. It carries the controls
+        // and their descriptions — the design — and no belief content.
+        let context = help_tool_context();
+        for command in crate::palette::command_registry() {
+            assert!(
+                context.contains(command.command),
+                "tool-context missing {}",
+                command.command
+            );
+        }
+        // Belief-neutral: it is about the tool, never a belief.
+        assert!(context.contains("Socratic belief-exploration tool"));
+    }
+
+    #[test]
+    fn render_help_answer_labels_the_meta_voice_and_flags_offline() {
+        // trace:STORY-164 | ai:claude — the /help answer renders in the META voice
+        // (distinct from the question) and flags the offline/static-index mode so the
+        // user knows when no model answered. Belief-neutral header by construction.
         let mut out = Vec::new();
-        render_help_placeholder("how do I rest my case?", &mut out).expect("render");
+        render_help_answer(
+            &HelpAnswer {
+                answer: "Use /rest to begin the closing ritual.".to_string(),
+                degraded: false,
+            },
+            &mut out,
+        )
+        .expect("render");
         let text = String::from_utf8(out).unwrap();
-        assert!(text.contains("/help"));
+        assert!(text.contains("META (/help)"));
         assert!(text.to_lowercase().contains("belief-neutral"));
-        assert!(text.contains("how do I rest my case?"));
-        // It points the user at the already-live per-command help.
-        assert!(text.contains("'?'") || text.contains("palette"));
+        assert!(text.contains("Use /rest to begin the closing ritual."));
+
+        let mut out = Vec::new();
+        render_help_answer(
+            &HelpAnswer {
+                answer: "Offline help.".to_string(),
+                degraded: true,
+            },
+            &mut out,
+        )
+        .expect("render");
+        let text = String::from_utf8(out).unwrap();
+        assert!(text.contains("META (/help, offline)"));
     }
 
     #[test]
-    fn help_placeholder_without_a_question_still_guides_the_user() {
-        let mut out = Vec::new();
-        render_help_placeholder("", &mut out).expect("render");
-        let text = String::from_utf8(out).unwrap();
-        assert!(text.contains("/help"));
-        assert!(text.to_lowercase().contains("controls") || text.to_lowercase().contains("flow"));
+    fn offline_observer_help_answers_from_a_static_index() {
+        // trace:STORY-164 | ai:claude — end-to-end through the ObserverEngine: an
+        // offline engine answers /help from the STATIC help index (built from the
+        // tool-context), degrading gracefully with the controls — never a belief.
+        let answer = ObserverEngine::Offline.help("how do I rest my case?");
+        assert!(answer.degraded);
+        assert!(answer.answer.contains("/rest"));
+        assert!(answer.answer.contains("about the tool, not your belief"));
     }
+
+    // ---- STORY-163: /tutor graceful placeholder ----------------------------
 
     #[test]
     fn tutor_placeholder_promises_to_sharpen_the_users_point_without_supplying_a_belief() {
