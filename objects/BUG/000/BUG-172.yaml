@@ -3,12 +3,12 @@ spec_id: BUG-172
 agreed_id: BUG-172
 title: 'Quote-attribution should be symmetric: interrogator quoting the user -> user''s color'
 description: 'STORY-171''s quote-attribution is one-directional (an ''interrogator-only gate''): a quoted ''...'' span renders in the interrogator''s CYAN only inside the USER''s lines. Add the COMPLEMENT: a quoted span inside the INTERROGATOR''s line renders in the USER''s color (GREEN) — the interrogator is quoting the user. General rule: a quoted span is colored as the OPPOSING role (each party quotes the other). (Keep meta/challenger lines as-is unless a quote clearly attributes; default the opposing-role heuristic to the interrogator<->user pair.) Lane: tui.rs (styled_transcript_line) + style.rs (line_fragments / the quote gate). ## Acceptance: a quote in an interrogator line renders in the user''s color; the existing user-quotes-interrogator case still works; tests cover BOTH directions; non-TTY/NO_COLOR/headless unaffected.'
-status: InProgress
+status: Completed
 priority: Medium
 owner: ''
 feature: Uncategorized
 created_at: 2026-06-07T06:43:59.350742021Z
-modified_at: 2026-06-07T06:49:05.389647336Z
+modified_at: 2026-06-07T06:50:09.097748728Z
 req_type: Bug
 tags:
 - bug
