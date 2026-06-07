@@ -25,10 +25,15 @@ priority: High
 owner: ''
 feature: Uncategorized
 created_at: 2026-06-07T15:09:09.292766841Z
-modified_at: 2026-06-07T15:09:09.292766841Z
+modified_at: 2026-06-07T15:09:53.480700186Z
 req_type: Story
 tags:
 - editor
 - input
 - story
 - tui
+relationships:
+- rel_type: Parent
+  target_id: 019ea07d-90fc-7b53-ad38-d8979d58a26f
+  created_at: 2026-06-07T15:09:53.480694948Z
+  created_by: joe
