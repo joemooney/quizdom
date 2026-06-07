@@ -10,12 +10,12 @@ description: |-
   (2) INTERROGATOR-offered: when no goal is set AND a thesis has crystallized (enough substance), the questioner OCCASIONALLY offers 'we seem to be exploring X — make resolving it the goal?'; user accepts/declines. BOUNDED: offer at most once per crystallized thesis, never nag, honor free-flow (no offer early on).
 
   Reuses observer::propose_goal + the existing goal-setting/orientation path (STORY-159). Belief-neutral (the goal is the QUESTION being resolved, never a belief). Lane: session.rs (bare-/goal handling + the bounded interrogator offer in the loop) + observer.rs (proposal). ## Acceptance: bare '/goal' with no goal proposes one (accept/edit/decline) and a set goal orients per STORY-159; the interrogator offers a goal once when a thesis crystallizes + none set; offline degrades (no proposal -> 'no goal'); tests cover both request paths + the bounded-offer guard.
-status: Approved
+status: InProgress
 priority: High
 owner: ''
 feature: Uncategorized
 created_at: 2026-06-07T06:46:03.174173134Z
-modified_at: 2026-06-07T06:52:22.524529195Z
+modified_at: 2026-06-07T06:52:24.808322874Z
 req_type: Story
 tags:
 - goal
