@@ -17,7 +17,7 @@ priority: High
 owner: ''
 feature: Uncategorized
 created_at: 2026-06-07T06:31:58.875310462Z
-modified_at: 2026-06-07T06:40:06.849003747Z
+modified_at: 2026-06-07T06:40:12.717378583Z
 req_type: Story
 tags:
 - color
@@ -36,3 +36,8 @@ comments:
   content: Commit fd1d196 references this requirement
   created_at: 2026-06-07T06:38:51.589266143Z
   modified_at: 2026-06-07T06:38:51.589266143Z
+- id: 019ea0cf-7bad-7d22-a689-8b3e031f6db0
+  author: joe
+  content: 'Implemented in PR #59 (squash 5211a71 on main): centralized ratatui THEME in style.rs::theme (gold/amber borders, GOLD cursor marker, colorized status label/value segments, per-role transcript colors interrogator=cyan/user=green/meta=bright-blue italic/challenger=magenta), pure classify_line role attribution + line_fragments quote-attribution (a quoted span in the user''s answer renders in the interrogator color). Belief-neutral; honors NO_COLOR + headless path unchanged. Unit tests added in style.rs::theme::tests and tui.rs::tests.'
+  created_at: 2026-06-07T06:40:12.717378583Z
+  modified_at: 2026-06-07T06:40:12.717378583Z
