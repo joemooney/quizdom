@@ -1,0 +1,28 @@
+id: 019ea0c7-f29b-7013-905c-f93254305b08
+spec_id: STORY-171
+agreed_id: STORY-171
+title: 'TUI theming: colored borders, gold cursor, colorized status, per-role colors + quote-attribution'
+description: |-
+  Iteration on the STORY-169 ratatui shell — a centralized THEME in style.rs (one place to tweak), applied in tui.rs. Belief-neutral (presentation only); honor NO_COLOR + the headless path stays plain.
+
+  (1) BORDERS: colored pane borders — a warm gold/amber accent.
+  (2) CURSOR: the input cursor in GOLD.
+  (3) STATUS BAR: colorize it distinctly from the transcript — colored segments/labels (and/or a subtle background) for goal | breadcrumb (topic/depth/branch) | roundedness | mode.
+  (4) PER-ROLE COLORS in the transcript — each voice gets a distinct color (PROPOSED defaults, tweakable in the theme): interrogator/questioner = CYAN; the user (your answers) = GREEN; the observer/meta voice (observe/tutor/help/synopsis/verdict) = keep the existing bright-blue ITALIC META style; the challenger (debate questions + closing objections) = MAGENTA. Attribute each transcript line to a role and color it.
+  (5) QUOTE-ATTRIBUTION: a quoted span (text inside "...") within the USER's answer renders in the INTERROGATOR's color (a quote attributes to the interrogator). Heuristic is fine for v1 (any quoted span -> interrogator color); a future refinement could match the quote to the interrogator's actual prior text.
+
+  Lane: tui.rs (rendering) + style.rs (the centralized theme/palette). ## Acceptance: pane borders + gold cursor + colorized status render in the TUI; each role's transcript text uses its themed color; a quoted span in the user's answer renders in the interrogator's color; the theme lives in one place; non-TTY/NO_COLOR + the headless line front-end are unaffected; tests pass.
+status: Approved
+priority: High
+owner: ''
+feature: Uncategorized
+created_at: 2026-06-07T06:31:58.875310462Z
+modified_at: 2026-06-07T06:31:58.875310462Z
+req_type: Story
+tags:
+- color
+- post-v1
+- roles
+- story
+- theme
+- tui
