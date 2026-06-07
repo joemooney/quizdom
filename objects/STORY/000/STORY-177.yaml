@@ -20,12 +20,12 @@ description: |-
   - Mode is recomputed live from whether the buffer starts with '/'; removing the '/' flips to search (does not close); empty shows all; backspace-on-empty closes.
   - Works in the ratatui TUI palette; headless typed-command dispatch unaffected.
   - Tests: prefix-mode is names-only, search-mode matches name AND description substrings, the mode flip on removing '/', empty-shows-all, backspace-on-empty-closes.
-status: Approved
+status: InProgress
 priority: Medium
 owner: ''
 feature: Uncategorized
 created_at: 2026-06-07T14:25:39.340365370Z
-modified_at: 2026-06-07T14:25:53.442166752Z
+modified_at: 2026-06-07T15:20:17.689487444Z
 req_type: Story
 tags:
 - filter
