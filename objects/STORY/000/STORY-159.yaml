@@ -1,0 +1,18 @@
+id: 019e9fd6-235f-7732-afab-80072b6cb5fe
+spec_id: STORY-159
+agreed_id: STORY-159
+title: 'Session goal/focus: set it + orient questioning + scoring toward it'
+description: 'A session can carry a GOAL/thesis (the claim it''s resolving). Set via a ''--goal <text>'' flag at start, an in-session command (user states it), OR proposed by the Observer (EPIC-126) when a thesis crystallizes. Once set, ORIENT: pass the goal into the LLM next-question prompt (strategy.rs) so questions aim at resolving it, and into the roundedness scoring (synopsis.rs, EPIC-154) so the score/limiting-gap are measured WITH RESPECT TO the goal. Free-flowing until set; goal is shown in the breadcrumb/status. Lane: session.rs (state + set command) + strategy.rs (prompt) + synopsis.rs/observer.rs (goal-aware scoring + proposal). Belief-neutral. ## Acceptance: goal settable 3 ways (flag/in-session/Observer-proposed); when set, the question prompt + roundedness reference it; offline degrades; mocked-LLM tests cover orientation + the Observer proposal.'
+status: Approved
+priority: High
+owner: ''
+feature: Uncategorized
+created_at: 2026-06-07T02:07:51.647279434Z
+modified_at: 2026-06-07T02:07:51.647279434Z
+req_type: Story
+tags:
+- focus
+- goal
+- story
+- strategy
+- synopsis
