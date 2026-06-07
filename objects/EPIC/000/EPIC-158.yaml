@@ -61,7 +61,7 @@ priority: High
 owner: ''
 feature: Uncategorized
 created_at: 2026-06-07T02:07:21.958497954Z
-modified_at: 2026-06-07T02:07:49.613614255Z
+modified_at: 2026-06-07T02:45:19.718900380Z
 req_type: Epic
 tags:
 - closing
@@ -93,3 +93,9 @@ relationships:
 - rel_type: Parent
   target_id: 019e9fd6-53f1-7763-8f19-8b4efad3920d
   created_at: 2026-06-07T02:08:05.553898558Z
+comments:
+- id: 019e9ff8-70e6-7cc3-8b9e-d4ee85dfcde5
+  author: joe
+  content: Commit ed523da references this requirement
+  created_at: 2026-06-07T02:45:19.718900380Z
+  modified_at: 2026-06-07T02:45:19.718900380Z
