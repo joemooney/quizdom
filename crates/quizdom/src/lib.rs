@@ -69,7 +69,7 @@ pub use signals::{
 };
 pub use strategy::{
     assist_user_question, reweight, AnsweredQuestion, QualitySignal, SessionMode, StrategyContext,
-    UserQuestionAssist,
+    TurnEnvelope, UserQuestionAssist,
 };
 pub use strategy::{
     DeterministicNextQuestionStrategy, LlmNextQuestionStrategy, NextQuestionStrategy,

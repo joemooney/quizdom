@@ -34,6 +34,7 @@ use crate::persist::{
 };
 use crate::strategy::{
     different_topic_punt_question, AnsweredQuestion, QualitySignal, SessionMode, StrategyContext,
+    TurnEnvelope,
 };
 use crate::strategy::{
     DeterministicNextQuestionStrategy, LlmNextQuestionStrategy, NextQuestionStrategy,
@@ -991,50 +992,12 @@ impl ObserverEngine {
         }
     }
 
-    // trace:STORY-175 | ai:claude
-    /// Whether the interrogator should RAISE its own `/objection` this turn (the
-    /// bounded self-objection). Uses the LLM when present; offline / no-backend it
-    /// never objects (returns `None`). Belief-neutral: the objection it raises names
-    /// a STRUCTURAL tension, never a belief.
-    #[cfg(test)]
-    fn interrogator_objection(&self, positions: &[String]) -> Option<String> {
-        match self {
-            Self::ClaudeCli(client) => {
-                crate::observer::propose_interrogator_objection(client, positions)
-            }
-            Self::Anthropic(client) => {
-                crate::observer::propose_interrogator_objection(client, positions)
-            }
-            Self::Offline => None,
-            // trace:STORY-175 | ai:claude — a Mock reuses the goal-proposal canned
-            // value to decide whether to object: a `Some` proposal yields an
-            // objection (rare, gated on ≥2 positions like the real path); `None`
-            // stays quiet.
-            Self::Mock(proposal) => {
-                if positions.len() < 2 {
-                    return None;
-                }
-                proposal
-                    .as_ref()
-                    .map(|p| format!("material unaddressed tension re: {}", p.goal))
-            }
-            // The judge-mock never self-objects (the judge tests drive /judge only).
-            Self::MockJudge(_) => None,
-        }
-    }
-
-    #[cfg(not(test))]
-    fn interrogator_objection(&self, positions: &[String]) -> Option<String> {
-        match self {
-            Self::ClaudeCli(client) => {
-                crate::observer::propose_interrogator_objection(client, positions)
-            }
-            Self::Anthropic(client) => {
-                crate::observer::propose_interrogator_objection(client, positions)
-            }
-            Self::Offline => None,
-        }
-    }
+    // trace:STORY-188 | ai:claude — the per-turn `ObserverEngine::interrogator_objection`
+    // wrapper (STORY-175) is REMOVED: the bounded self-objection is now a near-free
+    // by-product of the single turn-envelope LLM call (ADR-187), not a separate
+    // full-history probe spawned each turn. The session loop reads
+    // `TurnEnvelope.objection` and applies the same free-flow + one-shot SURFACING
+    // rules in `maybe_interrogator_objection`.
 
     // trace:STORY-173 | ai:claude
     /// True when this engine has NO LLM backend reachable, so a goal proposal is
@@ -1490,11 +1453,15 @@ fn request_goal_on_demand(
 /// never nagged. No offer happens early (a thin conversation yields no crystallized
 /// thesis), honoring free-flow. Belief-neutral: the offer names the QUESTION being
 /// circled, never a belief to adopt.
+// trace:STORY-188 | ai:claude — the SOURCE moved from a per-turn `propose_goal`
+// probe to the turn-envelope's `goal_offer` field (ADR-187): this helper now only
+// applies the SURFACING rules (free-flow + one-shot guard) over the proposal the
+// one turn-call already produced. No LLM spawn here.
 #[allow(clippy::too_many_arguments)]
 fn maybe_offer_goal_on_crystallize(
     goal: &mut Option<String>,
     offer_made: &mut bool,
-    observer: &ObserverEngine,
+    goal_offer: Option<crate::observer::GoalProposal>,
     recent_path: &[AnsweredQuestion],
     config: &CliConfig,
     logger: &mut SessionLogger,
@@ -1506,7 +1473,7 @@ fn maybe_offer_goal_on_crystallize(
     if *offer_made || goal.is_some() {
         return Ok(());
     }
-    // Honor free-flow: only consider an offer once there is real substance to read
+    // Honor free-flow: only surface an offer once there is real substance
     // (a couple of recorded positions). An early, thin conversation is left alone.
     let positions: Vec<String> = recent_path
         .iter()
@@ -1516,13 +1483,9 @@ fn maybe_offer_goal_on_crystallize(
     if positions.len() < 2 {
         return Ok(());
     }
-    let proposal = {
-        let _spinner = crate::spinner::Spinner::start("reading for a thesis");
-        observer.propose_goal(&positions)
-    };
-    let Some(proposal) = proposal else {
-        // No thesis has crystallized yet — stay free-flowing and DO NOT burn the
-        // one-shot. The offer can still surface on a later, more-formed turn.
+    let Some(proposal) = goal_offer else {
+        // No thesis crystallized in the envelope — stay free-flowing and DO NOT burn
+        // the one-shot. The offer can still surface on a later, more-formed turn.
         return Ok(());
     };
     // A thesis crystallized: this is the single offer. Mark it spent BEFORE
@@ -1541,11 +1504,16 @@ fn maybe_offer_goal_on_crystallize(
 /// objection happens on a thin conversation (fewer than two recorded positions) or
 /// while one is already open. Offline it never objects. Belief-neutral: the
 /// objection names a STRUCTURAL tension, never a belief.
+// trace:STORY-188 | ai:claude — the SOURCE moved from a per-turn
+// `interrogator_objection` probe to the turn-envelope's `objection` field
+// (ADR-187): this helper now only applies the SURFACING rules (free-flow +
+// one-shot guard) over the objection the one turn-call already produced. No LLM
+// spawn here; deterministic / offline strategies pass `None` and nothing surfaces.
 #[allow(clippy::too_many_arguments)]
 fn maybe_interrogator_objection(
     objection_state: &mut Option<ObjectionState>,
     objection_made: &mut bool,
-    observer: &ObserverEngine,
+    objection: Option<String>,
     recent_path: &[AnsweredQuestion],
     config: &CliConfig,
     logger: &mut SessionLogger,
@@ -1557,7 +1525,7 @@ fn maybe_interrogator_objection(
     if objection_state.is_some() || *objection_made {
         return Ok(());
     }
-    // Honor free-flow: only consider objecting once there is real substance.
+    // Honor free-flow: only surface an objection once there is real substance.
     let positions: Vec<String> = recent_path
         .iter()
         .filter(|answered| !answered.normalized_answer.is_empty())
@@ -1566,9 +1534,12 @@ fn maybe_interrogator_objection(
     if positions.len() < 2 {
         return Ok(());
     }
-    let Some(text) = observer.interrogator_objection(&positions) else {
-        // No genuine material tension worth objecting over — stay quiet and DO NOT
-        // spend the one-shot. A later, more-formed turn can still object.
+    let Some(text) = objection
+        .map(|o| o.trim().to_string())
+        .filter(|o| !o.is_empty())
+    else {
+        // No genuine material tension in the envelope — stay quiet and DO NOT spend
+        // the one-shot. A later, more-formed turn can still object.
         return Ok(());
     };
     // A material tension surfaced: this is the single interrogator objection. Mark
@@ -3435,9 +3406,22 @@ fn run_session_from_current(
         // dropped before any output for the next question is printed, so the
         // spinner line is cleared cleanly. TTY-only / stderr behavior is
         // inherited from the spinner util, so piped output is unchanged.
-        let next_question = {
+        // trace:STORY-188 | ai:claude
+        // ONE interrogator turn-call (ADR-187): the strategy returns a TurnEnvelope
+        // — the next question PLUS the belief-neutral objection / goal-offer META
+        // by-products — in the single structured-output call it already made. The
+        // old design spawned a SEPARATE full-history `claude -p` probe for each of
+        // `propose_goal` / `interrogator_objection` EVERY turn (the one-shot guard
+        // gated the OUTCOME, not the cadence); those per-turn probes are gone. The
+        // envelope's meta fields are the SOURCE the surfacing helpers below now
+        // consume — they keep the same free-flow + one-shot SURFACING rules.
+        let TurnEnvelope {
+            next_question,
+            objection: envelope_objection,
+            goal_offer: envelope_goal_offer,
+        } = {
             let _spinner = crate::spinner::Spinner::start("thinking");
-            strategy.next_question(&current, &context, bank)?
+            strategy.next_turn(&current, &context, bank)?
         };
         match next_question {
             Some(next) => {
@@ -3512,18 +3496,20 @@ fn run_session_from_current(
             }
         }
 
+        // trace:STORY-188 | ai:claude
         // trace:STORY-173 | ai:claude
-        // INTERROGATOR-offered goal (offer once, on crystallize): with a fresh
-        // answer recorded and the conversation grown, let the questioner offer a
-        // goal AT MOST ONCE — when a thesis has crystallized and none is set. The
-        // one-shot guard (`goal_offer_made`) means the offer never repeats, so the
-        // user is never nagged; an early, thin conversation yields no crystallized
-        // thesis, honoring free-flow. Declining keeps exploring. Belief-neutral:
-        // the offer names the QUESTION being circled, never a belief.
+        // INTERROGATOR-offered goal (offer once, on crystallize): SURFACE the
+        // envelope's `goal_offer` AT MOST ONCE — when a thesis crystallized and
+        // none is set. The SOURCE is the one turn-call above (ADR-187), not a
+        // per-turn probe. The one-shot guard (`goal_offer_made`) means the offer
+        // never repeats, so the user is never nagged; an early, thin conversation
+        // yields no crystallized thesis, honoring free-flow. Declining keeps
+        // exploring. Belief-neutral: the offer names the QUESTION being circled,
+        // never a belief.
         maybe_offer_goal_on_crystallize(
             &mut goal,
             &mut goal_offer_made,
-            &observer,
+            envelope_goal_offer,
             &recent_path,
             config,
             &mut logger,
@@ -3531,18 +3517,20 @@ fn run_session_from_current(
             fe,
         )?;
 
+        // trace:STORY-188 | ai:claude
         // trace:STORY-175 | ai:claude
-        // INTERROGATOR self-objection (raise rarely, on a material tension): with a
-        // fresh answer recorded and the conversation grown, let the questioner raise
-        // its OWN `/objection` AT MOST ONCE — when a genuine material, unaddressed
-        // structural tension exists and none is already open. The one-shot guard
-        // (`interrogator_objection_made`) means it never spams (same bounded posture
-        // as the goal-offer). Offline it never objects. Belief-neutral: it names a
-        // structural tension, never a belief.
+        // INTERROGATOR self-objection (raise rarely, on a material tension): SURFACE
+        // the envelope's `objection` AT MOST ONCE — when a genuine material,
+        // unaddressed structural tension exists and none is already open. The SOURCE
+        // is the one turn-call above (ADR-187), not a per-turn probe. The one-shot
+        // guard (`interrogator_objection_made`) means it never spams (same bounded
+        // posture as the goal-offer). Deterministic / offline strategies leave the
+        // field `None`, so nothing surfaces. Belief-neutral: it names a structural
+        // tension, never a belief.
         maybe_interrogator_objection(
             &mut objection_state,
             &mut interrogator_objection_made,
-            &observer,
+            envelope_objection,
             &recent_path,
             config,
             &mut logger,
@@ -5482,10 +5470,12 @@ mod goal_request_tests {
 
     // ---- (3): the bounded interrogator offer — offer once, never twice --------
 
-    /// Drive `maybe_offer_goal_on_crystallize` once with a scripted input and the
-    /// given recorded positions. Returns `(goal, offer_made, output)`.
+    // trace:STORY-188 | ai:claude
+    /// Drive `maybe_offer_goal_on_crystallize` once with a scripted input, the given
+    /// recorded positions, and the goal-offer the turn-envelope produced (the SOURCE
+    /// is now the envelope field, not a per-turn observer probe). Returns the output.
     fn run_offer(
-        engine: &ObserverEngine,
+        goal_offer: Option<crate::observer::GoalProposal>,
         path: &std::path::Path,
         goal: &mut Option<String>,
         offer_made: &mut bool,
@@ -5499,7 +5489,7 @@ mod goal_request_tests {
         maybe_offer_goal_on_crystallize(
             goal,
             offer_made,
-            engine,
+            goal_offer,
             recent_path,
             &config,
             &mut logger,
@@ -5516,7 +5506,6 @@ mod goal_request_tests {
         // After that single offer the one-shot guard is spent — a second call never
         // re-offers (never nags), even though a thesis is still available.
         let path = unique_log("offer-once");
-        let engine = ObserverEngine::Mock(Some(proposal()));
         let recent_path = vec![
             answered("Is free will real?", "yes"),
             answered("Can a caused choice be free?", "no"),
@@ -5526,7 +5515,7 @@ mod goal_request_tests {
 
         // First call: a goal is offered (user declines), and the guard is spent.
         let first = run_offer(
-            &engine,
+            Some(proposal()),
             &path,
             &mut goal,
             &mut offer_made,
@@ -5540,9 +5529,10 @@ mod goal_request_tests {
             "the first call must surface the offer: {first}"
         );
 
-        // Second call: NEVER re-offered — no proposal is surfaced again.
+        // Second call: NEVER re-offered — no proposal is surfaced again, even though
+        // the envelope still carries a crystallized thesis.
         let second = run_offer(
-            &engine,
+            Some(proposal()),
             &path,
             &mut goal,
             &mut offer_made,
@@ -5563,7 +5553,6 @@ mod goal_request_tests {
         // Accepting the single offer sets the goal (logged source observer), which
         // then orients questioning + roundedness per STORY-159.
         let path = unique_log("offer-accept");
-        let engine = ObserverEngine::Mock(Some(proposal()));
         let recent_path = vec![
             answered("Is free will real?", "yes"),
             answered("Can a caused choice be free?", "no"),
@@ -5571,7 +5560,7 @@ mod goal_request_tests {
         let mut goal: Option<String> = None;
         let mut offer_made = false;
         let out = run_offer(
-            &engine,
+            Some(proposal()),
             &path,
             &mut goal,
             &mut offer_made,
@@ -5593,12 +5582,11 @@ mod goal_request_tests {
         // yields no offer, and the one-shot guard is NOT spent — the offer can still
         // surface on a later, more-formed turn.
         let path = unique_log("offer-thin");
-        let engine = ObserverEngine::Mock(Some(proposal()));
         let recent_path = vec![answered("Is free will real?", "yes")];
         let mut goal: Option<String> = None;
         let mut offer_made = false;
         let out = run_offer(
-            &engine,
+            Some(proposal()),
             &path,
             &mut goal,
             &mut offer_made,
@@ -5615,7 +5603,6 @@ mod goal_request_tests {
     fn interrogator_does_not_offer_when_a_goal_is_already_set() {
         // A session that already has a goal is never offered another (no nag).
         let path = unique_log("offer-has-goal");
-        let engine = ObserverEngine::Mock(Some(proposal()));
         let recent_path = vec![
             answered("Is free will real?", "yes"),
             answered("Can a caused choice be free?", "no"),
@@ -5623,7 +5610,7 @@ mod goal_request_tests {
         let mut goal: Option<String> = Some("is determinism true?".to_string());
         let mut offer_made = false;
         let out = run_offer(
-            &engine,
+            Some(proposal()),
             &path,
             &mut goal,
             &mut offer_made,
@@ -5637,24 +5624,17 @@ mod goal_request_tests {
 
     #[test]
     fn interrogator_does_not_spend_the_guard_until_a_thesis_crystallizes() {
-        // Enough substance but NO crystallized thesis (`None` proposal): no offer is
-        // surfaced and the guard is preserved, so a later turn can still offer.
+        // Enough substance but NO crystallized thesis (`None` envelope goal-offer):
+        // no offer is surfaced and the guard is preserved, so a later turn can still
+        // offer.
         let path = unique_log("offer-none");
-        let engine = ObserverEngine::Mock(None);
         let recent_path = vec![
             answered("Is free will real?", "yes"),
             answered("Can a caused choice be free?", "no"),
         ];
         let mut goal: Option<String> = None;
         let mut offer_made = false;
-        let out = run_offer(
-            &engine,
-            &path,
-            &mut goal,
-            &mut offer_made,
-            &recent_path,
-            "a\n",
-        );
+        let out = run_offer(None, &path, &mut goal, &mut offer_made, &recent_path, "a\n");
         assert!(
             !offer_made,
             "an un-crystallized turn must not spend the guard"
@@ -6065,11 +6045,12 @@ mod objection_tests {
         let path = unique_log("interrogator-once");
         let config = test_config(&path);
         let mut logger = SessionLogger::open(&path).expect("logger");
-        // The Mock self-objects when it has a canned proposal + ≥2 positions.
-        let observer = ObserverEngine::Mock(Some(crate::observer::GoalProposal {
-            goal: "whether free will survives causation".to_string(),
-            rationale: "circling".to_string(),
-        }));
+        // trace:STORY-188 | ai:claude — the SOURCE is the turn-envelope's `objection`
+        // field (a structural tension the one turn-call produced), not a per-turn
+        // probe. A `Some(text)` is the material tension to surface.
+        let objection = Some(
+            "material unaddressed tension re: whether free will survives causation".to_string(),
+        );
         let recent_path = vec![
             answered("Is free will real?", "yes"),
             answered("Can a caused choice be free?", "no"),
@@ -6082,7 +6063,7 @@ mod objection_tests {
         maybe_interrogator_objection(
             &mut state,
             &mut made,
-            &observer,
+            objection.clone(),
             &recent_path,
             &config,
             &mut logger,
@@ -6103,7 +6084,7 @@ mod objection_tests {
         maybe_interrogator_objection(
             &mut state2,
             &mut made,
-            &observer,
+            objection,
             &recent_path,
             &config,
             &mut logger,
@@ -6123,11 +6104,9 @@ mod objection_tests {
         let path = unique_log("interrogator-thin");
         let config = test_config(&path);
         let mut logger = SessionLogger::open(&path).expect("logger");
-        let observer = ObserverEngine::Mock(Some(crate::observer::GoalProposal {
-            goal: "g".to_string(),
-            rationale: "r".to_string(),
-        }));
-        // Thin: a single position must not spend the guard or object.
+        // trace:STORY-188 | ai:claude — even with a material tension in the envelope,
+        // a thin conversation must not spend the guard or surface the objection.
+        let objection = Some("material unaddressed tension re: g".to_string());
         let thin = vec![answered("Is free will real?", "yes")];
         let mut state: Option<ObjectionState> = None;
         let mut made = false;
@@ -6135,7 +6114,7 @@ mod objection_tests {
         maybe_interrogator_objection(
             &mut state,
             &mut made,
-            &observer,
+            objection,
             &thin,
             &config,
             &mut logger,
@@ -6146,7 +6125,9 @@ mod objection_tests {
         assert!(!made, "a thin conversation must not spend the guard");
         assert!(state.is_none());
 
-        // Offline: never objects, even with substance.
+        // trace:STORY-188 | ai:claude — deterministic / offline strategies leave the
+        // envelope's `objection` field `None`, so nothing surfaces even with
+        // substance (the old `ObserverEngine::Offline` "never objects" semantics).
         let recent_path = vec![
             answered("Is free will real?", "yes"),
             answered("Can a caused choice be free?", "no"),
@@ -6156,7 +6137,7 @@ mod objection_tests {
         maybe_interrogator_objection(
             &mut state,
             &mut made2,
-            &ObserverEngine::Offline,
+            None,
             &recent_path,
             &config,
             &mut logger,
@@ -6164,7 +6145,7 @@ mod objection_tests {
             &mut out2,
         )
         .expect("offer");
-        assert!(!made2, "offline must never object");
+        assert!(!made2, "a None envelope objection must never object");
         assert!(state.is_none());
         let _ = std::fs::remove_file(&path);
     }

@@ -610,53 +610,12 @@ pub fn structural_judge_ruling(objection: &str, goal: Option<&str>) -> JudgeRuli
     }
 }
 
-// trace:STORY-175 | ai:claude
-/// Whether the interrogator should RAISE its own `/objection` this turn — the
-/// bounded-proactivity check. The interrogator objects RARELY (same one-shot-ish
-/// posture as the goal-offer): only when a genuine material, unaddressed tension
-/// exists, never per-turn. With no LLM (offline) it never objects. Returns the
-/// objection TEXT to raise, or `None` to stay quiet. Belief-neutral: the objection
-/// names a STRUCTURAL tension, never asserts a belief.
-pub fn propose_interrogator_objection<C: LLMClient>(
-    client: &C,
-    positions: &[String],
-) -> Option<String> {
-    if positions.len() < 2 {
-        return None;
-    }
-    let runtime = tokio::runtime::Builder::new_current_thread()
-        .enable_time()
-        .build()
-        .ok()?;
-    let mut prompt = String::from("The user has taken these positions in the dialogue so far:\n");
-    for position in positions {
-        prompt.push_str(&format!("- {position}\n"));
-    }
-    prompt.push_str(
-        "\nIs there a GENUINE, MATERIAL, still-UNADDRESSED structural tension worth raising a formal OBJECTION over right now? Object RARELY — only when the tension is real and unaddressed, never routinely. Return only JSON: {\"object\":true|false,\"objection\":\"if object is true, the single material unaddressed tension, phrased belief-neutrally as a structural challenge — never a counter-belief\"}.",
-    );
-    let (text, _tool_calls) = runtime
-        .block_on(client.call(
-            INTERROGATOR_OBJECTION_SYSTEM_PROMPT,
-            &[Message::user(prompt)],
-            &[],
-        ))
-        .ok()?;
-    let value: Value = serde_json::from_str(text.trim()).ok()?;
-    if value.get("object").and_then(Value::as_bool) != Some(true) {
-        return None;
-    }
-    value
-        .get("objection")
-        .and_then(Value::as_str)
-        .map(str::trim)
-        .filter(|o| !o.is_empty())
-        .map(str::to_string)
-}
-
-/// System prompt for the interrogator's bounded self-objection: it presses
-/// STRUCTURE, sparingly, and never asserts a belief.
-const INTERROGATOR_OBJECTION_SYSTEM_PROMPT: &str = "You are quizdom's interrogator, deciding whether to raise a FORMAL OBJECTION mid-dialogue. You raise objections RARELY — only when a genuine, material, still-unaddressed structural tension exists in the user's positions. You are STRICTLY belief-neutral: an objection names a STRUCTURAL tension (an inconsistency, an unmet burden, an ambiguity), NEVER a counter-belief and NEVER an assertion that the user's belief is false. When in doubt, do not object.";
+// trace:STORY-188 | ai:claude — the standalone `propose_interrogator_objection`
+// probe + its system prompt (STORY-175) are removed. The bounded self-objection
+// is now a belief-neutral by-product of the single turn-envelope LLM call
+// (ADR-187): the strategy requests it inline (see `strategy::strategy_prompt`) and
+// parses it via `strategy::parse_envelope_meta`, so there is no longer a separate
+// full-history probe spawned each turn.
 
 // trace:STORY-164 | ai:claude
 /// An answer from the `/help` channel: a belief-neutral explanation of HOW the
@@ -1506,34 +1465,10 @@ mod tests {
         }
     }
 
-    #[test]
-    fn interrogator_objects_only_when_the_llm_says_so_and_never_offline() {
-        // trace:STORY-175 | ai:claude — the bounded self-objection: object only on a
-        // genuine material tension, and never offline (the err path stays quiet).
-        let positions = vec![
-            "free will is real".to_string(),
-            "every choice is fully caused".to_string(),
-        ];
-        let raised = propose_interrogator_objection(
-            &MockClient::ok(
-                r#"{"object":true,"objection":"you affirm both free will and full causation without reconciling them"}"#,
-            ),
-            &positions,
-        );
-        assert_eq!(
-            raised.as_deref(),
-            Some("you affirm both free will and full causation without reconciling them")
-        );
-        // object:false stays quiet; offline (err) stays quiet; thin convo stays quiet.
-        assert!(
-            propose_interrogator_objection(&MockClient::ok(r#"{"object":false}"#), &positions)
-                .is_none()
-        );
-        assert!(propose_interrogator_objection(&MockClient::err(), &positions).is_none());
-        assert!(propose_interrogator_objection(
-            &MockClient::ok(r#"{"object":true,"objection":"x"}"#),
-            &["only one".to_string()]
-        )
-        .is_none());
-    }
+    // trace:STORY-188 | ai:claude — the standalone `propose_interrogator_objection`
+    // probe (STORY-175) is removed: the bounded self-objection is now a near-free
+    // by-product of the single turn-envelope LLM call (ADR-187), parsed by
+    // `strategy::parse_envelope_meta` and covered by the envelope tests in
+    // `strategy`. The structural / belief-neutral contract is unchanged — only the
+    // SOURCE moved off a separate per-turn spawn.
 }
