@@ -1,0 +1,19 @@
+id: 019e9f93-87c7-75c0-bc9f-f1c196f9db31
+spec_id: STORY-155
+agreed_id: STORY-155
+title: Roundedness score in the synopsis (belief-neutral dimensions + composite % + limiting gap)
+description: 'Extend the Observer/synopsis engine (synopsis.rs/observer.rs) to compute a BELIEF-NEUTRAL roundedness assessment over the session arc: sub-scores for consistency (no internal contradictions), definitional clarity (terms pinned), completeness (addresses live objections), coherence (parts follow) -> a composite %, plus the single LIMITING GAP holding it back. Surface it in the synopsis (S key + ''quizdom session synopsis''). NOT belief-correctness — opposite well-formed positions both score high. Default claude-cli backend; offline degrades to a structural-only note (no fabricated score) or a ''needs LLM'' notice. ## Acceptance: synopsis shows the composite % + per-dimension breakdown + the limiting gap; belief-neutral (two opposite positions score comparably); mocked-LLM tests cover the scoring + offline degrade.'
+status: Approved
+priority: High
+owner: ''
+feature: Uncategorized
+created_at: 2026-06-07T00:55:06.439069148Z
+modified_at: 2026-06-07T00:55:06.439069148Z
+req_type: Story
+tags:
+- convergence
+- llm
+- roundedness
+- score
+- story
+- synopsis
