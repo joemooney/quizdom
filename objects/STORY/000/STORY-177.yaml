@@ -1,0 +1,35 @@
+id: 019ea279-9c0c-7a90-ae0f-a0991100a844
+spec_id: STORY-177
+agreed_id: STORY-177
+title: Palette filter modes — leading '/' = command-NAME prefix; no slash = substring search across name+description
+description: |-
+  The live '/' command palette (STORY-163, reused in the ratatui TUI STORY-169) should switch MATCH MODE based on whether the input buffer still carries its leading '/'. Recompute live on every keystroke:
+
+  - Buffer STARTS WITH '/': filter by PREFIX on the command NAME only (the '/' is the command sigil — 'I'm typing a command'). E.g. '/q' -> /quit, /question... (names starting with 'q'); '/sc' -> /score.
+  - Buffer does NOT start with '/' (user BACKSPACED the '/' away, or it was never there): filter by case-insensitive SUBSTRING match ANYWHERE in the command NAME *or* DESCRIPTION (discovery/search). E.g. 'q' -> any command whose name or description contains 'q'; 'goal' -> /goal, /request-goal, and any command whose description mentions goals.
+
+  Backspacing the leading '/' must NOT close the palette — it FLIPS to search mode (palette stays open). Empty buffer shows all commands; backspace on an EMPTY buffer closes the palette (unchanged behavior). Arrow-nav / Enter-run / Esc-cancel / '?'-detail keep working in both modes.
+
+  Rule, concisely: `if buf.starts_with('/') { prefix_match_name(&buf[1..]) } else { contains_in_name_or_desc(&buf) }`.
+
+  Lane: palette.rs (the filter fn + mode selection) + tui.rs (overlay input + backspace handling so removing '/' flips rather than closes). The headless typed-command path is unaffected (typing a full '/cmd' still dispatches directly).
+
+  ## Acceptance
+  - With the leading '/', '/q' lists ONLY commands whose NAME starts with 'q'.
+  - After backspacing the '/', 'q' lists ANY command whose NAME or DESCRIPTION contains 'q' (anywhere).
+  - Mode is recomputed live from whether the buffer starts with '/'; removing the '/' flips to search (does not close); empty shows all; backspace-on-empty closes.
+  - Works in the ratatui TUI palette; headless typed-command dispatch unaffected.
+  - Tests: prefix-mode is names-only, search-mode matches name AND description substrings, the mode flip on removing '/', empty-shows-all, backspace-on-empty-closes.
+status: Approved
+priority: Medium
+owner: ''
+feature: Uncategorized
+created_at: 2026-06-07T14:25:39.340365370Z
+modified_at: 2026-06-07T14:25:39.340365370Z
+req_type: Story
+tags:
+- filter
+- palette
+- post-v1
+- story
+- tui
