@@ -14,12 +14,12 @@ description: |-
   - The full suite no longer has any single test exceeding a few seconds.
   - A regression guard prevents score/synopsis tests from reaching a live backend.
   - No behavior change to the /score gauge itself.
-status: InProgress
+status: Completed
 priority: Medium
 owner: ''
 feature: Uncategorized
 created_at: 2026-06-07T16:07:23.510240040Z
-modified_at: 2026-06-07T16:25:22.521225145Z
+modified_at: 2026-06-07T16:56:39.710339580Z
 req_type: Bug
 tags:
 - bug
