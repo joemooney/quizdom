@@ -54,7 +54,7 @@ priority: High
 owner: ''
 feature: Uncategorized
 created_at: 2026-06-07T02:27:16.703193777Z
-modified_at: 2026-06-07T03:41:52.059204812Z
+modified_at: 2026-06-07T03:42:05.652140225Z
 req_type: Epic
 tags:
 - crossterm
@@ -82,3 +82,9 @@ relationships:
 - rel_type: Parent
   target_id: 019e9fe8-c9e0-78a3-b6d3-2d52b5345f15
   created_at: 2026-06-07T02:28:19.558899524Z
+comments:
+- id: 019ea02c-6954-7d60-b8e3-34905b7dc66d
+  author: joe
+  content: 'COMPLETE. STORY-163 (slash-command palette overlay: ''/'' -> menu+descriptions+''?''-help, crossterm, registry-driven), STORY-164 (/help: free-form tool/process help from tool-context, belief-neutral, offline static index), STORY-165 (/tutor: articulation+nuance coach, reflects the user''s OWN point + names missing nuance, never supplies a belief). The meta-channel family + a discoverable palette. 336 tests.'
+  created_at: 2026-06-07T03:42:05.652140225Z
+  modified_at: 2026-06-07T03:42:05.652140225Z
