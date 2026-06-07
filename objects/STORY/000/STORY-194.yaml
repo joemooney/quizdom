@@ -35,7 +35,7 @@ priority: High
 owner: ''
 feature: Uncategorized
 created_at: 2026-06-07T21:37:42.216666241Z
-modified_at: 2026-06-07T21:38:10.236938732Z
+modified_at: 2026-06-07T21:39:34.428871898Z
 req_type: Story
 tags:
 - editor
@@ -56,3 +56,9 @@ relationships:
   target_id: 019ea401-cd13-74a1-8fe2-77ac9baa6f22
   created_at: 2026-06-07T21:38:10.236931562Z
   created_by: joe
+comments:
+- id: 019ea406-df9c-7f42-adf7-b34110c2a584
+  author: joe
+  content: 'DECIDED (user): (1) PERSIST settings to a config file (~/.config/quizdom/settings.toml or platform config dir); $EDITOR/$VISUAL seeds the editor default on FIRST run only, thereafter the saved value wins; settings round-trip across launches. (2) F1 = the keyboard CHEAT-SHEET (alias of ''?''). ''/help'' stays the deeper free-form channel; ''/settings'' opens the panel. Keep the config schema small + forward-compatible (unknown keys ignored).'
+  created_at: 2026-06-07T21:39:34.428871898Z
+  modified_at: 2026-06-07T21:39:34.428871898Z
