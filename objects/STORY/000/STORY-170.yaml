@@ -16,3 +16,7 @@ tags:
 - ratatui
 - story
 - tui
+relationships:
+- rel_type: Child
+  target_id: 019ea07d-90fc-7b53-ad38-d8979d58a26f
+  created_at: 2026-06-07T05:11:33.376451126Z
