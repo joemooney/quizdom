@@ -32,7 +32,7 @@ priority: High
 owner: ''
 feature: Uncategorized
 created_at: 2026-06-07T21:34:02.003798481Z
-modified_at: 2026-06-07T21:34:14.965700828Z
+modified_at: 2026-06-07T21:34:16.709147769Z
 req_type: Story
 tags:
 - focus
@@ -45,4 +45,8 @@ relationships:
 - rel_type: Parent
   target_id: 019ea07d-90fc-7b53-ad38-d8979d58a26f
   created_at: 2026-06-07T21:34:14.965693300Z
+  created_by: joe
+- rel_type: References
+  target_id: 019ea0e1-3948-78d2-ac44-a9a40959ffaa
+  created_at: 2026-06-07T21:34:16.709140164Z
   created_by: joe
