@@ -3,12 +3,12 @@ spec_id: STORY-174
 agreed_id: STORY-174
 title: '/score: toggle a persistent roundedness gauge in the status bar'
 description: 'EPIC-154 shows the roundedness score only on-demand (inside the synopsis) — the chosen default. Add a ''/score'' command that TOGGLES a PERSISTENT score gauge ON/OFF: when ON, the roundedness composite % (and the weakest dimension) shows LIVE in the TUI status bar (and the headless breadcrumb/footer). Default OFF (stays on-demand, per the EPIC-154 decision); ''/score'' is the opt-in. COST GUARD: roundedness needs an LLM pass (the synopsis), so when the gauge is on, RECOMPUTE AT GATES (every N answered turns and/or on a manual refresh), NOT every turn — the status bar shows the last computed score with a freshness marker between gates. Goal-aware (rounded w.r.t. the goal if set). Belief-neutral. Lane: session.rs (toggle + gate/recompute) + synopsis.rs (score) + tui.rs (status segment) + style.rs (theme). ## Acceptance: ''/score'' toggles the persistent gauge; when on, the status bar shows the roundedness % recomputed at gates (not per-turn); default off; offline shows a ''needs LLM'' note; tests cover the toggle + the gate logic.'
-status: InProgress
+status: Completed
 priority: High
 owner: ''
 feature: Uncategorized
 created_at: 2026-06-07T06:47:36.703727772Z
-modified_at: 2026-06-07T06:52:27.445899202Z
+modified_at: 2026-06-07T07:30:19.687431083Z
 req_type: Story
 tags:
 - post-v1
