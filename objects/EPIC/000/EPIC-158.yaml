@@ -1,0 +1,73 @@
+id: 019e9fd5-af66-7663-abe9-9c0e4792940f
+spec_id: EPIC-158
+agreed_id: EPIC-158
+title: 'Session framing: goals, the closing ritual, and debate mode'
+description: |
+  Give a session an OBJECTIVE and a deliberate ENDING. It may start free-flowing,
+  but a GOAL/thesis can crystallize the exploration, and a "rest your case" ritual
+  closes it. Builds on the Observer (EPIC-126 — proposes the goal + renders the
+  verdict) and Convergence (EPIC-154 — the roundedness IS the verdict).
+  Belief-neutral throughout.
+
+  ## Goal / focus (orients the session)
+
+  - A session can carry a GOAL/thesis — the question/claim it's trying to resolve
+    ("can libertarian free will be held consistently?"). Free-flowing until set.
+  - Set by EITHER party: a `--goal` flag at start, an in-session command (the user
+    states it), or the OBSERVER PROPOSES one when a thesis crystallizes ("it sounds
+    like you're trying to settle X — make that the goal?").
+  - Once set it ORIENTS (decided): the LLM questioner aims its questions at
+    resolving the goal, and roundedness (EPIC-154) is measured WITH RESPECT TO the
+    goal ("have you settled X?") — the goal becomes the convergence target.
+
+  ## Two modes (a toggle — decided)
+
+  - **Socratic (default):** the questioner is a NEUTRAL CHALLENGER of YOUR position
+    (not its own belief). The "case" you rest is your own view; the verdict is your
+    position's belief-neutral roundedness standing.
+  - **Debate (opt-in, `--mode debate` / a toggle):** the questioner explicitly
+    STEELMANS the OPPOSING position and you debate two-sided. The verdict then
+    judges which CASE was better-ARGUED (structural quality), explicitly NOT which
+    belief is TRUE — belief-neutral on truth, fair on argument craft.
+
+  ## The closing ritual ("rest your case")
+
+  - A PHASE TRANSITION: today a session has one mode (probe -> answer). "Rest your
+    case" (either party) flips it into a CLOSING phase — the exchange stops being
+    questions and becomes CLOSING STATEMENTS: your final/settled position, and the
+    challenger's (or opposing side's) strongest remaining objection.
+  - Back-and-forth closing statements until someone REQUESTS A FINAL VERDICT -> the
+    Observer renders the belief-neutral verdict (roundedness standing w.r.t. the
+    goal; in debate mode, which case was better-made structurally).
+  - FAIRNESS RULE: the party that calls "terminate" does NOT get the last word —
+    except to say "terminate". The other side gets the final closing statement
+    first. (Forces a steelman before you close; operationalizes intellectual
+    humility.)
+
+  ## Acceptance
+
+  - A goal can be set (flag / in-session / Observer-proposed); when set, questioning
+    + the roundedness score orient to it.
+  - "rest case" switches questions -> closing statements; "verdict" renders the
+    belief-neutral assessment; the terminator-forfeits-last-word rule holds.
+  - A debate-mode toggle makes the questioner steelman the opposing side; its
+    verdict judges argument STRUCTURE, never asserting a belief is true.
+  - Belief-neutral throughout; offline degrades gracefully (goal still orients
+    deterministically where it can; verdict shows a "needs LLM" note). Mocked-LLM
+    tests cover goal-orientation, the closing phase + terminator rule, and debate
+    mode.
+status: Approved
+priority: High
+owner: ''
+feature: Uncategorized
+created_at: 2026-06-07T02:07:21.958497954Z
+modified_at: 2026-06-07T02:07:21.958497954Z
+req_type: Epic
+tags:
+- closing
+- debate
+- epic
+- framing
+- goal
+- observer
+- verdict
