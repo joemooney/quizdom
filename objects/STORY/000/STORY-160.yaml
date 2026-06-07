@@ -1,0 +1,19 @@
+id: 019e9fd6-3a77-7873-b4f5-853002bc5f76
+spec_id: STORY-160
+agreed_id: STORY-160
+title: 'The closing ritual: rest case -> closing statements -> verdict (+ terminator forfeits last word)'
+description: 'A PHASE TRANSITION on ''rest your case'' (either party): the session stops asking QUESTIONS and switches to CLOSING STATEMENTS — the user''s final/settled position and the challenger''s strongest remaining objection, exchanged back and forth — until someone requests a FINAL VERDICT, which renders the belief-neutral roundedness verdict (EPIC-154) w.r.t. the goal. FAIRNESS RULE: the party that calls ''terminate'' does NOT get the last word except to say ''terminate'' — the other side makes the final closing statement first. Lane: session.rs (the closing phase + state machine) + synopsis.rs (verdict reuse) + input.rs (rest/verdict/terminate controls). ## Acceptance: ''rest case'' enters the closing phase (statements, not questions); ''verdict'' renders the belief-neutral assessment; the terminator-forfeits-last-word rule holds; tests cover the phase transition + the rule + offline.'
+status: Approved
+priority: High
+owner: ''
+feature: Uncategorized
+created_at: 2026-06-07T02:07:57.559325071Z
+modified_at: 2026-06-07T02:07:57.559325071Z
+req_type: Story
+tags:
+- closing
+- rest-case
+- session
+- story
+- terminator
+- verdict
