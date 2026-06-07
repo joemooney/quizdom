@@ -3,37 +3,40 @@ spec_id: STORY-179
 agreed_id: STORY-179
 title: Render simple inline markdown in the TUI transcript (emphasis/strong/code), composed with role + quote colors
 description: |-
-  The interrogator/observer emit light markdown — e.g. "If instead it hopes only to keep *going toward* 'well lived'" — but the TUI shows the LITERAL markers (* and backticks) instead of styling the text.
+  The interrogator/observer emit markdown — '*going toward*', '`code`', and (DECIDED) block constructs too. The TUI must RENDER it instead of showing literal markers.
 
-  SCOPE (see decision comment): INLINE markdown only — *emph*/_emph_ -> italic, **strong**/__strong__ -> bold, `code` -> a code style (dim/reverse). Markers are HIDDEN. Block markdown (headings, lists, blockquotes, fenced code) is OUT for now.
+  SCOPE (DECIDED: inline + basic block):
+  - INLINE: *emph*/_emph_ -> italic, **strong**/__strong__ -> bold, `code` -> a code style. Markers hidden.
+  - BLOCK: bullet + numbered LISTS (render a bullet/number with hanging indent), HEADINGS (terminals have no font size -> bold + a distinct heading color, maybe underline), BLOCKQUOTES (left indent + a muted '|' bar), FENCED CODE BLOCKS (a dim monospace block; no inline parsing inside). Paragraph wrapping/reflow to the transcript pane width, per block.
 
-  CO-IMPLEMENT WITH BUG-178: same code path. BUG-178 rewrites style.rs line_fragments into an inline SPAN SCANNER for quote-yellow; markdown adds more span types (text / quote / emph / strong / code) to that SAME scanner. Build them TOGETHER (one agent, one rewrite) to avoid double-touching the function and churning tests.
+  ARCHITECTURE: render each transcript MESSAGE (not line-by-line) by parsing with pulldown-cmark, then walking the event stream to build ratatui Text/Lines OURSELVES (do NOT hand the styling to a 3rd-party renderer) so we keep control of:
+  - the line's ROLE base color (STORY-171 — interrogator cyan, etc.) as the default fg,
+  - the QUOTE-YELLOW rule (BUG-178) applied to quoted spans within inline text runs,
+  - emphasis/strong/code as MODIFIERS on top of the role color.
+  This SUBSUMES BUG-178's per-line span scanner — BUG-178's quote-yellow is realized as a pass over the inline text runs inside this renderer. CO-IMPLEMENT BUG-178 + STORY-179 as ONE markdown-rendering component (one agent, one rewrite).
 
-  STYLE LAYERING: emphasis/strong/code are MODIFIERS applied ON TOP OF the line's role base color (STORY-171 — interrogator cyan, etc.); the quote-yellow rule (BUG-178) recolors quoted spans. So '*going toward*' in an interrogator line = cyan + italic; a quoted span = yellow.
+  DEPENDENCY: add pulldown-cmark (standard pure-Rust CommonMark parser) to crates/quizdom. Keep the quote-yellow + role layering custom on top of its events.
 
-  PARSE RULES (CommonMark-ish, conservative):
-  - '*'/'**' open when immediately followed by a non-space and close when immediately preceded by a non-space (so '2 * 3' is literal).
-  - intraword '_' does NOT emphasize (snake_case stays literal); '*' may be intraword.
-  - `code` is literal inside (no nested parsing).
-  - '\*' (backslash-escaped) renders a literal '*'. Unterminated markers run as literal text.
+  PARSE/SAFETY: pulldown-cmark handles CommonMark rules (intraword '_' not emphasized, '2 * 3' literal, escapes, unterminated markers) — rely on it. Apply the single-quote-yellow heuristic (apostrophe-safe, BUG-178) only to text-run events, not inside code spans/blocks.
 
-  HEADLESS UNCHANGED: the LineFrontEnd path keeps the literal markers (the ~336 piped byte-tests assert exact output) — ONLY the TuiFrontEnd renders styling.
+  HEADLESS UNCHANGED: the LineFrontEnd path keeps LITERAL markdown (the ~336 piped byte-tests assert exact output) — ONLY the TuiFrontEnd renders. The transcript-pane renderer is TUI-only.
 
-  Lane: style.rs (extend the BUG-178 span scanner to emit text/quote/emph/strong/code tokens) + tui.rs (map tokens to ratatui Style modifiers over the role color). Hand-rolled for this inline subset (no new dep); pulldown-cmark is the noted upgrade path for full/block markdown later.
+  Lane: a new render module (e.g. style.rs/markdown.rs) parsing pulldown-cmark -> ratatui Text with role color + quote-yellow + inline modifiers + block layout; tui.rs transcript pane calls it per message; style.rs theme gains heading/blockquote/code-block/quote colors. Cargo.toml gains pulldown-cmark.
 
   ## Acceptance
-  - '*going toward*' renders ITALIC with markers hidden, in the interrogator's cyan; '**x**' bold; '`x`' code-styled.
-  - 'snake_case' and '2 * 3' do NOT get styled; '\*' renders a literal '*'; unterminated markers stay literal.
-  - Inline markdown COMPOSES with quote-yellow (BUG-178) and the role base color (STORY-171) in one line.
-  - Block markdown is left literal (no crash, no reflow).
-  - Headless/LineFrontEnd output is byte-unchanged (literal markers); existing piped tests still pass.
-  - Tests: emph, strong, code, intraword-underscore-safe, spaced-asterisk-literal, escaped-asterisk, unterminated, and a line mixing role color + a quoted span + an emphasized span.
+  - Inline: '*going toward*' italic (markers hidden) in the interrogator's cyan; '**x**' bold; '`x`' code-styled.
+  - Block: bullet/numbered lists render with markers + hanging indent; headings render bold + heading color; blockquotes indent with a '|' bar; fenced code renders as a dim monospace block (contents not inline-parsed).
+  - Composition: role base color + quote-yellow (BUG-178) + inline emphasis all layer correctly in one message; quote-yellow is NOT applied inside code spans/blocks.
+  - snake_case / '2 * 3' / escaped markers stay literal (CommonMark via pulldown-cmark).
+  - Paragraphs wrap to the pane width; block constructs reflow without crashing.
+  - Headless/LineFrontEnd output byte-unchanged (literal markdown); existing piped tests pass.
+  - Tests: inline emph/strong/code, list, heading, blockquote, code-fence, quote-yellow-composition, code-span-not-quote-colored, wrap/reflow smoke.
 status: Approved
 priority: High
 owner: ''
 feature: Uncategorized
 created_at: 2026-06-07T14:51:43.875515782Z
-modified_at: 2026-06-07T14:51:58.937982276Z
+modified_at: 2026-06-07T14:53:41.089763254Z
 req_type: Story
 tags:
 - markdown
