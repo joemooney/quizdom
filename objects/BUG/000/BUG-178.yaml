@@ -27,10 +27,15 @@ priority: High
 owner: ''
 feature: Uncategorized
 created_at: 2026-06-07T14:27:53.809916311Z
-modified_at: 2026-06-07T14:27:53.809916311Z
+modified_at: 2026-06-07T14:28:02.781490120Z
 req_type: Bug
 tags:
 - bug
 - quotes
 - style
 - tui
+relationships:
+- rel_type: References
+  target_id: 019ea0c7-f29b-7013-905c-f93254305b08
+  created_at: 2026-06-07T14:28:02.781482104Z
+  created_by: joe
