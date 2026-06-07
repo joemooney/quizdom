@@ -30,12 +30,12 @@ description: |-
   - F1 behaves per the decision.
   - Settings persist per the decision; headless/offline degrade (panel -> printed list).
   - Tests: /editor switches the model; the panel reflects + mutates each setting; F1 mapping; (if persisted) a saved setting round-trips across a reload.
-status: Approved
+status: InProgress
 priority: High
 owner: ''
 feature: Uncategorized
 created_at: 2026-06-07T21:37:42.216666241Z
-modified_at: 2026-06-07T21:39:34.428871898Z
+modified_at: 2026-06-07T21:58:59.509295833Z
 req_type: Story
 tags:
 - editor
