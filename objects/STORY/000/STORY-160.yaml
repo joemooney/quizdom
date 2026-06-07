@@ -17,3 +17,7 @@ tags:
 - story
 - terminator
 - verdict
+relationships:
+- rel_type: Child
+  target_id: 019e9fd5-af66-7663-abe9-9c0e4792940f
+  created_at: 2026-06-07T02:07:59.531186057Z
