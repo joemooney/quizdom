@@ -58,13 +58,22 @@ use crossterm::execute;
 use crossterm::terminal::{
     disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen,
 };
-use ratatui::backend::CrosstermBackend;
+use ratatui::backend::{Backend, CrosstermBackend};
 use ratatui::layout::{Constraint, Direction, Layout, Rect};
 use ratatui::style::Style;
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders, Clear, Paragraph, Wrap};
 use ratatui::Terminal;
 use std::io::{self, BufRead, Stdout, Write};
+
+// trace:BUG-184 | ai:claude — the TUI is now GENERIC over the ratatui [`Backend`]
+// (so a `TestBackend` can drive the model in unit tests). Backend draw/clear
+// errors are `B::Error`, not `io::Error`, so funnel them through one mapper into
+// a `QuizdomError::Io` (the production `CrosstermBackend::Error` IS `io::Error`;
+// the `TestBackend::Error` is `Infallible`, so this never fires under test).
+fn map_backend_err<E: core::error::Error>(error: E) -> QuizdomError {
+    QuizdomError::Io(io::Error::other(error.to_string()))
+}
 
 /// Which front-end to build for a session, decided once at the engine boundary.
 ///
@@ -338,6 +347,13 @@ pub(crate) struct StatusLine {
     // exchange. `None` until one is raised; cleared when `/resolved` or `/judge`
     // emits `[objection: clear]`. Belief-neutral chrome: it marks a contested point.
     pub(crate) objection: Option<String>,
+    // trace:BUG-184 | ai:claude — the post-submit THINKING flag. Set the instant a
+    // free-text / single-key answer is parsed (before control returns to the engine
+    // for its blocking multi-second LLM call) so the status bar shows a working
+    // indicator instead of the screen appearing frozen on the filled answer box.
+    // Cleared on the next `flush_pending`, so the engine's next output (the new
+    // question / rebuttal) replaces it.
+    pub(crate) thinking: bool,
 }
 
 impl StatusLine {
@@ -345,6 +361,14 @@ impl StatusLine {
     /// composition is testable; the draw call wraps it in a styled paragraph.
     pub(crate) fn render(&self) -> String {
         let mut segments: Vec<String> = Vec::new();
+        // trace:BUG-184 | ai:claude — the THINKING indicator leads every segment
+        // (it is the most salient state: the system is working on a blocking call).
+        // A static `thinking…` segment via the status model — no background thread
+        // (the alternate screen owns the frame; spinner.rs writes stderr, invisible
+        // under the TUI), and it is replaced by the next question on the next flush.
+        if self.thinking {
+            segments.push("thinking…".to_string());
+        }
         if let Some(breadcrumb) = self
             .breadcrumb
             .as_deref()
@@ -507,9 +531,12 @@ fn install_panic_hook() {
 /// source the nested headless quick-add reads from ([`FrontEnd::author_io`]); in
 /// real use it is empty (the TUI does not script the quick-add), but keeping it
 /// satisfies the seam so the authoring core stays unchanged.
-pub(crate) struct TuiFrontEnd<R: BufRead> {
-    terminal: Terminal<CrosstermBackend<Stdout>>,
-    _guard: TerminalGuard,
+pub(crate) struct TuiFrontEnd<R: BufRead, B: Backend = CrosstermBackend<Stdout>> {
+    terminal: Terminal<B>,
+    // trace:BUG-184 | ai:claude — the terminal guard is OPTIONAL so the model can be
+    // driven over an in-memory `TestBackend` (no alternate screen / raw mode) in
+    // unit tests. Production always carries `Some(guard)`; tests carry `None`.
+    _guard: Option<TerminalGuard>,
     transcript: TranscriptPane,
     status: StatusLine,
     /// Bytes the engine has written via `out()` but not yet flushed to the pane.
@@ -526,7 +553,7 @@ pub(crate) struct TuiFrontEnd<R: BufRead> {
     launcher: Box<dyn EditorLauncher>,
 }
 
-impl<R: BufRead> TuiFrontEnd<R> {
+impl<R: BufRead> TuiFrontEnd<R, CrosstermBackend<Stdout>> {
     /// Enter the alternate screen and build the TUI front-end. Installs the panic
     /// hook and disables engine-side color (the TUI owns visual styling, so the
     /// engine must emit plain text into the transcript buffer).
@@ -540,7 +567,7 @@ impl<R: BufRead> TuiFrontEnd<R> {
         let terminal = Terminal::new(backend).map_err(QuizdomError::Io)?;
         let mut tui = Self {
             terminal,
-            _guard: guard,
+            _guard: Some(guard),
             transcript: TranscriptPane::new(),
             status: StatusLine::default(),
             pending: Vec::new(),
@@ -556,10 +583,60 @@ impl<R: BufRead> TuiFrontEnd<R> {
         );
         Ok(tui)
     }
+}
 
+// trace:BUG-184 | ai:claude — a test-only constructor over an in-memory ratatui
+// `TestBackend`: no alternate screen / raw mode (the guard is `None`), so the
+// rendering + status model can be unit-tested without a real terminal.
+#[cfg(test)]
+impl<R: BufRead> TuiFrontEnd<R, ratatui::backend::TestBackend> {
+    fn with_test_backend(author_input: R, width: u16, height: u16) -> Self {
+        crate::style::set_enabled(false);
+        let backend = ratatui::backend::TestBackend::new(width, height);
+        let terminal = Terminal::new(backend).expect("test terminal");
+        Self {
+            terminal,
+            _guard: None,
+            transcript: TranscriptPane::new(),
+            status: StatusLine::default(),
+            pending: Vec::new(),
+            author_input,
+            author_output: Vec::new(),
+            editor_model: EditorModel::Emacs,
+            launcher: Box::new(SpawnEditorLauncher),
+        }
+    }
+
+    /// The current TestBackend buffer flattened to a single string (cells joined,
+    /// rows newline-separated) so a draw's visible content is assertable.
+    fn rendered_text(&self) -> String {
+        let buffer = self.terminal.backend().buffer();
+        let area = *buffer.area();
+        let mut out = String::new();
+        for y in 0..area.height {
+            for x in 0..area.width {
+                out.push_str(buffer[(x, y)].symbol());
+            }
+            out.push('\n');
+        }
+        out
+    }
+}
+
+// trace:BUG-184 | ai:claude — the rendering + input loop is GENERIC over the
+// ratatui [`Backend`] so the model can be driven over an in-memory `TestBackend`
+// in unit tests (the production path uses `CrosstermBackend<Stdout>` built in
+// `new`). Only the terminal-owning constructor is backend-specific.
+impl<R: BufRead, B: Backend> TuiFrontEnd<R, B> {
     /// Move everything written via `out()` since the last flush into the
     /// transcript pane (and update the status bar from it).
     fn flush_pending(&mut self) {
+        // trace:BUG-184 | ai:claude — clear the post-submit THINKING indicator as the
+        // next input request begins: by now the engine's blocking call has returned
+        // and its output (the new question / rebuttal) is about to render, so the
+        // working state is over. Done before the empty-pending early-return so a
+        // control command that produced no output still drops the indicator.
+        self.status.thinking = false;
         if self.pending.is_empty() {
             return;
         }
@@ -567,6 +644,19 @@ impl<R: BufRead> TuiFrontEnd<R> {
         self.status.observe_block(&text);
         self.transcript.push_block(&text);
         self.pending.clear();
+    }
+
+    // trace:BUG-184 | ai:claude
+    /// Draw ONE post-submit "thinking" frame before control returns to the engine
+    /// for its blocking LLM call: turn ON the status `thinking…` indicator and draw
+    /// the panes with an EMPTY (collapsed) input box. The echoed `> answer` is
+    /// already in the transcript, so this frame shows the answer landed + the system
+    /// working, instead of the screen freezing on the filled answer box. The
+    /// indicator is cleared by the next [`flush_pending`], so the engine's next
+    /// question / rebuttal replaces it.
+    fn show_thinking_frame(&mut self) -> Result<()> {
+        self.status.thinking = true;
+        self.draw("", None)
     }
 
     /// Draw the three panes (and, when open, the palette overlay) for the current
@@ -667,7 +757,7 @@ impl<R: BufRead> TuiFrontEnd<R> {
                     frame.render_widget(widget, overlay);
                 }
             })
-            .map_err(QuizdomError::Io)?;
+            .map_err(map_backend_err)?;
         Ok(())
     }
 
@@ -776,7 +866,7 @@ impl<R: BufRead> TuiFrontEnd<R> {
                     .wrap(Wrap { trim: false });
                 frame.render_widget(widget, overlay);
             })
-            .map_err(QuizdomError::Io)?;
+            .map_err(map_backend_err)?;
         Ok(())
     }
 
@@ -930,7 +1020,7 @@ impl<R: BufRead> TuiFrontEnd<R> {
                 );
                 frame.render_widget(status_widget, panes.status);
             })
-            .map_err(QuizdomError::Io)?;
+            .map_err(map_backend_err)?;
         Ok(())
     }
 
@@ -988,11 +1078,18 @@ impl<R: BufRead> TuiFrontEnd<R> {
     /// kept and a note is shown in the transcript.
     fn open_external_editor(&mut self, editor: &mut TextEditor) -> Result<()> {
         let buffer = editor.text();
-        self._guard.suspend()?;
+        // trace:BUG-184 | ai:claude — the guard is optional (None under a TestBackend);
+        // suspend/resume only the alternate screen when a real guard is present.
+        if let Some(guard) = self._guard.as_ref() {
+            guard.suspend()?;
+        }
         let outcome = edit_buffer_externally(&buffer, self.launcher.as_ref());
-        let resume = self._guard.resume();
+        let resume = match self._guard.as_ref() {
+            Some(guard) => guard.resume(),
+            None => Ok(()),
+        };
         // Clear the terminal so the alternate screen redraws fresh after the editor.
-        self.terminal.clear().map_err(QuizdomError::Io)?;
+        self.terminal.clear().map_err(map_backend_err)?;
         resume?;
         match outcome {
             Ok(text) => editor.set_text(&text),
@@ -1082,7 +1179,7 @@ impl<R: BufRead> TuiFrontEnd<R> {
     }
 }
 
-impl<R: BufRead> FrontEnd for TuiFrontEnd<R> {
+impl<R: BufRead, B: Backend> FrontEnd for TuiFrontEnd<R, B> {
     fn out(&mut self) -> &mut dyn Write {
         &mut self.pending
     }
@@ -1113,6 +1210,18 @@ impl<R: BufRead> FrontEnd for TuiFrontEnd<R> {
                 return Ok(parsed);
             }
             if let Some(normalized) = normalize_answer(kind, &raw) {
+                // trace:BUG-184 | ai:claude — an actual Answer has been parsed and is
+                // about to return to the engine, which then makes a SYNCHRONOUS
+                // multi-second LLM call with NO front-end draw in between. Draw ONE
+                // frame NOW so the user sees their answer LAND and the system working:
+                // the echoed `> answer` is already in the transcript (pushed by the
+                // read_* path), the input box COLLAPSES (drawn empty), and the status
+                // bar shows a `thinking…` indicator. Without this the last-drawn frame
+                // is the FILLED answer box and the screen appears frozen until the
+                // next prompt. Control commands return instantly above, so they never
+                // reach here (a brief thinking frame would be harmless anyway, since
+                // the engine's next output replaces it via flush_pending).
+                self.show_thinking_frame()?;
                 return Ok(AnswerInput::Answer(Answer { raw, normalized }));
             }
             self.transcript
@@ -1888,6 +1997,102 @@ mod tests {
         // Vim starts in INSERT.
         assert!(editor_box_title(&vim).contains("vim"));
         assert!(editor_box_title(&vim).contains("INSERT"));
+    }
+
+    // ---- BUG-184: post-submit thinking state + redraw ----------------------
+
+    use std::io::BufReader;
+
+    fn test_tui(
+        width: u16,
+        height: u16,
+    ) -> TuiFrontEnd<BufReader<std::io::Empty>, ratatui::backend::TestBackend> {
+        TuiFrontEnd::with_test_backend(BufReader::new(std::io::empty()), width, height)
+    }
+
+    // trace:BUG-184 | ai:claude — the status model gains a `thinking…` segment that
+    // LEADS the bar (most salient) and clears on the next flush.
+    #[test]
+    fn status_line_shows_thinking_segment_leading_and_clears_on_flush() {
+        let mut status = StatusLine::default();
+        status.observe_block("[topic: free will | depth: 1 | branch: main]\n");
+        status.thinking = true;
+        let rendered = status.render();
+        assert!(rendered.contains("thinking…"), "{rendered}");
+        // It leads the segments (it is the first thing the bar shows).
+        assert!(rendered.starts_with("thinking…"), "{rendered}");
+        // Turning it off drops the segment but keeps the breadcrumb.
+        status.thinking = false;
+        let rendered = status.render();
+        assert!(!rendered.contains("thinking"), "{rendered}");
+        assert!(rendered.contains("topic: free will"), "{rendered}");
+    }
+
+    // trace:BUG-184 | ai:claude — `show_thinking_frame` draws ONE frame with the
+    // echoed answer already in the transcript, the input box COLLAPSED (empty), and
+    // a `thinking…` status — the post-submit state the engine's blocking LLM call
+    // would otherwise leave looking frozen. Driven over a TestBackend (no terminal).
+    #[test]
+    fn show_thinking_frame_draws_thinking_status_with_collapsed_box() {
+        let mut tui = test_tui(60, 24);
+        // The read_* path pushes the echoed answer before read_answer returns.
+        tui.transcript
+            .push_block("> free will is an illusion of choice");
+        tui.show_thinking_frame().expect("draw thinking frame");
+
+        // The status MODEL reflects thinking.
+        assert!(tui.status.thinking, "status model is in the thinking state");
+        let frame = tui.rendered_text();
+        // The status bar shows the working indicator.
+        assert!(
+            frame.contains("thinking…"),
+            "frame had no thinking status:\n{frame}"
+        );
+        // The echoed answer is visible in the transcript pane.
+        assert!(
+            frame.contains("free will is an illusion of choice"),
+            "frame missing echoed answer:\n{frame}"
+        );
+
+        // The INPUT box is COLLAPSED: the content row under the input border shows
+        // only the `>` marker, NOT the just-typed answer (no frozen filled box).
+        let buffer = tui.terminal.backend().buffer();
+        let input_content_y = 24 - 6 + 1; // transcript Min, input Length(3): border+content
+        let mut input_row = String::new();
+        for x in 0..60u16 {
+            input_row.push_str(buffer[(x, input_content_y)].symbol());
+        }
+        assert!(
+            !input_row.contains("illusion"),
+            "input box must be collapsed, not frozen with the answer: {input_row:?}"
+        );
+        // The collapsed box still shows its `>` marker (just no typed text after it).
+        assert!(
+            input_row.contains('>'),
+            "input box keeps its `>` marker: {input_row:?}"
+        );
+    }
+
+    // trace:BUG-184 | ai:claude — flush_pending clears the thinking indicator as the
+    // next input request begins, so the engine's next question/rebuttal renders
+    // normally (the indicator is one-shot, replaced by the new prompt).
+    #[test]
+    fn flush_pending_clears_thinking_then_renders_next_question() {
+        let mut tui = test_tui(60, 24);
+        tui.status.thinking = true;
+        // The engine writes the next question through out(), then the next read
+        // calls flush_pending.
+        writeln!(tui.out(), "Is the will free? (next question)").unwrap();
+        tui.flush_pending();
+        assert!(!tui.status.thinking, "thinking cleared on the next flush");
+        assert!(
+            tui.transcript
+                .lines()
+                .iter()
+                .any(|l| l.contains("Is the will free?")),
+            "the next question rendered into the transcript"
+        );
+        assert!(!tui.status.render().contains("thinking"));
     }
 
     // trace:STORY-171 | ai:claude
