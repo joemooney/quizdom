@@ -1,0 +1,43 @@
+id: 019ea401-cd13-74a1-8fe2-77ac9baa6f22
+spec_id: STORY-193
+agreed_id: STORY-193
+title: TUI focus model (Tab to switch panes) + transcript scrollbar + mouse support
+description: |-
+  Make the TUI navigable like a real multi-pane app.
+
+  FOCUS MODEL:
+  - Tab / Shift-Tab cycles FOCUS between the input box and the transcript pane. Esc from the transcript returns focus to the input. (The '/' palette stays a modal overlay, not in the cycle.)
+  - The FOCUSED pane is visually indicated: bright gold border on focused, dim border on unfocused.
+  - TRANSCRIPT focused: plain Up/Down scroll a line, PageUp/PageDown page, Home/End jump to top/bottom, and the STORY-176 re-read highlight moves; arrow keys do NOT reach the editor. INPUT focused: keys edit (today's behavior). This supersedes the current 'scroll keys always intercepted while editing' approach — keep Ctrl-Up/Down as a convenience scroll while editing, but Tab-to-transcript is the primary model.
+  - The cheat-sheet ('?') documents Tab/Shift-Tab + Esc.
+
+  SCROLLBAR:
+  - Render a ratatui Scrollbar on the transcript pane's right edge, driven by the existing scroll offset + total line count (ScrollbarState) — position + thumb. Replaces the rudimentary '>' edge indicator.
+
+  MOUSE (crossterm mouse capture):
+  - Wheel over the transcript scrolls it; click on a pane focuses it; click-drag on the scrollbar scrolls; (if tui-textarea supports it) click in the editor positions the cursor.
+  - TRADEOFF (see DECIDED comment): mouse capture intercepts the terminal's native click-drag selection/copy. Per the decision: default-on with an easy toggle, default-off with a toggle, or always-on. Enable/disable + restore cleanly via TerminalGuard (EnableMouseCapture/DisableMouseCapture) on start/exit/panic AND across the Ctrl-X Ctrl-E $EDITOR suspend/resume.
+
+  Lane: tui.rs (Focus enum + route events by focus; mouse handling; Scrollbar render; focus-border styling) + style.rs (focus border colors) + keymap.rs (Tab/Shift-Tab) + TerminalGuard (mouse capture). Headless/LineFrontEnd unaffected.
+
+  ## Acceptance
+  - Tab/Shift-Tab switches focus between input and transcript; focused pane is visually distinct; Esc returns to input.
+  - Transcript focused -> Up/Down/PageUp/PageDown/Home/End scroll it; input focused -> keys edit.
+  - A scrollbar shows transcript position/extent and tracks scrolling.
+  - Mouse: wheel scrolls the transcript, click focuses a pane (per the on/off/toggle decision); capture is enabled and restored cleanly on exit/panic/$EDITOR-suspend without corrupting the terminal.
+  - Cheat-sheet documents the focus keys; headless degrade unaffected.
+  - Tests: focus routing (a key reaches the focused pane only), scrollbar state math, mouse-wheel->scroll mapping and click->focus (where testable), capture restored on suspend.
+status: Approved
+priority: High
+owner: ''
+feature: Uncategorized
+created_at: 2026-06-07T21:34:02.003798481Z
+modified_at: 2026-06-07T21:34:02.003798481Z
+req_type: Story
+tags:
+- focus
+- mouse
+- scrollbar
+- story
+- tui
+- ux
