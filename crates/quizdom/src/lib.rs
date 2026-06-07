@@ -19,6 +19,9 @@ mod persist;
 // trace:STORY-87 | ai:claude
 mod question_add;
 mod session;
+// trace:STORY-194 | ai:claude — the runtime settings surface (/settings, /editor)
+// + the small persisted config file.
+mod settings;
 // trace:STORY-68 | ai:claude
 mod signals;
 // trace:STORY-83 | ai:claude

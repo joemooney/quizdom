@@ -66,16 +66,11 @@ pub(crate) fn editor_model_from_editor(editor: &str) -> EditorModel {
     }
 }
 
-/// The editing model for THIS session, read from `$VISUAL` then `$EDITOR` (the
-/// same precedence the headless path uses). Defaults to Emacs when neither is
-/// set.
-pub(crate) fn editor_model() -> EditorModel {
-    let editor = env::var("VISUAL")
-        .ok()
-        .or_else(|| env::var("EDITOR").ok())
-        .unwrap_or_default();
-    editor_model_from_editor(&editor)
-}
+// trace:STORY-194 | ai:claude — the session-startup `editor_model()` inference
+// MOVED into `crate::settings`: the editing model now derives from the persisted
+// `EditorChoice` (Emacs / Vim / Auto), with `Auto` re-running the basename
+// inference above via `editor_model_from_editor`. The TUI seeds from the saved
+// settings + `$EDITOR` (`resolved_env_editor`), so this standalone reader is gone.
 
 /// The Vim modal sub-state, a trimmed adaptation of tui-textarea's `vim` example.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

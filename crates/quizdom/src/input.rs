@@ -262,6 +262,20 @@ pub(crate) enum AnswerInput {
     // changing it. Belief-neutral: debate steelmans the opposing side's CRAFT,
     // never asserting which belief is true.
     Mode(String),
+    // trace:STORY-194 | ai:claude
+    // The user switched the free-text EDITOR MODEL in-session via
+    // `/editor <emacs|vim|auto>`. Carries the raw editor token (trimmed); an empty
+    // token SHOWS the current model. Non-destructive: the TUI rebuilds the
+    // TextEditor under the new model (the box title updates live) and re-presents
+    // the SAME question. Belief-neutral: this only chooses HOW keys edit text.
+    Editor(String),
+    // trace:STORY-194 | ai:claude
+    // The user opened the SETTINGS surface via `/settings` (panel) or mutated one
+    // setting via `/settings set <key> <value>` (the headless line path). Carries
+    // the REST of the line (empty for a bare `/settings`). The TUI opens the panel
+    // (the headless front-end degrades to a printed value list); both keep the
+    // dedicated shortcut commands (/editor, /mouse, /score, /mode) in sync.
+    Settings(String),
     // trace:STORY-160 | ai:claude
     // The user (or challenger) called "rest your case": a PHASE TRANSITION out of
     // the question/answer loop into the CLOSING phase, where the exchange becomes
@@ -496,6 +510,16 @@ pub(crate) fn read_answer_or_end(
         // the same question), so it is recognized in every context.
         if let Some(mode) = mode_command_text(&raw) {
             return Ok(AnswerInput::Mode(mode));
+        }
+        // trace:STORY-194 | ai:claude — `/editor <emacs|vim|auto>` switches the
+        // free-text editor model and `/settings` opens the settings surface. Both
+        // are non-destructive (the same question is re-presented), so they are
+        // recognized in every context like the other meta controls.
+        if let Some(editor) = editor_command_text(&raw) {
+            return Ok(AnswerInput::Editor(editor));
+        }
+        if let Some(rest) = settings_command_text(&raw) {
+            return Ok(AnswerInput::Settings(rest));
         }
         // trace:STORY-160 | ai:claude — the closing-ritual controls are
         // non-destructive at the input layer (the session decides what each does)
@@ -779,6 +803,29 @@ pub(crate) fn mode_command_text(raw: &str) -> Option<String> {
         }
     }
     None
+}
+
+// trace:STORY-194 | ai:claude
+/// The runtime EDITOR-MODE toggle: `/editor <emacs|vim|auto>` switches the
+/// free-text editor model live (rebuilding the TUI TextEditor). Recognised ONLY
+/// as a leading `/editor` keyword (slash-prefixed), like `/mode`, since the bare
+/// word "editor" is plausible mid-answer. Returns the editor token (trimmed) when
+/// the line is an editor command — an empty string for a bare `/editor` (the
+/// session SHOWS the current model). Returns `None` otherwise so an ordinary
+/// free-text answer mentioning "editor" is left as an answer.
+pub(crate) fn editor_command_text(raw: &str) -> Option<String> {
+    leading_keyword_text(raw, &["/editor"])
+}
+
+// trace:STORY-194 | ai:claude
+/// The SETTINGS surface: `/settings` opens the panel (TUI) / prints the value
+/// list (headless); `/settings set <key> <value>` mutates one setting on the
+/// line path. Recognised ONLY as a leading `/settings` keyword. Returns the REST
+/// of the line (e.g. `"set editor vim"`, or `""` for a bare `/settings`) so the
+/// session can route the panel vs the headless set-path. Returns `None` for an
+/// ordinary answer. `/config` is accepted as a friendly alias.
+pub(crate) fn settings_command_text(raw: &str) -> Option<String> {
+    leading_keyword_text(raw, &["/settings", "/config"])
 }
 
 // trace:STORY-160 | ai:claude
@@ -1070,6 +1117,10 @@ mod tests {
         // trace:STORY-173 | ai:claude — `/request-goal` routes to its own variant.
         assert!(is_request_goal_command("/request-goal"));
         assert!(mode_command_text("/mode").is_some());
+        // trace:STORY-194 | ai:claude — `/editor` and `/settings` route to their
+        // own variants (the palette/typed forms are indistinguishable).
+        assert!(editor_command_text("/editor").is_some());
+        assert!(settings_command_text("/settings").is_some());
         assert!(help_command_text("/help").is_some());
         assert!(tutor_command_text("/tutor").is_some());
         assert_eq!(
@@ -1080,6 +1131,37 @@ mod tests {
             normalize_answer(&AnswerKind::YesNo, "/punt"),
             Some("punt".to_string())
         );
+    }
+
+    // ---- STORY-194: /editor + /settings recognizers ------------------------
+
+    // trace:STORY-194 | ai:claude — `/editor <token>` carries the editor token; a
+    // bare `/editor` carries the empty string ("show current"); an ordinary answer
+    // mentioning "editor" mid-sentence is NOT a command.
+    #[test]
+    fn editor_command_recognizes_leading_keyword_only() {
+        assert_eq!(editor_command_text("/editor vim"), Some("vim".to_string()));
+        assert_eq!(
+            editor_command_text("/EDITOR  auto "),
+            Some("auto".to_string())
+        );
+        assert_eq!(editor_command_text("/editor"), Some(String::new()));
+        assert_eq!(editor_command_text("my editor is broken"), None);
+        assert_eq!(editor_command_text("editor"), None);
+    }
+
+    // trace:STORY-194 | ai:claude — `/settings` (and the `/config` alias) carries
+    // the rest of the line (empty = open panel; `set ...` = headless mutate); an
+    // ordinary answer mentioning "settings" is NOT a command.
+    #[test]
+    fn settings_command_recognizes_leading_keyword_only() {
+        assert_eq!(settings_command_text("/settings"), Some(String::new()));
+        assert_eq!(
+            settings_command_text("/settings set editor vim"),
+            Some("set editor vim".to_string())
+        );
+        assert_eq!(settings_command_text("/config"), Some(String::new()));
+        assert_eq!(settings_command_text("the settings menu"), None);
     }
 
     // ---- STORY-176: observe moved from `?` to `o` --------------------------

@@ -35,17 +35,18 @@
 use crate::error::{QuizdomError, Result};
 use crate::frontend::FrontEnd;
 use crate::input::{
-    goal_command_text, help_command_text, is_add_command, is_back_command, is_end_command,
-    is_forward_command, is_judge_command, is_observe_command, is_request_goal_command,
-    is_resolved_command, is_rest_command, is_score_command, is_synopsis_command,
-    is_terminate_command, is_verdict_command, mode_command_text, normalize_answer,
-    objection_command_text, tutor_command_text, AnswerInput, InputContext,
+    editor_command_text, goal_command_text, help_command_text, is_add_command, is_back_command,
+    is_end_command, is_forward_command, is_judge_command, is_observe_command,
+    is_request_goal_command, is_resolved_command, is_rest_command, is_score_command,
+    is_synopsis_command, is_terminate_command, is_verdict_command, mode_command_text,
+    normalize_answer, objection_command_text, settings_command_text, tutor_command_text,
+    AnswerInput, InputContext,
 };
 // trace:STORY-180 | ai:claude — the capable free-text editor (tui-textarea) and
 // the open-in-$EDITOR escape.
 use crate::editor::{
-    edit_buffer_externally, editor_model, EditorLauncher, EditorModel, EditorOutcome,
-    SpawnEditorLauncher, TextEditor, VimMode,
+    edit_buffer_externally, EditorLauncher, EditorModel, EditorOutcome, SpawnEditorLauncher,
+    TextEditor, VimMode,
 };
 // trace:STORY-176 | ai:claude — the single keymap registry drives BOTH the key
 // dispatcher (here) and the cheat-sheet overlay, so they can never drift.
@@ -53,6 +54,8 @@ use crate::keymap::{self, KeyAction};
 use crate::model::{Answer, AnswerKind};
 // trace:STORY-190 | ai:claude — PaletteContext threads the availability snapshot.
 use crate::palette::{command_registry, PaletteContext, PaletteState};
+// trace:STORY-194 | ai:claude — the runtime settings surface (panel + persistence).
+use crate::settings::{parse_on_off, EditorChoice, SettingKey, Settings};
 use crate::style::theme;
 // trace:STORY-193 | ai:claude — mouse events + capture commands join the key
 // event imports so the event loop can route wheel/click and the guard can flip
@@ -853,7 +856,15 @@ pub(crate) struct TuiFrontEnd<R: BufRead, B: Backend = CrosstermBackend<Stdout>>
     author_output: Vec<u8>,
     // trace:STORY-180 | ai:claude — the editing model (Emacs/readline vs Vim
     // modal) for the free-text box, inferred ONCE from $EDITOR/$VISUAL at startup.
+    // trace:STORY-194 | ai:claude — now derived from `settings.editor` (Emacs / Vim
+    // / Auto), recomputed when `/editor` or the panel changes it so the box title
+    // updates live; `Auto` re-infers from $EDITOR.
     editor_model: EditorModel,
+    // trace:STORY-194 | ai:claude — the canonical runtime settings (editor / mouse
+    // / score / mode), loaded/persisted via the config file. The `/settings` panel
+    // and the dedicated shortcuts mutate this; `mouse_enabled` mirrors
+    // `settings.mouse` for the status bar.
+    settings: Settings,
     // trace:STORY-180 | ai:claude — the open-in-$EDITOR launcher. Boxed + injectable
     // so the Ctrl-X Ctrl-E round-trip can be driven by a mock in tests (CI never
     // spawns a real editor); production wires [`SpawnEditorLauncher`].
@@ -887,6 +898,11 @@ impl<R: BufRead> TuiFrontEnd<R, CrosstermBackend<Stdout>> {
         let guard = TerminalGuard::enter()?;
         let backend = CrosstermBackend::new(io::stdout());
         let terminal = Terminal::new(backend).map_err(QuizdomError::Io)?;
+        // trace:STORY-194 | ai:claude — load the persisted settings (seed editor
+        // from $EDITOR on a first run); the editor model + mouse default derive
+        // from them, so a saved "vim" / "mouse off" sticks across launches.
+        let settings = crate::settings::load_or_seed();
+        let editor_model = settings.editor.resolve(&resolved_env_editor());
         let mut tui = Self {
             terminal,
             _guard: Some(guard),
@@ -895,16 +911,26 @@ impl<R: BufRead> TuiFrontEnd<R, CrosstermBackend<Stdout>> {
             pending: Vec::new(),
             author_input,
             author_output: Vec::new(),
-            // trace:STORY-180 | ai:claude — infer the editing model from $EDITOR once.
-            editor_model: editor_model(),
+            // trace:STORY-194 | ai:claude — the editing model derives from the saved
+            // editor choice (Auto re-infers from $EDITOR, per STORY-180).
+            editor_model,
+            settings,
             launcher: Box::new(SpawnEditorLauncher),
             // trace:STORY-190 | ai:claude
             palette_ctx: PaletteContext::default(),
             // trace:STORY-193 | ai:claude — focus starts on the input; mouse capture
             // is ON by default (the guard enabled it in `enter`).
             focus: Focus::Input,
-            mouse_enabled: true,
+            mouse_enabled: settings.mouse,
         };
+        // trace:STORY-194 | ai:claude — reflect the saved mouse preference into the
+        // guard + status bar so a persisted "mouse off" applies from the first draw.
+        if !settings.mouse {
+            if let Some(guard) = tui._guard.as_mut() {
+                let _ = guard.set_mouse(false);
+            }
+            tui.status.mouse = false;
+        }
         tui.transcript.push_block(
             "quizdom — interactive session. Type your answer and press Enter. Press / for the \
              command palette, ↑/↓ to scroll the transcript.",
@@ -931,6 +957,10 @@ impl<R: BufRead> TuiFrontEnd<R, ratatui::backend::TestBackend> {
             author_input,
             author_output: Vec::new(),
             editor_model: EditorModel::Emacs,
+            // trace:STORY-194 | ai:claude — tests start from default settings (Auto
+            // editor, mouse on, score off, socratic) so the model is deterministic
+            // and never touches the real config file.
+            settings: Settings::default(),
             launcher: Box::new(SpawnEditorLauncher),
             // trace:STORY-190 | ai:claude
             palette_ctx: PaletteContext::default(),
@@ -1631,6 +1661,17 @@ impl<R: BufRead, B: Backend> TuiFrontEnd<R, B> {
                 // editor must not receive it).
                 continue;
             }
+            // trace:STORY-194 | ai:claude — F1 (and `?`) open the keyboard
+            // cheat-sheet from an EMPTY free-text box, matching the line / single-key
+            // paths (which consult the keymap). Gated to an empty buffer so a literal
+            // `?` typed into an answer-in-progress still types — exactly the
+            // `suppress_cheat_sheet` rule `read_text_line` uses.
+            if editor.is_empty() {
+                if let Some(KeyAction::CheatSheet) = keymap::dispatch(key.code, key.modifiers) {
+                    self.show_cheat_sheet("")?;
+                    continue;
+                }
+            }
             match editor.feed(key) {
                 EditorOutcome::Continue => {}
                 EditorOutcome::Submit(text) => {
@@ -1694,6 +1735,183 @@ impl<R: BufRead, B: Backend> TuiFrontEnd<R, B> {
                     .push_block(&format!("[editor] could not edit externally: {error}"));
             }
         }
+        Ok(())
+    }
+
+    // trace:STORY-194 | ai:claude
+    /// Record a new editor choice + recompute the LIVE editor model (so the next
+    /// free-text box and its `your answer · <model>` title use it), and persist it.
+    /// `Auto` re-infers from `$EDITOR`. Shared by `/editor` and the panel's editor
+    /// row so the shortcut and the panel stay in sync.
+    fn set_editor_choice_value(&mut self, choice: EditorChoice) {
+        self.settings.editor = choice;
+        self.editor_model = choice.resolve(&resolved_env_editor());
+        self.persist_settings();
+    }
+
+    // trace:STORY-194 | ai:claude
+    /// Persist the current settings to the config file (best-effort: a write error
+    /// is non-fatal — the change still applies for the session). SKIPPED under a
+    /// TestBackend (no terminal guard) so unit tests never touch the real config
+    /// file on disk — only the production TUI (with a guard) persists.
+    fn persist_settings(&mut self) {
+        if self._guard.is_some() {
+            let _ = crate::settings::save(&self.settings);
+        }
+    }
+
+    // trace:STORY-194 | ai:claude
+    /// CYCLE/TOGGLE one panel row in place, applying the side-effects each setting
+    /// owns: the editor row rebuilds the model, the mouse row flips capture through
+    /// the guard, and score/mode just record (the ENGINE applies them when the
+    /// surface returns). Keeps the dedicated shortcuts and the panel in sync since
+    /// they all funnel through these same field mutations.
+    fn cycle_setting(&mut self, key: SettingKey) -> Result<()> {
+        match key {
+            SettingKey::Editor => {
+                let next = self.settings.editor.cycle();
+                self.set_editor_choice_value(next);
+            }
+            SettingKey::Mouse => {
+                // Reuse the same guard toggle the F2 / `/mouse` shortcut uses, then
+                // record + persist the new state so the panel and shortcut agree.
+                self.toggle_mouse()?;
+                self.settings.mouse = self.mouse_enabled;
+                self.persist_settings();
+            }
+            SettingKey::Score => {
+                self.settings.score = !self.settings.score;
+                self.persist_settings();
+            }
+            SettingKey::Mode => {
+                self.settings.cycle(SettingKey::Mode);
+                self.persist_settings();
+            }
+        }
+        Ok(())
+    }
+
+    // trace:STORY-194 | ai:claude
+    /// Apply a `/settings set <key> <value>` mutation (the line path, also usable
+    /// from the TUI), with the editor/mouse side-effects, persist it, and note the
+    /// outcome in the transcript.
+    fn apply_settings_set(&mut self, key: Option<&str>, value: Option<&str>) {
+        match (key.and_then(SettingKey::parse), value) {
+            (Some(SettingKey::Editor), Some(value)) => match EditorChoice::parse(value) {
+                Some(choice) => {
+                    self.set_editor_choice_value(choice);
+                    self.transcript
+                        .push_block(&format!("[settings] Editor mode set: {}", choice.label()));
+                }
+                None => self
+                    .transcript
+                    .push_block(&format!("[settings] unknown editor mode `{value}`")),
+            },
+            (Some(SettingKey::Mouse), Some(value)) => match parse_on_off(value) {
+                Some(on) => {
+                    if on != self.mouse_enabled {
+                        let _ = self.toggle_mouse();
+                    }
+                    self.settings.mouse = self.mouse_enabled;
+                    self.persist_settings();
+                    self.transcript.push_block(&format!(
+                        "[settings] Mouse set: {}",
+                        self.settings.value_label(SettingKey::Mouse)
+                    ));
+                }
+                None => self
+                    .transcript
+                    .push_block(&format!("[settings] unknown mouse value `{value}`")),
+            },
+            (Some(key @ (SettingKey::Score | SettingKey::Mode)), Some(value)) => {
+                if self.settings.set_from_token(key, value) {
+                    self.persist_settings();
+                    self.transcript.push_block(&format!(
+                        "[settings] {} set: {}",
+                        key.label(),
+                        self.settings.value_label(key)
+                    ));
+                } else {
+                    self.transcript.push_block(&format!(
+                        "[settings] unknown value `{value}` for {}",
+                        key.label()
+                    ));
+                }
+            }
+            _ => self
+                .transcript
+                .push_block("[settings] usage: /settings set <editor|mouse|score|mode> <value>"),
+        }
+    }
+
+    // trace:STORY-194 | ai:claude
+    /// The interactive `/settings` PANEL: lists every setting with its current
+    /// value, ↑/↓ move the cursor, Enter/Space cycle/toggle the highlighted row in
+    /// place, and Esc/q closes. Editor + mouse changes apply immediately (the model
+    /// rebuilds, mouse capture flips); score + mode are recorded and reconciled by
+    /// the engine when the surface returns. Each toggle persists.
+    fn run_settings_panel(&mut self) -> Result<()> {
+        let mut cursor = 0usize;
+        let keys = SettingKey::order();
+        loop {
+            self.draw_settings_panel(cursor)?;
+            let Event::Key(key) = event::read().map_err(QuizdomError::Io)? else {
+                continue;
+            };
+            if !matches!(key.kind, KeyEventKind::Press | KeyEventKind::Repeat) {
+                continue;
+            }
+            match key.code {
+                KeyCode::Esc | KeyCode::Char('q') => return Ok(()),
+                KeyCode::Up => {
+                    cursor = cursor.checked_sub(1).unwrap_or(keys.len() - 1);
+                }
+                KeyCode::Down => {
+                    cursor = (cursor + 1) % keys.len();
+                }
+                KeyCode::Enter | KeyCode::Char(' ') => {
+                    self.cycle_setting(keys[cursor])?;
+                }
+                _ => {}
+            }
+        }
+    }
+
+    // trace:STORY-194 | ai:claude
+    /// Draw the `/settings` panel overlay: the three panes behind it plus a
+    /// centered box listing each setting's label + current value, the cursor row
+    /// marked, and a footer of the controls.
+    fn draw_settings_panel(&mut self, cursor: usize) -> Result<()> {
+        self.draw("", None)?;
+        let settings = self.settings;
+        self.terminal
+            .draw(|frame| {
+                let overlay = palette_rect(frame.area());
+                frame.render_widget(Clear, overlay);
+                let mut body: Vec<Line> = Vec::new();
+                for (i, key) in SettingKey::order().into_iter().enumerate() {
+                    let marker = if i == cursor { "› " } else { "  " };
+                    let row = format!("{marker}{:<14}{}", key.label(), settings.value_label(key));
+                    let style = if i == cursor {
+                        theme::border_for(true)
+                    } else {
+                        Style::default()
+                    };
+                    body.push(Line::styled(row, style));
+                }
+                body.push(Line::from(""));
+                body.push(Line::from("↑/↓ move · Enter/Space toggle · Esc close"));
+                let widget = Paragraph::new(body)
+                    .block(
+                        Block::default()
+                            .borders(Borders::ALL)
+                            .border_style(theme::border())
+                            .title(" settings "),
+                    )
+                    .wrap(Wrap { trim: false });
+                frame.render_widget(widget, overlay);
+            })
+            .map_err(map_backend_err)?;
         Ok(())
     }
 
@@ -1886,6 +2104,74 @@ impl<R: BufRead, B: Backend> FrontEnd for TuiFrontEnd<R, B> {
     fn hydrate_resume(&mut self, turns: &[(String, String)]) {
         self.hydrate_transcript(turns);
     }
+
+    // trace:STORY-194 | ai:claude — the RUNTIME editor switch: parse the token,
+    // record + persist the choice, recompute the live editor model (so the next
+    // free-text box — and its `your answer · <model>` title — uses it), and note
+    // the change in the transcript. A bare `/editor` shows the current model.
+    fn set_editor_choice(&mut self, token: &str) {
+        let token = token.trim();
+        if token.is_empty() {
+            let note = format!(
+                "[editor] mode: {} (use /editor <emacs|vim|auto> to change)",
+                self.settings.editor.label()
+            );
+            self.transcript.push_block(&note);
+            return;
+        }
+        match EditorChoice::parse(token) {
+            Some(choice) => {
+                self.set_editor_choice_value(choice);
+                let note = format!(
+                    "[editor] mode set: {} — the answer box now uses it",
+                    self.settings.editor.label()
+                );
+                self.transcript.push_block(&note);
+            }
+            None => {
+                let note = format!(
+                    "[editor] unknown mode `{token}` (expected emacs, vim, or auto). Unchanged ({}).",
+                    self.settings.editor.label()
+                );
+                self.transcript.push_block(&note);
+            }
+        }
+    }
+
+    // trace:STORY-194 | ai:claude
+    fn sync_score(&mut self, on: bool) {
+        if self.settings.score != on {
+            self.settings.score = on;
+            self.persist_settings();
+        }
+    }
+
+    // trace:STORY-194 | ai:claude
+    fn sync_mode(&mut self, mode_token: &str) {
+        if let Some(mode) = crate::strategy::SessionMode::parse(mode_token) {
+            if self.settings.mode != mode {
+                self.settings.mode = mode;
+                self.persist_settings();
+            }
+        }
+    }
+
+    // trace:STORY-194 | ai:claude — the SETTINGS surface. `set <key> <value>`
+    // routes to the headless mutate path (also usable in the TUI); a bare
+    // `/settings` opens the interactive PANEL. Either way the new settings are
+    // persisted and returned so the engine reconciles score/mode.
+    fn settings_surface(&mut self, rest: &str) -> Settings {
+        let rest = rest.trim();
+        let mut tokens = rest.split_whitespace();
+        if tokens.next().map(|t| t.eq_ignore_ascii_case("set")) == Some(true) {
+            self.apply_settings_set(tokens.next(), tokens.next());
+            return self.settings;
+        }
+        // Open the interactive panel (best-effort; a draw/read error returns the
+        // unchanged settings so the engine simply re-presents the question).
+        let _ = self.run_settings_panel();
+        self.settings
+    }
 }
 
 /// The centered overlay rectangle for the palette, sized as a fraction of the
@@ -1941,6 +2227,16 @@ fn render_transcript_scrollbar(
         vertical: 1,
     });
     frame.render_stateful_widget(scrollbar, inner, &mut state);
+}
+
+// trace:STORY-194 | ai:claude
+/// The resolved `$VISUAL`/`$EDITOR` value (same precedence as the editor model
+/// inference), used to resolve an `EditorChoice::Auto` to a concrete model.
+fn resolved_env_editor() -> String {
+    std::env::var("VISUAL")
+        .ok()
+        .or_else(|| std::env::var("EDITOR").ok())
+        .unwrap_or_default()
 }
 
 // trace:STORY-180 | ai:claude
@@ -2038,6 +2334,15 @@ fn parse_control(raw: &str, context: InputContext) -> Option<AnswerInput> {
     }
     if let Some(mode) = mode_command_text(raw) {
         return Some(AnswerInput::Mode(mode));
+    }
+    // trace:STORY-194 | ai:claude — `/editor` switches the editor model and
+    // `/settings` opens the settings surface; mirrors the line front-end
+    // recognizer order so the TUI routes them identically.
+    if let Some(editor) = editor_command_text(raw) {
+        return Some(AnswerInput::Editor(editor));
+    }
+    if let Some(rest) = settings_command_text(raw) {
+        return Some(AnswerInput::Settings(rest));
     }
     if is_rest_command(raw) {
         return Some(AnswerInput::Rest);
@@ -2546,6 +2851,16 @@ mod tests {
             parse_control("/mode debate", InputContext::Frontier),
             Some(AnswerInput::Mode(_))
         ));
+        // trace:STORY-194 | ai:claude — `/editor` and `/settings` route to their
+        // own variants, identically to the line front-end's recognizers.
+        assert!(matches!(
+            parse_control("/editor vim", InputContext::Frontier),
+            Some(AnswerInput::Editor(_))
+        ));
+        assert!(matches!(
+            parse_control("/settings", InputContext::Frontier),
+            Some(AnswerInput::Settings(_))
+        ));
         assert!(matches!(
             parse_control("/help how?", InputContext::Frontier),
             Some(AnswerInput::Help(_))
@@ -2792,6 +3107,102 @@ mod tests {
         height: u16,
     ) -> TuiFrontEnd<BufReader<std::io::Empty>, ratatui::backend::TestBackend> {
         TuiFrontEnd::with_test_backend(BufReader::new(std::io::empty()), width, height)
+    }
+
+    // ---- STORY-194: runtime editor switch + settings panel + F1 ------------
+
+    // trace:STORY-194 | ai:claude — `/editor vim` switches the LIVE editor model
+    // (the model the next free-text box is built from) and the box title reflects
+    // it; `/editor emacs` switches back; a bare `/editor` leaves it unchanged.
+    #[test]
+    fn editor_command_switches_the_live_model_and_title() {
+        let mut tui = test_tui(60, 24);
+        // Starts at the default (Auto → Emacs under a default test env).
+        assert_eq!(tui.editor_model, EditorModel::Emacs);
+
+        tui.set_editor_choice("vim");
+        assert_eq!(tui.editor_model, EditorModel::Vim);
+        assert_eq!(tui.settings.editor, EditorChoice::Vim);
+        // The box built from the live model now titles itself "vim".
+        let title = editor_box_title(&TextEditor::new(tui.editor_model));
+        assert!(title.contains("vim"), "title should show vim: {title}");
+
+        tui.set_editor_choice("emacs");
+        assert_eq!(tui.editor_model, EditorModel::Emacs);
+        let title = editor_box_title(&TextEditor::new(tui.editor_model));
+        assert!(title.contains("emacs"), "title should show emacs: {title}");
+
+        // A bare /editor shows but does not change the model.
+        tui.set_editor_choice("");
+        assert_eq!(tui.editor_model, EditorModel::Emacs);
+    }
+
+    // trace:STORY-194 | ai:claude — the panel REFLECTS every setting's current
+    // value (the drawn overlay lists editor/mouse/score/mode), and cycling a row
+    // MUTATES it, staying in sync with the dedicated shortcuts (the editor cycle
+    // rebuilds the live model; score/mode record for the engine to reconcile).
+    #[test]
+    fn settings_panel_reflects_and_mutates_each_setting() {
+        let mut tui = test_tui(70, 24);
+        // Draw the panel overlay and confirm it lists every setting label + value.
+        tui.draw_settings_panel(0).expect("draw panel");
+        let frame = tui.rendered_text();
+        for label in ["Editor mode", "Mouse", "Score gauge", "Session mode"] {
+            assert!(frame.contains(label), "panel missing {label}:\n{frame}");
+        }
+
+        // Cycle the editor row: Auto → Emacs (default test env resolves to Emacs),
+        // and the LIVE model rebuilds in step (sync with /editor).
+        tui.cycle_setting(SettingKey::Editor).unwrap();
+        assert_eq!(tui.settings.editor, EditorChoice::Emacs);
+        assert_eq!(tui.editor_model, EditorModel::Emacs);
+
+        // Toggling the mouse row flips both the setting AND the mirrored display
+        // state the status bar / `/mouse` shortcut share.
+        assert!(tui.settings.mouse);
+        tui.cycle_setting(SettingKey::Mouse).unwrap();
+        assert!(!tui.settings.mouse);
+        assert!(
+            !tui.mouse_enabled,
+            "panel mouse toggle syncs the shortcut state"
+        );
+
+        // Score + mode toggle in place.
+        assert!(!tui.settings.score);
+        tui.cycle_setting(SettingKey::Score).unwrap();
+        assert!(tui.settings.score);
+        assert_eq!(tui.settings.mode, crate::strategy::SessionMode::Socratic);
+        tui.cycle_setting(SettingKey::Mode).unwrap();
+        assert_eq!(tui.settings.mode, crate::strategy::SessionMode::Debate);
+    }
+
+    // trace:STORY-194 | ai:claude — the dedicated /score + /mode shortcuts keep the
+    // panel in sync: `sync_score` / `sync_mode` record the engine-owned state into
+    // the front-end's settings so a later /settings panel shows the live value.
+    #[test]
+    fn shortcuts_stay_in_sync_with_the_panel_state() {
+        let mut tui = test_tui(60, 24);
+        assert!(!tui.settings.score);
+        tui.sync_score(true);
+        assert!(tui.settings.score);
+        tui.sync_mode("debate");
+        assert_eq!(tui.settings.mode, crate::strategy::SessionMode::Debate);
+        // The panel value labels now reflect the synced state.
+        assert_eq!(tui.settings.value_label(SettingKey::Score), "On");
+        assert_eq!(tui.settings.value_label(SettingKey::Mode), "Debate");
+    }
+
+    // trace:STORY-194 | ai:claude — the `/settings set <key> <value>` line path
+    // (usable in the TUI too) mutates the named setting; an unknown value is a
+    // no-op note. Returned settings carry the change for the engine to reconcile.
+    #[test]
+    fn settings_set_line_path_mutates_a_setting() {
+        let mut tui = test_tui(60, 24);
+        let after = tui.settings_surface("set mode debate");
+        assert_eq!(after.mode, crate::strategy::SessionMode::Debate);
+        let after = tui.settings_surface("set editor vim");
+        assert_eq!(after.editor, EditorChoice::Vim);
+        assert_eq!(tui.editor_model, EditorModel::Vim);
     }
 
     // trace:BUG-184 | ai:claude — the status model gains a `thinking…` segment that
