@@ -1,0 +1,19 @@
+id: 019ea3c4-a97c-7303-afc9-b39654fa1dca
+spec_id: SPIKE-189
+agreed_id: SPIKE-189
+title: 'Spike: bounded context for long sessions — stop re-sending full history every call (O(turns^2) → ~linear)'
+description: 'Even after the turn-envelope consolidation (ADR-187: one LLM call/turn), each interrogator call re-sends the ENTIRE growing conversation, so a long session (the ~150-turn free-will dialogue) costs ~O(turns^2) tokens and ever-larger prompts. Spike options for BOUNDED context so cost grows ~linearly: (a) a rolling SUMMARY of older turns + verbatim recent window; (b) reuse the SYNOPSIS (EPIC-126) as the compressed standing context; (c) windowing/eliding older Q&A while preserving the goal + key positions + open objections. Evaluate fidelity vs cost; the Socratic thread depends on earlier commitments, so naive truncation risks losing the through-line — the summary must preserve the load-bearing prior positions (e.g. the Q-46/Q-74 commitments the interrogator keeps citing). Deliver a recommendation + a follow-up story.'
+status: Draft
+priority: Medium
+owner: ''
+feature: Uncategorized
+created_at: 2026-06-07T20:27:15.196458902Z
+modified_at: 2026-06-07T20:27:15.196458902Z
+req_type: Spike
+tags:
+- context
+- cost
+- llm
+- performance
+- spike
+human_only: true
