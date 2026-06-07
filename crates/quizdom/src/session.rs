@@ -1463,6 +1463,90 @@ fn render_exchange_reading(reading: &ExchangeReading, output: &mut impl Write) -
     Ok(())
 }
 
+// trace:STORY-163 | ai:claude
+/// Render the graceful placeholder for the `/help` channel.
+///
+/// STORY-163 wires `/help` through the palette + the command recognizer; the
+/// belief-neutral, TOOL-CONTEXT LLM answer is STORY-164's job. Until that lands,
+/// selecting / typing `/help` is NON-DESTRUCTIVE: it prints this note (in the
+/// secondary META voice, so it never reads as the question) and the caller
+/// re-presents the SAME question. The note is belief-neutral by construction —
+/// it talks only about the TOOL, never about any belief — and points the user at
+/// the palette's per-command `?` help, which is already live, so the channel is
+/// useful even before the LLM leg ships.
+fn render_help_placeholder(question: &str, output: &mut impl Write) -> Result<()> {
+    let header = "META (/help) — process help (belief-neutral; about the tool, not your belief):";
+    writeln!(
+        output,
+        "\n{}",
+        crate::style::paint(crate::style::meta(), header)
+    )?;
+    let body = if question.trim().is_empty() {
+        "Ask how the tool works — controls, the flow, what a feature does, how to rest your case. \
+Free-form answers from the tool's design arrive with /help <question> (coming soon); for now, \
+open the palette with '/' and press '?' on any command for its detailed help."
+            .to_string()
+    } else {
+        format!(
+            "Your question — \"{}\" — is a process question (how the tool works), and is answered \
+belief-neutrally from the tool's design. The free-form /help answer is coming soon; for now, \
+open the palette with '/' and press '?' on any command for its detailed help.",
+            question.trim()
+        )
+    };
+    writeln!(
+        output,
+        "{}",
+        crate::style::paint(crate::style::meta(), &format!("  {body}"))
+    )?;
+    Ok(())
+}
+
+// trace:STORY-163 | ai:claude
+/// Render the graceful placeholder for the `/tutor` articulation & nuance coach.
+///
+/// STORY-163 wires `/tutor` through the palette + recognizer; the coaching LLM
+/// engine (reflect + sharpen the user's OWN point, surface the missing nuance,
+/// never supply the belief) is STORY-165's job. Until that lands, selecting /
+/// typing `/tutor` is NON-DESTRUCTIVE: it prints this note in the META voice and
+/// the caller re-presents the SAME question. Belief-neutral by construction — it
+/// promises to sharpen the user's own point and name missing nuance, and never
+/// supplies a belief or takes a side.
+fn render_tutor_placeholder(text: &str, output: &mut impl Write) -> Result<()> {
+    let header =
+        "META (/tutor) — articulation & nuance coach (sharpens YOUR point; never supplies it):";
+    writeln!(
+        output,
+        "\n{}",
+        crate::style::paint(crate::style::meta(), header)
+    )?;
+    let body = "/tutor reflects your own half-formed view back more precisely, teaches the \
+relevant distinction, and names the nuance you have not yet addressed — without ever telling you \
+what to believe. The coaching engine is coming soon; for now, use /observe for a belief-neutral \
+reading of the current exchange.";
+    writeln!(
+        output,
+        "{}",
+        crate::style::paint(crate::style::meta(), &format!("  {body}"))
+    )?;
+    // trace:STORY-163 | ai:claude — echo back the point the user typed after
+    // /tutor (when any) as the thing to be sharpened — belief-neutral: it reflects
+    // the user's OWN words, never supplying a belief. STORY-165 replaces this with
+    // the coaching engine that sharpens it.
+    let text = text.trim();
+    if !text.is_empty() {
+        writeln!(
+            output,
+            "{}",
+            crate::style::paint(
+                crate::style::meta(),
+                &format!("  The point you're reaching for: \"{text}\"")
+            )
+        )?;
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 pub(crate) fn run_session(
     config: &CliConfig,
@@ -2031,6 +2115,20 @@ fn run_session_from_current(
                     )?;
                     break;
                 }
+                AnswerInput::Help(question) => {
+                    // trace:STORY-163 | ai:claude — non-destructive process-help
+                    // channel; render the graceful placeholder and re-present the
+                    // SAME question (like Observe). The LLM answer lands in STORY-164.
+                    render_help_placeholder(&question, output)?;
+                    continue;
+                }
+                AnswerInput::Tutor(text) => {
+                    // trace:STORY-163 | ai:claude — non-destructive articulation
+                    // coach; render the graceful placeholder and re-present the SAME
+                    // question. The coaching engine lands in STORY-165.
+                    render_tutor_placeholder(&text, output)?;
+                    continue;
+                }
                 AnswerInput::End => {
                     // trace:STORY-80 | ai:claude
                     ended_at_frontier = true;
@@ -2474,7 +2572,11 @@ fn ask_contradiction_follow_up(
         | AnswerInput::Mode(_)
         | AnswerInput::Rest
         | AnswerInput::Verdict
-        | AnswerInput::Terminate => Ok(false),
+        | AnswerInput::Terminate
+        // trace:STORY-163 | ai:claude — a stray `/help` / `/tutor` on a transient
+        // contradiction follow-up is a no-op here (no LLM channel state in scope).
+        | AnswerInput::Help(_)
+        | AnswerInput::Tutor(_) => Ok(false),
     }
 }
 
@@ -2764,6 +2866,18 @@ fn browse_answered_path(
             // rest / verdict / terminate here is a no-op; the user returns to the
             // frontier (Forward / Back to the live edge) to rest their case.
             AnswerInput::Rest | AnswerInput::Verdict | AnswerInput::Terminate => continue,
+            // trace:STORY-163 | ai:claude — `/help` (process) and `/tutor`
+            // (articulation coach) are non-destructive out-of-band channels that
+            // apply anywhere, including the review pane: render the graceful
+            // placeholder and stay on the same reviewed answer.
+            AnswerInput::Help(question) => {
+                render_help_placeholder(&question, output)?;
+                continue;
+            }
+            AnswerInput::Tutor(text) => {
+                render_tutor_placeholder(&text, output)?;
+                continue;
+            }
             AnswerInput::End => return Ok(ReviewOutcome::End),
         }
     }
@@ -3728,5 +3842,51 @@ mod conclude_tests {
         let mut free_text = FreeTextInput::Plain;
         let mut out = Vec::new();
         assert!(!prompt_to_conclude(&mut input, &mut free_text, &mut out).expect("prompt"));
+    }
+
+    // ---- STORY-163: /help + /tutor graceful placeholders -------------------
+
+    #[test]
+    fn help_placeholder_is_belief_neutral_and_about_the_tool() {
+        // trace:STORY-163 | ai:claude — the /help channel is belief-neutral by
+        // construction: the note talks only about the TOOL/process, points at the
+        // palette's per-command `?` help, and never references any belief content.
+        let mut out = Vec::new();
+        render_help_placeholder("how do I rest my case?", &mut out).expect("render");
+        let text = String::from_utf8(out).unwrap();
+        assert!(text.contains("/help"));
+        assert!(text.to_lowercase().contains("belief-neutral"));
+        assert!(text.contains("how do I rest my case?"));
+        // It points the user at the already-live per-command help.
+        assert!(text.contains("'?'") || text.contains("palette"));
+    }
+
+    #[test]
+    fn help_placeholder_without_a_question_still_guides_the_user() {
+        let mut out = Vec::new();
+        render_help_placeholder("", &mut out).expect("render");
+        let text = String::from_utf8(out).unwrap();
+        assert!(text.contains("/help"));
+        assert!(text.to_lowercase().contains("controls") || text.to_lowercase().contains("flow"));
+    }
+
+    #[test]
+    fn tutor_placeholder_promises_to_sharpen_the_users_point_without_supplying_a_belief() {
+        // trace:STORY-163 | ai:claude — the /tutor note reflects + sharpens the
+        // user's OWN point and names missing nuance, and explicitly never tells the
+        // user what to believe — the belief-neutral guarantee, surfaced even before
+        // the LLM engine (STORY-165) lands.
+        let mut out = Vec::new();
+        render_tutor_placeholder("free will is uncaused choice", &mut out).expect("render");
+        let text = String::from_utf8(out).unwrap();
+        assert!(text.contains("/tutor"));
+        assert!(text.to_lowercase().contains("nuance"));
+        assert!(text
+            .to_lowercase()
+            .contains("without ever telling you what to believe"));
+        // It echoes the user's OWN point back (to be sharpened), never supplying a
+        // belief or taking a side.
+        assert!(text.contains("free will is uncaused choice"));
+        assert!(!text.to_lowercase().contains("you should believe"));
     }
 }

@@ -7,6 +7,8 @@ mod input;
 mod model;
 // trace:STORY-127 | ai:claude
 mod observer;
+// trace:STORY-163 | ai:claude
+mod palette;
 mod persist;
 // trace:STORY-87 | ai:claude
 mod question_add;
