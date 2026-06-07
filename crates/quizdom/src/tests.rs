@@ -1478,9 +1478,11 @@ fn renders_all_question_kinds() {
         // trace:STORY-159 | ai:claude — `/goal` joins the advertised set.
         // trace:STORY-160 | ai:claude — `/rest` (rest your case) joins the set.
         // trace:STORY-161 | ai:claude — `/mode` joins the advertised set.
+        // trace:STORY-163 | ai:claude — `/` (palette), `/help`, and `/tutor` join
+        // the advertised free-text control set.
         (
             AnswerKind::FreeText,
-            "Answer in your own words, or /observe /synopsis /goal /mode /rest /explore /add /punt /back /quit",
+            "Answer in your own words, or / (palette), /help, /tutor, /observe, /synopsis, /goal, /mode, /rest, /explore, /add, /punt, /back, /quit",
         ),
     ];
 

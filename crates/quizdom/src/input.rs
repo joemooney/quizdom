@@ -1,5 +1,7 @@
 use crate::error::{QuizdomError, Result};
 use crate::model::{Answer, AnswerKind, Question};
+// trace:STORY-163 | ai:claude
+use crate::palette;
 use crate::style;
 use crossterm::event::{self, Event, KeyCode, KeyEventKind};
 use crossterm::terminal::{disable_raw_mode, enable_raw_mode};
@@ -161,11 +163,14 @@ fn control_prompt(prefix: &str, context: InputContext) -> String {
         // trace:STORY-161 | ai:claude — `/mode <socratic|debate>` joins the typed
         // controls; it toggles the questioning stance, so it is shown alongside
         // `/goal` rather than taking a single key.
+        // trace:STORY-163 | ai:claude — `/` opens the slash-command PALETTE
+        // (filter/arrow/Enter/Esc, `?` for per-command help); it is advertised
+        // alongside the typed commands as the discoverable entry point.
         InputContext::Frontier => {
-            format!("{prefix}  [?] Observe  [S] Synopsis  [X] eXplore  [A] Add  [P] Punt  [B] Back  [Q] Quit  (/goal <text>, /mode <socratic|debate>, /rest)")
+            format!("{prefix}  [?] Observe  [S] Synopsis  [X] eXplore  [A] Add  [P] Punt  [B] Back  [Q] Quit  (/ palette, /help, /tutor, /goal <text>, /mode <socratic|debate>, /rest)")
         }
         InputContext::Review => {
-            format!("{prefix}  [?] Observe  [S] Synopsis  [X] eXplore  [P] Punt  [B] Back  [F] Forward  [Q] Quit  (/goal <text>, /mode <socratic|debate>, /rest)")
+            format!("{prefix}  [?] Observe  [S] Synopsis  [X] eXplore  [P] Punt  [B] Back  [F] Forward  [Q] Quit  (/ palette, /help, /tutor, /goal <text>, /mode <socratic|debate>, /rest)")
         }
     }
 }
@@ -187,12 +192,15 @@ fn free_text_controls(context: InputContext) -> String {
         // control set; it opens the closing ritual.
         // trace:STORY-161 | ai:claude — `/mode` mirrors the typed control set; it
         // toggles the questioning stance (socratic/debate).
+        // trace:STORY-163 | ai:claude — a bare `/` opens the slash-command PALETTE
+        // (a discoverable menu of these same commands with descriptions + `?` help);
+        // `/help` and `/tutor` join the typed control set.
         InputContext::Frontier => {
-            "/observe /synopsis /goal /mode /rest /explore /add /punt /back /quit to navigate."
+            "/ (palette), /help, /tutor, /observe, /synopsis, /goal, /mode, /rest, /explore, /add, /punt, /back, /quit to navigate."
                 .to_string()
         }
         InputContext::Review => {
-            "/observe /synopsis /goal /mode /rest /explore /punt /back /forward /quit to navigate."
+            "/ (palette), /help, /tutor, /observe, /synopsis, /goal, /mode, /rest, /explore, /punt, /back, /forward, /quit to navigate."
                 .to_string()
         }
     }
@@ -247,6 +255,20 @@ pub(crate) enum AnswerInput {
     // applies: the terminator forfeits the last word, so the OTHER side makes the
     // final closing statement before the verdict renders.
     Terminate,
+    // trace:STORY-163 | ai:claude
+    // The user opened the /help channel (via the palette or the typed `/help`
+    // command). Carries any free-form question typed after `/help` (empty when
+    // none). Non-destructive: the session answers the process question and
+    // re-presents the SAME question. STORY-163 wires the command + a graceful
+    // placeholder; the belief-neutral, tool-context LLM answer lands in STORY-164.
+    Help(String),
+    // trace:STORY-163 | ai:claude
+    // The user opened the /tutor articulation & nuance coach (via the palette or
+    // the typed `/tutor` command). Carries any text typed after `/tutor`.
+    // Non-destructive. STORY-163 wires the command + a graceful placeholder; the
+    // coaching LLM engine (reflect + sharpen the user's OWN point, surface missing
+    // nuance, never supply the belief) lands in STORY-165.
+    Tutor(String),
     End,
 }
 
@@ -352,12 +374,26 @@ pub(crate) fn read_answer_or_end(
     output: &mut impl Write,
 ) -> Result<AnswerInput> {
     loop {
-        let raw = match kind {
+        let mut raw = match kind {
             AnswerKind::FreeText => free_text_input
                 .read_line(input, output, "")?
                 .ok_or_else(|| QuizdomError::Parse("no answer provided".to_string()))?,
             _ => read_control_answer_or_line(input, output, kind, context)?,
         };
+        // trace:STORY-163 | ai:claude — a bare `/` line at a free-text prompt
+        // opens the slash-command PALETTE overlay (the single-key prompts open it
+        // via the `/` key in `read_single_key_answer`). A selected command
+        // REPLACES the bare `/` and then flows through the SAME command
+        // recognizers below, so the palette and the typed form route identically.
+        // Cancelling (Esc / backspacing out) or a non-TTY leaves the line as the
+        // bare `/`, which falls through to ordinary parsing — non-TTY use is
+        // unaffected.
+        if is_palette_trigger(&raw) {
+            if let Some(palette::PaletteOutcome::Selected(command)) = palette::run_palette(output)?
+            {
+                raw = command;
+            }
+        }
         if is_end_command(&raw) {
             return Ok(AnswerInput::End);
         }
@@ -398,6 +434,16 @@ pub(crate) fn read_answer_or_end(
         }
         if is_terminate_command(&raw) {
             return Ok(AnswerInput::Terminate);
+        }
+        // trace:STORY-163 | ai:claude — `/help` and `/tutor` are non-destructive
+        // out-of-band channels (EPIC-162), so they are recognized in every context
+        // like the other meta controls. They carry any free-form text typed after
+        // the keyword.
+        if let Some(question) = help_command_text(&raw) {
+            return Ok(AnswerInput::Help(question));
+        }
+        if let Some(text) = tutor_command_text(&raw) {
+            return Ok(AnswerInput::Tutor(text));
         }
         // trace:STORY-88 | ai:claude — quick-add is a frontier-only control.
         if context == InputContext::Frontier && is_add_command(&raw) {
@@ -466,6 +512,21 @@ fn read_single_key_answer(
             KeyCode::Char('b') | KeyCode::Char('B') => "b",
             KeyCode::Char('f') | KeyCode::Char('F') if context == InputContext::Review => "f",
             KeyCode::Char('q') | KeyCode::Char('Q') => "/end",
+            // trace:STORY-163 | ai:claude — typing '/' as the first key opens the
+            // slash-command PALETTE overlay (we are already in raw mode here, so
+            // use the in-raw variant to leave the raw-mode lifetime to the guard
+            // above). A selected command is returned as its canonical typed form,
+            // which then flows through the SAME command recognizers as the typed
+            // form (so palette and typed routes are identical). Esc / backspacing
+            // out cancels back to the prompt — we just re-loop for the next key.
+            KeyCode::Char('/') => match palette::run_palette_in_raw(output)? {
+                Some(palette::PaletteOutcome::Selected(command)) => {
+                    writeln!(output, "{command}")?;
+                    output.flush()?;
+                    return Ok(Some(command));
+                }
+                Some(palette::PaletteOutcome::Cancelled) | None => continue,
+            },
             KeyCode::Char(character) if matches!(kind, AnswerKind::Choice(_)) => {
                 if character.is_ascii_digit() {
                     write!(output, "{character}\n")?;
@@ -624,20 +685,82 @@ pub(crate) fn is_add_command(raw: &str) -> bool {
     )
 }
 
+// trace:STORY-163 | ai:claude
+/// The `/help` control: an out-of-band process-help channel (EPIC-162 /
+/// STORY-164). Recognised ONLY as a leading `/help` keyword (slash-prefixed),
+/// optionally followed by a free-form question — we do not accept a bare `help`
+/// keyword so a one-word free-text answer is never swallowed. The trailing text,
+/// if any, is the user's question; an empty string means "open help with no
+/// question yet". The LLM engine that answers it lands in STORY-164 — STORY-163
+/// only wires the command through the palette + recognizer so selection routes
+/// somewhere graceful.
+pub(crate) fn help_command_text(raw: &str) -> Option<String> {
+    leading_keyword_text(raw, &["/help"])
+}
+
+// trace:STORY-163 | ai:claude
+/// The `/tutor` control: the articulation & nuance coach (EPIC-162 /
+/// STORY-165). Recognised ONLY as a leading `/tutor` keyword (slash-prefixed),
+/// like `/mode`, since "tutor" is rare enough as an ordinary word that the slash
+/// form is the safe trigger. Trailing text is carried verbatim. The coaching LLM
+/// engine lands in STORY-165 — STORY-163 only routes the command.
+pub(crate) fn tutor_command_text(raw: &str) -> Option<String> {
+    leading_keyword_text(raw, &["/tutor"])
+}
+
+// trace:STORY-163 | ai:claude
+/// Shared leading-keyword matcher: if `raw` (trimmed) starts with one of
+/// `keywords` (case-insensitively) followed by whitespace or end-of-line, return
+/// the REST of the line verbatim-trimmed; otherwise `None`. Mirrors the pattern
+/// [`goal_command_text`] / [`mode_command_text`] use so a free-text answer that
+/// merely contains the keyword mid-sentence is left as an answer.
+fn leading_keyword_text(raw: &str, keywords: &[&str]) -> Option<String> {
+    let trimmed = raw.trim();
+    for keyword in keywords {
+        if trimmed.len() >= keyword.len() && trimmed[..keyword.len()].eq_ignore_ascii_case(keyword)
+        {
+            let rest = &trimmed[keyword.len()..];
+            if rest.is_empty() || rest.starts_with(char::is_whitespace) {
+                return Some(rest.trim().to_string());
+            }
+        }
+    }
+    None
+}
+
+// trace:STORY-163 | ai:claude
+/// The palette trigger: a line that is exactly `/` (the first character `/` with
+/// nothing after it) opens the slash-command palette overlay. Only a BARE `/`
+/// triggers it — `/observe`, `/goal foo`, or any other already-typed
+/// slash-command is left alone so it routes through its own recognizer, and an
+/// ordinary free-text answer that merely contains a slash mid-sentence is
+/// unaffected.
+pub(crate) fn is_palette_trigger(raw: &str) -> bool {
+    raw.trim() == "/"
+}
+
 pub(crate) fn normalize_answer(kind: &AnswerKind, raw: &str) -> Option<String> {
     match kind {
+        // trace:STORY-163 | ai:claude — the full `/explore` / `/punt` slash forms
+        // (the canonical forms the palette returns) are accepted for YesNo too, so
+        // selecting them from the palette routes identically to the typed form
+        // regardless of answer kind (previously only `/x` / `/p` were accepted
+        // here; the long forms were FreeText-only via BUG-98).
         AnswerKind::YesNo => match raw.trim().to_ascii_lowercase().as_str() {
             "yes" | "y" => Some("yes".to_string()),
             "no" | "n" => Some("no".to_string()),
-            "x" | "/x" | "explore" => Some("explore".to_string()),
-            "p" | "/p" | "punt" => Some("punt".to_string()),
+            "x" | "/x" | "/explore" | "explore" => Some("explore".to_string()),
+            "p" | "/p" | "/punt" | "punt" => Some("punt".to_string()),
             _ => None,
         },
         AnswerKind::Choice(options) => {
             let trimmed = raw.trim();
             match trimmed.to_ascii_lowercase().as_str() {
-                "x" | "/x" | "explore" => return Some("explore".to_string()),
-                "p" | "/p" | "punt" => return Some("punt".to_string()),
+                // trace:STORY-163 | ai:claude — `/explore` / `/punt` accepted for
+                // Choice too (same rationale as YesNo above) so palette selection
+                // routes uniformly across answer kinds.
+                "x" | "/x" | "/explore" | "explore" => return Some("explore".to_string()),
+                "p" | "/p" | "/punt" | "punt" => return Some("punt".to_string()),
                 _ => {}
             }
             if let Ok(index) = trimmed.parse::<usize>() {
@@ -660,5 +783,127 @@ pub(crate) fn normalize_answer(kind: &AnswerKind, raw: &str) -> Option<String> {
                 (!other.is_empty()).then(|| other.to_string())
             }
         },
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // ---- STORY-163: palette trigger ----------------------------------------
+
+    #[test]
+    fn a_bare_slash_triggers_the_palette() {
+        // trace:STORY-163 | ai:claude — typing `/` as the whole line opens the
+        // palette; whitespace around it is tolerated.
+        assert!(is_palette_trigger("/"));
+        assert!(is_palette_trigger("  /  "));
+    }
+
+    #[test]
+    fn an_already_typed_slash_command_does_not_trigger_the_palette() {
+        // A command the user already typed in full routes through its own
+        // recognizer, not the palette overlay.
+        for raw in ["/observe", "/goal free will", "//", "/ x", "explore"] {
+            assert!(!is_palette_trigger(raw), "{raw} must not open the palette");
+        }
+    }
+
+    // ---- STORY-163: /help + /tutor recognizers -----------------------------
+
+    #[test]
+    fn help_command_is_recognized_with_and_without_a_question() {
+        // trace:STORY-163 | ai:claude
+        assert_eq!(help_command_text("/help"), Some(String::new()));
+        assert_eq!(
+            help_command_text("/help how do I rest my case?"),
+            Some("how do I rest my case?".to_string())
+        );
+        assert_eq!(
+            help_command_text("  /HELP  what is observe  "),
+            Some("what is observe".to_string())
+        );
+    }
+
+    #[test]
+    fn help_does_not_swallow_an_ordinary_answer() {
+        // Slash-only: a free-text answer that merely contains or equals "help"
+        // (no leading slash) is left as an answer, and `/helper` is not `/help`.
+        assert_eq!(help_command_text("help"), None);
+        assert_eq!(help_command_text("I need help understanding this"), None);
+        assert_eq!(help_command_text("/helper"), None);
+    }
+
+    #[test]
+    fn tutor_command_is_slash_only_and_carries_its_text() {
+        // trace:STORY-163 | ai:claude
+        assert_eq!(tutor_command_text("/tutor"), Some(String::new()));
+        assert_eq!(
+            tutor_command_text("/tutor I think determinism but..."),
+            Some("I think determinism but...".to_string())
+        );
+        // Bare word and mid-sentence mentions are ordinary answers.
+        assert_eq!(tutor_command_text("tutor"), None);
+        assert_eq!(tutor_command_text("a tutor helped me"), None);
+        assert_eq!(tutor_command_text("/tutored"), None);
+    }
+
+    // ---- STORY-163: palette selection routes like the typed form -----------
+
+    #[test]
+    fn palette_explore_and_punt_route_for_every_answer_kind() {
+        // trace:STORY-163 | ai:claude — the palette returns the canonical `/explore`
+        // / `/punt` forms; selection must route to the same action the typed form
+        // does, regardless of answer kind.
+        let choice = AnswerKind::Choice(vec!["a".to_string(), "b".to_string()]);
+        for kind in [&AnswerKind::YesNo, &choice, &AnswerKind::FreeText] {
+            assert_eq!(
+                normalize_answer(kind, "/explore"),
+                Some("explore".to_string()),
+                "/explore must route for {kind:?}"
+            );
+            assert_eq!(
+                normalize_answer(kind, "/punt"),
+                Some("punt".to_string()),
+                "/punt must route for {kind:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn bare_explore_is_still_a_freetext_answer_not_a_command() {
+        // The slash form is the command; the bare word stays a legitimate answer
+        // for a free-text question (unchanged from BUG-98).
+        assert_eq!(
+            normalize_answer(&AnswerKind::FreeText, "explore"),
+            Some("explore".to_string())
+        );
+    }
+
+    #[test]
+    fn palette_command_strings_route_through_the_existing_recognizers() {
+        // trace:STORY-163 | ai:claude — every canonical command string the palette
+        // can return is recognized by exactly one input recognizer, so a palette
+        // selection is indistinguishable from typing the command. This is the
+        // acceptance guarantee: "running a command routes to the same action as the
+        // typed form".
+        assert!(is_observe_command("/observe"));
+        assert!(is_synopsis_command("/synopsis"));
+        assert!(is_back_command("/back"));
+        assert!(is_add_command("/add"));
+        assert!(is_end_command("/quit"));
+        assert!(is_rest_command("/rest"));
+        assert!(goal_command_text("/goal").is_some());
+        assert!(mode_command_text("/mode").is_some());
+        assert!(help_command_text("/help").is_some());
+        assert!(tutor_command_text("/tutor").is_some());
+        assert_eq!(
+            normalize_answer(&AnswerKind::YesNo, "/explore"),
+            Some("explore".to_string())
+        );
+        assert_eq!(
+            normalize_answer(&AnswerKind::YesNo, "/punt"),
+            Some("punt".to_string())
+        );
     }
 }
