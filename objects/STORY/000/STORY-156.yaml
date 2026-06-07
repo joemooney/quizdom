@@ -8,7 +8,7 @@ priority: High
 owner: ''
 feature: Uncategorized
 created_at: 2026-06-07T00:55:25.018510211Z
-modified_at: 2026-06-07T01:57:58.424448310Z
+modified_at: 2026-06-07T01:58:00.523476325Z
 req_type: Story
 tags:
 - conclude
@@ -20,3 +20,9 @@ relationships:
 - rel_type: Child
   target_id: 019e9f92-a9c0-7d51-9105-8610d6e3810c
   created_at: 2026-06-07T00:55:28.784379498Z
+comments:
+- id: 019e9fcd-1e4b-7f31-a010-ce2babb1f4cc
+  author: joe
+  content: 'Implemented in PR-50 (merged to main, squash bb84111). synopsis.rs: WELL_ROUNDED_THRESHOLD=80, Roundedness::is_well_rounded, SessionSynopsis::offers_conclude/composite, render_roundedness emits the conclude OFFER at/above threshold vs the limiting gap below, render_conclusion + concluding_standing for the final belief-neutral summary. session.rs: render_session_synopsis returns the synopsis+arc; the frontier handler prompts via prompt_to_conclude (agency-preserving, EOF/offline never concludes), prints render_conclusion, and ends gracefully with a concluded preface on the resume footer. Belief-neutral throughout. Tests cover offer/gap branches, conclusion summary + fallback, opposite positions both offering, prompt accept/decline/EOF, offline degrade.'
+  created_at: 2026-06-07T01:58:00.523476325Z
+  modified_at: 2026-06-07T01:58:00.523476325Z
