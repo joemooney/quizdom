@@ -27,7 +27,7 @@ priority: High
 owner: ''
 feature: Uncategorized
 created_at: 2026-06-07T14:27:53.809916311Z
-modified_at: 2026-06-07T14:28:02.781490120Z
+modified_at: 2026-06-07T14:28:53.571438955Z
 req_type: Bug
 tags:
 - bug
@@ -39,3 +39,9 @@ relationships:
   target_id: 019ea0c7-f29b-7013-905c-f93254305b08
   created_at: 2026-06-07T14:28:02.781482104Z
   created_by: joe
+comments:
+- id: 019ea27c-92c3-7330-86b6-c6f84e61cb5d
+  author: joe
+  content: 'DECIDED (user): the single role-agnostic QUOTE color = a soft/warm YELLOW, distinct from the gold/amber border+cursor accent and from the role colors (cyan/green/magenta/blue). Add it to mod theme as e.g. theme::QUOTE. (No italic required unless it reads better.)'
+  created_at: 2026-06-07T14:28:53.571438955Z
+  modified_at: 2026-06-07T14:28:53.571438955Z
