@@ -155,11 +155,14 @@ fn control_prompt(prefix: &str, context: InputContext) -> String {
         // trace:STORY-159 | ai:claude — `/goal <text>` joins the controls; it has
         // no single key because it takes free-text, so it is shown as the typed
         // command form alongside the single-key set.
+        // trace:STORY-160 | ai:claude — `/rest` (rest your case) joins the typed
+        // controls; it begins the closing ritual, so it is shown alongside `/goal`
+        // rather than taking a single key.
         InputContext::Frontier => {
-            format!("{prefix}  [?] Observe  [S] Synopsis  [X] eXplore  [A] Add  [P] Punt  [B] Back  [Q] Quit  (/goal <text>)")
+            format!("{prefix}  [?] Observe  [S] Synopsis  [X] eXplore  [A] Add  [P] Punt  [B] Back  [Q] Quit  (/goal <text>, /rest)")
         }
         InputContext::Review => {
-            format!("{prefix}  [?] Observe  [S] Synopsis  [X] eXplore  [P] Punt  [B] Back  [F] Forward  [Q] Quit  (/goal <text>)")
+            format!("{prefix}  [?] Observe  [S] Synopsis  [X] eXplore  [P] Punt  [B] Back  [F] Forward  [Q] Quit  (/goal <text>, /rest)")
         }
     }
 }
@@ -177,11 +180,15 @@ fn free_text_controls(context: InputContext) -> String {
         // synopsis control for the free-text line-mode prompt.
         // trace:STORY-159 | ai:claude — `/goal <text>` mirrors the single-key
         // control set for the free-text line-mode prompt.
+        // trace:STORY-160 | ai:claude — `/rest` (rest your case) mirrors the typed
+        // control set; it opens the closing ritual.
         InputContext::Frontier => {
-            "/observe /synopsis /goal /explore /add /punt /back /quit to navigate.".to_string()
+            "/observe /synopsis /goal /rest /explore /add /punt /back /quit to navigate."
+                .to_string()
         }
         InputContext::Review => {
-            "/observe /synopsis /goal /explore /punt /back /forward /quit to navigate.".to_string()
+            "/observe /synopsis /goal /rest /explore /punt /back /forward /quit to navigate."
+                .to_string()
         }
     }
 }
@@ -211,6 +218,22 @@ pub(crate) enum AnswerInput {
     // bare `/goal` with no text carries an empty string, which the session
     // treats as "show the current goal" rather than clearing it.
     Goal(String),
+    // trace:STORY-160 | ai:claude
+    // The user (or challenger) called "rest your case": a PHASE TRANSITION out of
+    // the question/answer loop into the CLOSING phase, where the exchange becomes
+    // closing STATEMENTS (the user's settled position + the challenger's strongest
+    // remaining objection) rather than questions. Recognised in every context.
+    Rest,
+    // trace:STORY-160 | ai:claude
+    // The user requested a FINAL VERDICT: render the belief-neutral roundedness
+    // assessment (EPIC-154) w.r.t. the goal and end the session. Recognised in the
+    // closing phase (and at the frontier, where it short-circuits to the verdict).
+    Verdict,
+    // trace:STORY-160 | ai:claude
+    // The user called "terminate" — end the closing ritual. The FAIRNESS RULE
+    // applies: the terminator forfeits the last word, so the OTHER side makes the
+    // final closing statement before the verdict renders.
+    Terminate,
     End,
 }
 
@@ -343,6 +366,19 @@ pub(crate) fn read_answer_or_end(
         // same question), so it is recognized in every context.
         if let Some(goal) = goal_command_text(&raw) {
             return Ok(AnswerInput::Goal(goal));
+        }
+        // trace:STORY-160 | ai:claude — the closing-ritual controls are
+        // non-destructive at the input layer (the session decides what each does)
+        // and are recognized in every context so a user can rest / call a verdict /
+        // terminate from wherever they are.
+        if is_rest_command(&raw) {
+            return Ok(AnswerInput::Rest);
+        }
+        if is_verdict_command(&raw) {
+            return Ok(AnswerInput::Verdict);
+        }
+        if is_terminate_command(&raw) {
+            return Ok(AnswerInput::Terminate);
         }
         // trace:STORY-88 | ai:claude — quick-add is a frontier-only control.
         if context == InputContext::Frontier && is_add_command(&raw) {
@@ -502,6 +538,41 @@ pub(crate) fn goal_command_text(raw: &str) -> Option<String> {
         }
     }
     None
+}
+
+// trace:STORY-160 | ai:claude
+/// The "rest your case" control: a PHASE TRANSITION out of the question/answer
+/// loop into the CLOSING phase. Recognised as `/rest`, `rest`, `/rest case`, or
+/// `rest case` (the natural phrasing the spec uses), case-insensitively. A
+/// free-text answer that merely contains the word "rest" mid-sentence is NOT a
+/// command — only the leading keyword (optionally followed by `case`) triggers.
+pub(crate) fn is_rest_command(raw: &str) -> bool {
+    matches!(
+        raw.trim().to_ascii_lowercase().as_str(),
+        "/rest" | "rest" | "/rest case" | "rest case" | "/rest-case" | "rest-case"
+    )
+}
+
+// trace:STORY-160 | ai:claude
+/// The "final verdict" control: render the belief-neutral roundedness verdict
+/// (EPIC-154) and end. Recognised as `/verdict` or the word `verdict`.
+pub(crate) fn is_verdict_command(raw: &str) -> bool {
+    matches!(
+        raw.trim().to_ascii_lowercase().as_str(),
+        "/verdict" | "verdict"
+    )
+}
+
+// trace:STORY-160 | ai:claude
+/// The "terminate" control: end the closing ritual under the FAIRNESS RULE (the
+/// terminator forfeits the last word). Recognised as `/terminate` or the word
+/// `terminate`. Distinct from the session-end controls (`/end` / `q`), which
+/// quit without the closing ritual.
+pub(crate) fn is_terminate_command(raw: &str) -> bool {
+    matches!(
+        raw.trim().to_ascii_lowercase().as_str(),
+        "/terminate" | "terminate"
+    )
 }
 
 // trace:STORY-88 | ai:claude

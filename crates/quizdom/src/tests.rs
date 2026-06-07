@@ -1476,9 +1476,10 @@ fn renders_all_question_kinds() {
         // trace:STORY-127 | ai:claude — `/observe` joins the advertised set.
         // trace:STORY-128 | ai:claude — `/synopsis` joins the advertised set.
         // trace:STORY-159 | ai:claude — `/goal` joins the advertised set.
+        // trace:STORY-160 | ai:claude — `/rest` (rest your case) joins the set.
         (
             AnswerKind::FreeText,
-            "Answer in your own words, or /observe /synopsis /goal /explore /add /punt /back /quit",
+            "Answer in your own words, or /observe /synopsis /goal /rest /explore /add /punt /back /quit",
         ),
     ];
 
@@ -4043,6 +4044,320 @@ fn start_records_the_goal_flag_on_the_session_started_event() {
     assert!(
         log.contains(r#""goal":"is free will real?""#),
         "log:\n{log}"
+    );
+
+    let _ = fs::remove_file(path);
+}
+
+// ---- STORY-160: the closing ritual -------------------------------------
+
+// trace:STORY-160 | ai:claude — the closing-ritual command recognizers. `rest`
+// (and `rest case`) opens the closing phase; `verdict` requests the assessment;
+// `terminate` invokes the fairness rule. A mid-sentence mention is NOT a command.
+#[test]
+fn closing_ritual_command_recognizers() {
+    assert!(is_rest_command("rest"));
+    assert!(is_rest_command("/rest"));
+    assert!(is_rest_command("rest case"));
+    assert!(is_rest_command("/REST CASE"));
+    assert!(!is_rest_command("i need a rest from this"));
+
+    assert!(is_verdict_command("verdict"));
+    assert!(is_verdict_command("/verdict"));
+    assert!(!is_verdict_command("the verdict is in"));
+
+    assert!(is_terminate_command("terminate"));
+    assert!(is_terminate_command("/TERMINATE"));
+    assert!(!is_terminate_command("terminate the contract clause"));
+
+    // The closing controls are distinct from the session-end controls: a plain
+    // quit (`q` / `/end`) does NOT trigger the closing ritual.
+    assert!(!is_rest_command("q"));
+    assert!(!is_terminate_command("/end"));
+}
+
+// trace:STORY-160 | ai:claude — `rest case` is a PHASE TRANSITION: the session
+// stops asking questions and switches to closing STATEMENTS. A user closing
+// statement is recorded and the challenger answers with an objection; the log
+// shows the phase change + both closing statements. Non-TTY safe (offline the
+// challenger degrades to a structural objection).
+#[test]
+fn rest_case_enters_the_closing_phase_with_statements_not_questions() {
+    let path = std::env::temp_dir().join(format!(
+        "quizdom-story-160-rest-{}.jsonl",
+        std::process::id()
+    ));
+    let _ = fs::remove_file(&path);
+    let bank = FakeBank::new([question_with_tags(
+        "Q-1",
+        70,
+        AnswerKind::YesNo,
+        ["topic:free-will", "answer:yes-no", "weight:70"],
+    )]);
+    let config = test_config(&path, "Q-1");
+    let mut output = Vec::new();
+
+    // Rest the case at the frontier, make one closing statement, then ask for the
+    // verdict (which ends the session).
+    run_session(
+        &config,
+        &bank,
+        &DeterministicNextQuestionStrategy,
+        "rest case\nMy settled position is that deliberation is real.\nverdict\n".as_bytes(),
+        &mut output,
+    )
+    .unwrap();
+
+    let rendered = String::from_utf8(output).unwrap();
+    // The phase transition is announced and the prompt is for a closing STATEMENT,
+    // not another question.
+    assert!(
+        rendered.contains("case rested") || rendered.contains("closing ritual"),
+        "closing banner missing in:\n{rendered}"
+    );
+    assert!(
+        rendered.contains("Your closing statement"),
+        "closing statement prompt missing in:\n{rendered}"
+    );
+    // The challenger answers with a closing objection.
+    assert!(
+        rendered.contains("Challenger (closing"),
+        "challenger objection missing in:\n{rendered}"
+    );
+    // The final verdict renders the belief-neutral STRUCTURE assessment.
+    assert!(
+        rendered.contains("final verdict") && rendered.contains("STRUCTURE"),
+        "verdict header missing in:\n{rendered}"
+    );
+
+    let log = fs::read_to_string(&path).unwrap();
+    assert!(
+        log.contains(r#""event_type":"phase_changed""#) && log.contains(r#""phase":"closing""#),
+        "phase_changed event missing:\n{log}"
+    );
+    assert!(
+        log.contains(r#""event_type":"closing_statement""#) && log.contains(r#""speaker":"user""#),
+        "user closing statement missing:\n{log}"
+    );
+    assert!(
+        log.contains(r#""speaker":"challenger""#),
+        "challenger closing statement missing:\n{log}"
+    );
+
+    let _ = fs::remove_file(path);
+}
+
+// trace:STORY-160 | ai:claude — `verdict` renders the belief-neutral roundedness
+// assessment w.r.t. the goal and ends. The goal orients the verdict header.
+#[test]
+fn verdict_renders_the_belief_neutral_assessment_oriented_to_the_goal() {
+    let path = std::env::temp_dir().join(format!(
+        "quizdom-story-160-verdict-{}.jsonl",
+        std::process::id()
+    ));
+    let _ = fs::remove_file(&path);
+    let bank = FakeBank::new([question_with_tags(
+        "Q-1",
+        70,
+        AnswerKind::YesNo,
+        ["topic:free-will", "answer:yes-no", "weight:70"],
+    )]);
+    let mut config = test_config(&path, "Q-1");
+    config.goal = Some("is free will real?".to_string());
+    let mut output = Vec::new();
+
+    // Go straight to the verdict from the (first) frontier prompt.
+    run_session(
+        &config,
+        &bank,
+        &DeterministicNextQuestionStrategy,
+        "verdict\n".as_bytes(),
+        &mut output,
+    )
+    .unwrap();
+
+    let rendered = String::from_utf8(output).unwrap();
+    assert!(
+        rendered.contains("final verdict"),
+        "verdict header missing in:\n{rendered}"
+    );
+    // Belief-neutral: the verdict pins STRUCTURE, never which belief is true.
+    assert!(
+        rendered.contains("NOT whether your belief is true"),
+        "belief-neutral framing missing in:\n{rendered}"
+    );
+    // Oriented to the goal.
+    assert!(
+        rendered.contains("Resolving: is free will real?"),
+        "goal orientation missing in:\n{rendered}"
+    );
+
+    let log = fs::read_to_string(&path).unwrap();
+    assert!(log.contains(r#""phase":"closing""#), "log:\n{log}");
+
+    let _ = fs::remove_file(path);
+}
+
+// trace:STORY-160 | ai:claude — the FAIRNESS RULE: the party that calls
+// `terminate` forfeits the last word. When the USER terminates, the CHALLENGER
+// makes the FINAL closing statement (its strongest remaining objection, logged
+// final_word:true) before the verdict — and the user gets NO further statement.
+#[test]
+fn terminator_forfeits_the_last_word() {
+    let path = std::env::temp_dir().join(format!(
+        "quizdom-story-160-terminate-{}.jsonl",
+        std::process::id()
+    ));
+    let _ = fs::remove_file(&path);
+    let bank = FakeBank::new([question_with_tags(
+        "Q-1",
+        70,
+        AnswerKind::YesNo,
+        ["topic:free-will", "answer:yes-no", "weight:70"],
+    )]);
+    let config = test_config(&path, "Q-1");
+    let mut output = Vec::new();
+
+    // Rest at the frontier, make a statement, then TERMINATE. The user must NOT
+    // get the last word: the challenger's final objection comes first. Any input
+    // after `terminate` must be ignored (the ritual has ended), so we add a stray
+    // line that should never be recorded as a user closing statement.
+    run_session(
+        &config,
+        &bank,
+        &DeterministicNextQuestionStrategy,
+        "rest\nDeliberation settles it.\nterminate\nthis line must be ignored\n".as_bytes(),
+        &mut output,
+    )
+    .unwrap();
+
+    let rendered = String::from_utf8(output).unwrap();
+    // The fairness rule is named and the challenger gets the final word.
+    assert!(
+        rendered.contains("forfeit the last word") || rendered.contains("forfeited the last word"),
+        "fairness-rule note missing in:\n{rendered}"
+    );
+    assert!(
+        rendered.contains("final objection"),
+        "challenger final objection missing in:\n{rendered}"
+    );
+
+    let log = fs::read_to_string(&path).unwrap();
+    // Exactly one user closing statement was recorded (the stray post-terminate
+    // line is NOT a closing statement — the terminator forfeits further turns).
+    let user_statements = log
+        .lines()
+        .filter(|line| {
+            line.contains(r#""event_type":"closing_statement""#)
+                && line.contains(r#""speaker":"user""#)
+        })
+        .count();
+    assert_eq!(
+        user_statements, 1,
+        "the terminator must not get another closing statement; log:\n{log}"
+    );
+    assert!(
+        !log.contains("this line must be ignored"),
+        "post-terminate input must not be recorded; log:\n{log}"
+    );
+    // The challenger's final word is flagged final_word:true.
+    assert!(
+        log.lines().any(|line| {
+            line.contains(r#""speaker":"challenger""#) && line.contains(r#""final_word":true"#)
+        }),
+        "challenger's final word must be flagged; log:\n{log}"
+    );
+
+    let _ = fs::remove_file(path);
+}
+
+// trace:STORY-160 | ai:claude — offline the closing ritual degrades gracefully:
+// the challenger's objection and the verdict both fall back to structural notes
+// (no LLM), and a non-TTY / piped run renders the verdict rather than hanging.
+#[test]
+fn closing_ritual_degrades_gracefully_offline() {
+    let path = std::env::temp_dir().join(format!(
+        "quizdom-story-160-offline-{}.jsonl",
+        std::process::id()
+    ));
+    let _ = fs::remove_file(&path);
+    let bank = FakeBank::new([question_with_tags(
+        "Q-1",
+        70,
+        AnswerKind::YesNo,
+        ["topic:free-will", "answer:yes-no", "weight:70"],
+    )]);
+    // The session's observer uses the claude-cli backend; pointing it at a
+    // nonexistent command forces the spawn to fail, exercising the offline
+    // degradation path deterministically (same approach as STORY-127's test).
+    std::env::set_var(
+        "QUIZDOM_CLAUDE_COMMAND",
+        "quizdom-no-such-closing-binary-xyz",
+    );
+    let config = test_config(&path, "Q-1");
+    let mut output = Vec::new();
+
+    // Rest, make a statement (gets a structural objection), then verdict. EOF
+    // after that is handled gracefully.
+    run_session(
+        &config,
+        &bank,
+        &DeterministicNextQuestionStrategy,
+        "rest\nMy case stands.\nverdict\n".as_bytes(),
+        &mut output,
+    )
+    .unwrap();
+    std::env::remove_var("QUIZDOM_CLAUDE_COMMAND");
+
+    let rendered = String::from_utf8(output).unwrap();
+    // The offline challenger objection is clearly marked offline and stays
+    // belief-neutral (structural).
+    assert!(
+        rendered.contains("Challenger (closing, offline)"),
+        "offline objection marker missing in:\n{rendered}"
+    );
+    // The verdict still renders (degraded synopsis) rather than failing.
+    assert!(
+        rendered.contains("final verdict"),
+        "offline verdict missing in:\n{rendered}"
+    );
+
+    let _ = fs::remove_file(path);
+}
+
+// trace:STORY-160 | ai:claude — a non-TTY / EOF at the closing prompt must not
+// hang: an empty/closed input stream is treated as a request for the verdict, so
+// a piped run that rests then closes still renders the verdict and ends.
+#[test]
+fn closing_phase_eof_renders_the_verdict_instead_of_hanging() {
+    let path = std::env::temp_dir().join(format!(
+        "quizdom-story-160-eof-{}.jsonl",
+        std::process::id()
+    ));
+    let _ = fs::remove_file(&path);
+    let bank = FakeBank::new([question_with_tags(
+        "Q-1",
+        70,
+        AnswerKind::YesNo,
+        ["topic:free-will", "answer:yes-no", "weight:70"],
+    )]);
+    let config = test_config(&path, "Q-1");
+    let mut output = Vec::new();
+
+    // Rest at the frontier, then the input stream ENDS (no verdict/terminate).
+    run_session(
+        &config,
+        &bank,
+        &DeterministicNextQuestionStrategy,
+        "rest\n".as_bytes(),
+        &mut output,
+    )
+    .unwrap();
+
+    let rendered = String::from_utf8(output).unwrap();
+    assert!(
+        rendered.contains("final verdict"),
+        "EOF at the closing prompt should render the verdict; got:\n{rendered}"
     );
 
     let _ = fs::remove_file(path);

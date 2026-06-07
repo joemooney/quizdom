@@ -716,6 +716,29 @@ impl ObserverEngine {
             Self::Offline => None,
         }
     }
+
+    // trace:STORY-160 | ai:claude
+    /// The challenger's CLOSING statement: its strongest remaining structural
+    /// objection to the user's just-rested position, oriented by the goal. Uses
+    /// the LLM when present and falls back to the structural objection offline, so
+    /// the closing ritual always has a challenger turn. The CLOSING-PHASE
+    /// counterpart to [`read`]. Belief-neutral: it presses on the structure of the
+    /// case, never asserting a belief is true.
+    fn closing_objection(
+        &self,
+        position: &str,
+        goal: Option<&str>,
+    ) -> crate::observer::ClosingObjection {
+        match self {
+            Self::ClaudeCli(client) => {
+                crate::observer::read_closing_objection(client, position, goal)
+            }
+            Self::Anthropic(client) => {
+                crate::observer::read_closing_objection(client, position, goal)
+            }
+            Self::Offline => crate::observer::structural_objection(position, goal),
+        }
+    }
 }
 
 // trace:STORY-128 | ai:claude
@@ -913,6 +936,346 @@ fn maybe_propose_goal(
             output,
         )?;
     }
+    Ok(())
+}
+
+// trace:STORY-160 | ai:claude
+/// Which party can call "terminate" in the closing ritual. Belief-neutral: this
+/// is about WHO speaks last, never which belief is right.
+#[derive(Debug, Clone, Copy, Eq, PartialEq)]
+enum ClosingParty {
+    /// The person whose case is being rested.
+    User,
+    /// The neutral challenger pressing the strongest remaining objection.
+    Challenger,
+}
+
+impl ClosingParty {
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::User => "user",
+            Self::Challenger => "challenger",
+        }
+    }
+}
+
+// trace:STORY-160 | ai:claude
+/// The FAIRNESS RULE, distilled: the party that calls "terminate" does NOT get
+/// the last word (except to say "terminate") — the OTHER side makes the final
+/// closing statement first. So the final word goes to whoever did NOT terminate.
+/// Pure + total, so the rule itself is unit-testable for both terminators.
+fn final_word_speaker(terminator: ClosingParty) -> ClosingParty {
+    match terminator {
+        ClosingParty::User => ClosingParty::Challenger,
+        ClosingParty::Challenger => ClosingParty::User,
+    }
+}
+
+// trace:STORY-160 | ai:claude
+/// The outcome of running the closing ritual: the session always ENDS after the
+/// ritual (a rested case either reaches a verdict or is terminated), so the
+/// caller breaks out of the main loop. Carries the end summary for the log.
+struct ClosingOutcome {
+    summary: &'static str,
+}
+
+// trace:STORY-160 | ai:claude
+/// Run the CLOSING RITUAL after either party rests their case (STORY-160).
+///
+/// A PHASE TRANSITION: the question/answer loop is over. Here the exchange is
+/// CLOSING STATEMENTS — the user states their final/settled position, and the
+/// challenger answers with its strongest remaining (structural) OBJECTION —
+/// back and forth — until someone requests a FINAL VERDICT (`verdict`) or calls
+/// `terminate`.
+///
+/// FAIRNESS RULE: the party that calls `terminate` forfeits the last word. When
+/// the USER terminates, the CHALLENGER makes the final closing statement
+/// (objection) before the verdict; when the CHALLENGER terminates (it rests with
+/// no remaining objection), the USER makes the final closing statement first.
+///
+/// Belief-neutral throughout: the closing statements and the verdict assess the
+/// STRUCTURE of the case (consistency / clarity / completeness / coherence) and
+/// roundedness w.r.t. the goal — never which belief is true. Degrades gracefully
+/// offline (the challenger's objection and the verdict both fall back to
+/// structural notes) and on a non-TTY / EOF prompt (treated as a request for the
+/// verdict, so a piped run renders the verdict rather than hanging).
+#[allow(clippy::too_many_arguments)]
+fn run_closing_phase(
+    config: &CliConfig,
+    observer: &ObserverEngine,
+    goal: Option<&str>,
+    rester: ClosingParty,
+    logger: &mut SessionLogger,
+    turn: u64,
+    input: &mut impl BufRead,
+    free_text_input: &mut FreeTextInput,
+    output: &mut impl Write,
+) -> Result<ClosingOutcome> {
+    logger.phase_changed(
+        &config.session_id,
+        &config.user_id,
+        &config.branch_id,
+        turn,
+        "closing",
+        rester.as_str(),
+    )?;
+    render_closing_banner(output)?;
+
+    // The most recent settled position the user stated, fed to the challenger so
+    // its objection presses on THIS case. Empty until the user makes a statement.
+    let mut last_position = String::new();
+
+    loop {
+        // The user makes (the next) closing statement: their final / settled
+        // position. They can instead request the verdict or call terminate.
+        render_closing_user_prompt(output)?;
+        let line = free_text_input.read_line(input, output, "> ")?;
+        let raw = match line {
+            Some(raw) => raw,
+            // EOF / non-TTY: do not hang. Render the verdict on what we have.
+            None => {
+                return finish_with_verdict(config, observer, goal, output);
+            }
+        };
+        if crate::input::is_verdict_command(&raw) {
+            // A direct request for the FINAL VERDICT — no terminator, no forfeited
+            // last word; render the belief-neutral assessment and end.
+            return finish_with_verdict(config, observer, goal, output);
+        }
+        if crate::input::is_terminate_command(&raw) {
+            // The USER terminates: the fairness rule gives the CHALLENGER the final
+            // word (its strongest remaining objection) before the verdict. The user
+            // does NOT get to add another statement.
+            let final_speaker = final_word_speaker(ClosingParty::User);
+            debug_assert_eq!(final_speaker, ClosingParty::Challenger);
+            render_terminate_note(ClosingParty::User, output)?;
+            let objection = {
+                let _spinner = crate::spinner::Spinner::start("closing objection");
+                observer.closing_objection(&last_position, goal)
+            };
+            render_closing_objection(&objection, true, output)?;
+            logger.closing_statement(
+                &config.session_id,
+                &config.user_id,
+                &config.branch_id,
+                turn,
+                ClosingParty::Challenger.as_str(),
+                &objection.objection,
+                true,
+            )?;
+            return finish_with_verdict(config, observer, goal, output);
+        }
+        if crate::input::is_end_command(&raw) {
+            // A plain quit during the closing ritual: end without a verdict (the
+            // user can resume and rest again). Belief-neutral: nothing is judged.
+            return Ok(ClosingOutcome {
+                summary: "User quit during the closing ritual.",
+            });
+        }
+        // An ordinary line is the user's closing STATEMENT (their settled
+        // position). Record it and let the challenger answer with its objection.
+        let statement = raw.trim();
+        if statement.is_empty() {
+            continue;
+        }
+        last_position = statement.to_string();
+        render_recorded_user_statement(statement, output)?;
+        logger.closing_statement(
+            &config.session_id,
+            &config.user_id,
+            &config.branch_id,
+            turn,
+            ClosingParty::User.as_str(),
+            statement,
+            false,
+        )?;
+        let objection = {
+            let _spinner = crate::spinner::Spinner::start("closing objection");
+            observer.closing_objection(&last_position, goal)
+        };
+        render_closing_objection(&objection, false, output)?;
+        logger.closing_statement(
+            &config.session_id,
+            &config.user_id,
+            &config.branch_id,
+            turn,
+            ClosingParty::Challenger.as_str(),
+            &objection.objection,
+            false,
+        )?;
+        // Loop: the user gets to answer the objection with another closing
+        // statement, or request the verdict / terminate.
+    }
+}
+
+// trace:STORY-160 | ai:claude
+/// Render the verdict and end the closing ritual. The verdict is the
+/// belief-neutral roundedness assessment (EPIC-154) measured w.r.t. the goal:
+/// it reuses the same synopsis engine the `S` key uses, so the closing verdict
+/// and the in-session synopsis speak with one voice. Returns the end outcome.
+fn finish_with_verdict(
+    config: &CliConfig,
+    observer: &ObserverEngine,
+    goal: Option<&str>,
+    output: &mut impl Write,
+) -> Result<ClosingOutcome> {
+    render_verdict(
+        observer,
+        &config.log_path,
+        Some(&config.branch_id),
+        goal,
+        output,
+    )?;
+    Ok(ClosingOutcome {
+        summary: "Closing ritual reached a final verdict.",
+    })
+}
+
+// trace:STORY-160 | ai:claude
+/// Render the FINAL VERDICT: the belief-neutral roundedness assessment of the
+/// rested case, measured w.r.t. the goal. Reuses [`arc_from_session_log`] +
+/// the observer synopsis (so the goal in the log orients the score) and the
+/// existing [`render_synopsis`] block. Adds a verdict header that pins the
+/// belief-neutral contract: it assesses STRUCTURE (and, where relevant, which
+/// CASE was better-argued), NEVER which belief is true.
+fn render_verdict(
+    observer: &ObserverEngine,
+    log_path: &Path,
+    branch: Option<&str>,
+    goal: Option<&str>,
+    output: &mut impl Write,
+) -> Result<()> {
+    let meta = crate::style::meta();
+    writeln!(
+        output,
+        "\n{}",
+        crate::style::paint(
+            meta,
+            "META (final verdict) — a belief-neutral assessment of your case's STRUCTURE (consistency / clarity / completeness / coherence), NOT whether your belief is true:"
+        )
+    )?;
+    if let Some(goal) = goal.map(str::trim).filter(|g| !g.is_empty()) {
+        writeln!(
+            output,
+            "{}",
+            crate::style::paint(meta, &format!("  Resolving: {goal}"))
+        )?;
+    }
+    let arc = match File::open(log_path) {
+        Ok(file) => arc_from_session_log(file, branch).unwrap_or_default(),
+        Err(_) => SessionArc::default(),
+    };
+    if arc.is_empty() {
+        writeln!(
+            output,
+            "{}",
+            crate::style::paint(
+                meta,
+                "  Nothing recorded yet to assess — rest a case with at least one position first."
+            )
+        )?;
+        return Ok(());
+    }
+    let synopsis = {
+        let _spinner = crate::spinner::Spinner::start("rendering the verdict");
+        observer.synopsize(&arc)
+    };
+    render_synopsis(&synopsis, output)?;
+    Ok(())
+}
+
+// trace:STORY-160 | ai:claude
+/// The closing-phase opening banner: announce the PHASE TRANSITION so the user
+/// knows the exchange is now closing statements, not questions.
+fn render_closing_banner(output: &mut impl Write) -> Result<()> {
+    writeln!(
+        output,
+        "\n{}",
+        crate::style::paint(
+            crate::style::meta(),
+            "META (closing) — case rested. The questioning is over; this is the closing ritual.\n  Make your closing statements (your final, settled position). The challenger answers each with its strongest remaining objection.\n  Type `verdict` for the final belief-neutral assessment, or `terminate` to end (the terminator forfeits the last word)."
+        )
+    )?;
+    Ok(())
+}
+
+// trace:STORY-160 | ai:claude
+/// Prompt the user for their next closing statement.
+fn render_closing_user_prompt(output: &mut impl Write) -> Result<()> {
+    writeln!(
+        output,
+        "{}",
+        crate::style::paint(
+            crate::style::control(),
+            "Your closing statement (or `verdict` / `terminate`):"
+        )
+    )?;
+    Ok(())
+}
+
+// trace:STORY-160 | ai:claude
+/// Echo the user's recorded closing statement back as a labeled closing turn.
+fn render_recorded_user_statement(statement: &str, output: &mut impl Write) -> Result<()> {
+    writeln!(
+        output,
+        "{}",
+        crate::style::paint(
+            crate::style::meta(),
+            &format!("  You (closing): {statement}")
+        )
+    )?;
+    Ok(())
+}
+
+// trace:STORY-160 | ai:claude
+/// Render the challenger's closing objection as a belief-neutral META voice. The
+/// `final_word` flag labels the statement made under the fairness rule (the
+/// other side's last word after a terminate).
+fn render_closing_objection(
+    objection: &crate::observer::ClosingObjection,
+    final_word: bool,
+    output: &mut impl Write,
+) -> Result<()> {
+    let meta = crate::style::meta();
+    let header = match (objection.degraded, final_word) {
+        (true, true) => {
+            "Challenger (closing, offline) — final objection (you forfeited the last word):"
+        }
+        (true, false) => "Challenger (closing, offline) — strongest remaining objection:",
+        (false, true) => "Challenger (closing) — final objection (you forfeited the last word):",
+        (false, false) => "Challenger (closing) — strongest remaining objection:",
+    };
+    writeln!(
+        output,
+        "{}",
+        crate::style::paint(meta, &format!("  {header}"))
+    )?;
+    writeln!(
+        output,
+        "{}",
+        crate::style::paint(meta, &format!("    {}", objection.objection))
+    )?;
+    Ok(())
+}
+
+// trace:STORY-160 | ai:claude
+/// Note that a party terminated, naming the fairness rule before the other side
+/// makes its final closing statement.
+fn render_terminate_note(terminator: ClosingParty, output: &mut impl Write) -> Result<()> {
+    let other = final_word_speaker(terminator);
+    let body = match (terminator, other) {
+        (ClosingParty::User, _) => {
+            "You called terminate — by the fairness rule you forfeit the last word; the challenger makes the final closing statement first."
+        }
+        (ClosingParty::Challenger, _) => {
+            "The challenger rested — by the fairness rule it forfeits the last word; you make the final closing statement first."
+        }
+    };
+    writeln!(
+        output,
+        "{}",
+        crate::style::paint(crate::style::meta(), &format!("  {body}"))
+    )?;
     Ok(())
 }
 
@@ -1209,230 +1572,339 @@ fn run_session_from_current(
     }
 
     loop {
-        let (answered_turn, answer) =
-            if let Some((index, revised_question, revised_answer)) = pending_revision.take() {
-                // trace:STORY-69 | ai:codex
-                truncate_session_path(
-                    config,
-                    &mut logger,
-                    index as u64,
-                    &mut recent_path,
-                    &mut surfaced_contradictions,
-                )?;
-                current = revised_question;
-                turn = index as u64;
-                logger.question_presented(
-                    &config.session_id,
-                    &config.user_id,
-                    &config.branch_id,
-                    turn,
-                    &current,
-                )?;
-                (turn, revised_answer)
+        let (answered_turn, answer) = if let Some((index, revised_question, revised_answer)) =
+            pending_revision.take()
+        {
+            // trace:STORY-69 | ai:codex
+            truncate_session_path(
+                config,
+                &mut logger,
+                index as u64,
+                &mut recent_path,
+                &mut surfaced_contradictions,
+            )?;
+            current = revised_question;
+            turn = index as u64;
+            logger.question_presented(
+                &config.session_id,
+                &config.user_id,
+                &config.branch_id,
+                turn,
+                &current,
+            )?;
+            (turn, revised_answer)
+        } else {
+            let answered_turn = turn;
+            logger.question_presented(
+                &config.session_id,
+                &config.user_id,
+                &config.branch_id,
+                answered_turn,
+                &current,
+            )?;
+            // trace:STORY-78 | ai:claude
+            // Lead each frontier turn with the orientation breadcrumb so a
+            // user deep in a long session always sees current topic, how far
+            // they've explored (depth = answered questions so far on this
+            // path), and which branch they're on.
+            // trace:STORY-159 | ai:claude — surface the live goal in the
+            // breadcrumb so the user always sees the thesis being resolved.
+            render_breadcrumb(
+                &current,
+                recent_path.len(),
+                &config.branch_id,
+                goal.as_deref(),
+                output,
+            )?;
+            let probed_terms = load_probed_terms(bank, &current);
+            if let Some(settled) = settled_definition_for(&probed_terms, &settled_terms) {
+                render_settled_term_definition(settled, output)?;
             } else {
-                let answered_turn = turn;
-                logger.question_presented(
-                    &config.session_id,
-                    &config.user_id,
-                    &config.branch_id,
-                    answered_turn,
-                    &current,
-                )?;
-                // trace:STORY-78 | ai:claude
-                // Lead each frontier turn with the orientation breadcrumb so a
-                // user deep in a long session always sees current topic, how far
-                // they've explored (depth = answered questions so far on this
-                // path), and which branch they're on.
-                // trace:STORY-159 | ai:claude — surface the live goal in the
-                // breadcrumb so the user always sees the thesis being resolved.
-                render_breadcrumb(
-                    &current,
-                    recent_path.len(),
-                    &config.branch_id,
-                    goal.as_deref(),
-                    output,
-                )?;
-                let probed_terms = load_probed_terms(bank, &current);
-                if let Some(settled) = settled_definition_for(&probed_terms, &settled_terms) {
-                    render_settled_term_definition(settled, output)?;
-                } else {
-                    render_term_definitions(&probed_terms, output)?;
-                }
-                render_question_for(&current, InputContext::Frontier, output)?;
-                let answer = match read_answer_or_end(
-                    &current.answer_kind,
-                    InputContext::Frontier,
-                    &mut input,
-                    &mut free_text_input,
-                    output,
-                )? {
-                    AnswerInput::Answer(answer) => answer,
-                    AnswerInput::Back => {
-                        match browse_answered_path(
-                            bank,
-                            &recent_path,
-                            // trace:STORY-128 | ai:claude
-                            &ReviewContext {
-                                observer: &observer,
-                                log_path: &config.log_path,
-                                branch: &config.branch_id,
-                            },
-                            &mut input,
-                            &mut free_text_input,
-                            output,
-                        )? {
-                            ReviewOutcome::Frontier => continue,
-                            ReviewOutcome::Revised {
-                                index,
-                                question,
-                                answer,
-                            } => {
-                                pending_revision = Some((index, question, answer));
-                                continue;
-                            }
-                            ReviewOutcome::End => {
-                                // trace:STORY-80 | ai:claude
-                                ended_at_frontier = true;
-                                logger.session_ended(
-                                    &config.session_id,
-                                    &config.user_id,
-                                    &config.branch_id,
-                                    answered_turn,
-                                    "User ended session.",
-                                )?;
-                                break;
-                            }
-                        }
-                    }
-                    AnswerInput::Add => {
-                        // trace:STORY-88 | ai:claude
-                        // Quick-add: author a new question mid-exploration and
-                        // link it as a `begets` follow-on from the CURRENT node,
-                        // then re-present the current question so the user
-                        // resumes exactly where they paused. The persisted
-                        // Q-object is tagged `source:user-authored` (STORY-85)
-                        // and shows up as a begets successor in later sessions.
-                        quick_add_from_current(
-                            bank,
-                            strategy,
-                            user_authored_persister,
-                            &current,
-                            &mut input,
-                            output,
-                        )?;
-                        continue;
-                    }
-                    AnswerInput::Observe => {
-                        // trace:STORY-127 | ai:claude
-                        // Non-destructive observer: read the current exchange as
-                        // a belief-neutral META voice, then re-present the SAME
-                        // question (like eXplore). Nothing is logged or mutated.
-                        let exchange = exchange_for_frontier(&current, &recent_path);
-                        let reading = {
-                            let _spinner = crate::spinner::Spinner::start("observing");
-                            observer.read(&exchange)
-                        };
-                        render_exchange_reading(&reading, output)?;
-                        continue;
-                    }
-                    AnswerInput::Synopsis => {
+                render_term_definitions(&probed_terms, output)?;
+            }
+            render_question_for(&current, InputContext::Frontier, output)?;
+            let answer = match read_answer_or_end(
+                &current.answer_kind,
+                InputContext::Frontier,
+                &mut input,
+                &mut free_text_input,
+                output,
+            )? {
+                AnswerInput::Answer(answer) => answer,
+                AnswerInput::Back => {
+                    match browse_answered_path(
+                        bank,
+                        &recent_path,
                         // trace:STORY-128 | ai:claude
-                        // Non-destructive GLOBAL synopsis: read the whole session
-                        // log so far as a belief-neutral META voice, then
-                        // re-present the SAME question (like Observe). Nothing is
-                        // logged or mutated.
-                        let rendered = render_session_synopsis(
-                            &observer,
-                            &config.log_path,
-                            Some(&config.branch_id),
-                            output,
-                        )?;
-                        // trace:STORY-156 | ai:claude
-                        // CONVERGENCE terminal: when the synopsis crossed the
-                        // well-rounded threshold it OFFERED to conclude. Prompt
-                        // the user (agency preserved). Accepting prints a final
-                        // belief-neutral summary of their OWN position and ends
-                        // the session gracefully with the resume footer; declining
-                        // (or any non-conclude path / offline) just re-presents the
-                        // SAME question and keeps exploring.
-                        if let Some((synopsis, arc)) = rendered {
-                            // trace:STORY-159 | ai:claude
-                            // OBSERVER-PROPOSED goal (way 3 of 3): if the session
-                            // is still free-flowing, let the Observer read the arc
-                            // and OFFER a goal when a thesis has crystallized. The
-                            // user decides; declining keeps exploring. Offered
-                            // before the conclude prompt so a goal can orient the
-                            // remaining exploration.
-                            if goal.is_none() {
-                                maybe_propose_goal(
-                                    &mut goal,
-                                    &observer,
-                                    &arc,
-                                    config,
-                                    &mut logger,
-                                    answered_turn,
-                                    &mut input,
-                                    &mut free_text_input,
-                                    output,
-                                )?;
-                            }
-                            if synopsis.offers_conclude()
-                                && prompt_to_conclude(&mut input, &mut free_text_input, output)?
-                            {
-                                crate::synopsis::render_conclusion(&synopsis, &arc, output)?;
-                                ended_at_frontier = true;
-                                concluded = true;
-                                logger.session_ended(
-                                    &config.session_id,
-                                    &config.user_id,
-                                    &config.branch_id,
-                                    answered_turn,
-                                    "User concluded at the well-rounded threshold.",
-                                )?;
-                                break;
-                            }
+                        &ReviewContext {
+                            observer: &observer,
+                            log_path: &config.log_path,
+                            branch: &config.branch_id,
+                        },
+                        &mut input,
+                        &mut free_text_input,
+                        output,
+                    )? {
+                        ReviewOutcome::Frontier => continue,
+                        ReviewOutcome::Revised {
+                            index,
+                            question,
+                            answer,
+                        } => {
+                            pending_revision = Some((index, question, answer));
+                            continue;
                         }
-                        continue;
+                        ReviewOutcome::End => {
+                            // trace:STORY-80 | ai:claude
+                            ended_at_frontier = true;
+                            logger.session_ended(
+                                &config.session_id,
+                                &config.user_id,
+                                &config.branch_id,
+                                answered_turn,
+                                "User ended session.",
+                            )?;
+                            break;
+                        }
                     }
-                    AnswerInput::Forward => continue,
-                    AnswerInput::Goal(text) => {
+                }
+                AnswerInput::Add => {
+                    // trace:STORY-88 | ai:claude
+                    // Quick-add: author a new question mid-exploration and
+                    // link it as a `begets` follow-on from the CURRENT node,
+                    // then re-present the current question so the user
+                    // resumes exactly where they paused. The persisted
+                    // Q-object is tagged `source:user-authored` (STORY-85)
+                    // and shows up as a begets successor in later sessions.
+                    quick_add_from_current(
+                        bank,
+                        strategy,
+                        user_authored_persister,
+                        &current,
+                        &mut input,
+                        output,
+                    )?;
+                    continue;
+                }
+                AnswerInput::Observe => {
+                    // trace:STORY-127 | ai:claude
+                    // Non-destructive observer: read the current exchange as
+                    // a belief-neutral META voice, then re-present the SAME
+                    // question (like eXplore). Nothing is logged or mutated.
+                    let exchange = exchange_for_frontier(&current, &recent_path);
+                    let reading = {
+                        let _spinner = crate::spinner::Spinner::start("observing");
+                        observer.read(&exchange)
+                    };
+                    render_exchange_reading(&reading, output)?;
+                    continue;
+                }
+                AnswerInput::Synopsis => {
+                    // trace:STORY-128 | ai:claude
+                    // Non-destructive GLOBAL synopsis: read the whole session
+                    // log so far as a belief-neutral META voice, then
+                    // re-present the SAME question (like Observe). Nothing is
+                    // logged or mutated.
+                    let rendered = render_session_synopsis(
+                        &observer,
+                        &config.log_path,
+                        Some(&config.branch_id),
+                        output,
+                    )?;
+                    // trace:STORY-156 | ai:claude
+                    // CONVERGENCE terminal: when the synopsis crossed the
+                    // well-rounded threshold it OFFERED to conclude. Prompt
+                    // the user (agency preserved). Accepting prints a final
+                    // belief-neutral summary of their OWN position and ends
+                    // the session gracefully with the resume footer; declining
+                    // (or any non-conclude path / offline) just re-presents the
+                    // SAME question and keeps exploring.
+                    if let Some((synopsis, arc)) = rendered {
                         // trace:STORY-159 | ai:claude
-                        // In-session goal (way 2 of 3): the user states the
-                        // thesis. A non-empty text SETS the goal — logged as a
-                        // `goal_set` event (so resume restores it and the arc /
-                        // synopsis orient to it) — then the SAME question is
-                        // re-presented, now oriented toward the goal. A bare
-                        // `/goal` (empty text) just SHOWS the current goal; it
-                        // never clears one (agency: a goal is removed only by
-                        // setting a new one). Non-destructive: nothing else
-                        // changes. Belief-neutral: the goal is the question being
-                        // settled, never a belief.
-                        set_goal_in_session(
-                            &mut goal,
-                            &text,
-                            "user",
-                            config,
-                            &mut logger,
-                            answered_turn,
-                            output,
-                        )?;
-                        continue;
+                        // OBSERVER-PROPOSED goal (way 3 of 3): if the session
+                        // is still free-flowing, let the Observer read the arc
+                        // and OFFER a goal when a thesis has crystallized. The
+                        // user decides; declining keeps exploring. Offered
+                        // before the conclude prompt so a goal can orient the
+                        // remaining exploration.
+                        if goal.is_none() {
+                            maybe_propose_goal(
+                                &mut goal,
+                                &observer,
+                                &arc,
+                                config,
+                                &mut logger,
+                                answered_turn,
+                                &mut input,
+                                &mut free_text_input,
+                                output,
+                            )?;
+                        }
+                        if synopsis.offers_conclude()
+                            && prompt_to_conclude(&mut input, &mut free_text_input, output)?
+                        {
+                            crate::synopsis::render_conclusion(&synopsis, &arc, output)?;
+                            ended_at_frontier = true;
+                            concluded = true;
+                            logger.session_ended(
+                                &config.session_id,
+                                &config.user_id,
+                                &config.branch_id,
+                                answered_turn,
+                                "User concluded at the well-rounded threshold.",
+                            )?;
+                            break;
+                        }
                     }
-                    AnswerInput::End => {
-                        // trace:STORY-80 | ai:claude
-                        ended_at_frontier = true;
-                        logger.session_ended(
-                            &config.session_id,
-                            &config.user_id,
-                            &config.branch_id,
-                            answered_turn,
-                            "User ended session.",
-                        )?;
-                        break;
-                    }
-                };
-                (answered_turn, answer)
+                    continue;
+                }
+                AnswerInput::Forward => continue,
+                AnswerInput::Goal(text) => {
+                    // trace:STORY-159 | ai:claude
+                    // In-session goal (way 2 of 3): the user states the
+                    // thesis. A non-empty text SETS the goal — logged as a
+                    // `goal_set` event (so resume restores it and the arc /
+                    // synopsis orient to it) — then the SAME question is
+                    // re-presented, now oriented toward the goal. A bare
+                    // `/goal` (empty text) just SHOWS the current goal; it
+                    // never clears one (agency: a goal is removed only by
+                    // setting a new one). Non-destructive: nothing else
+                    // changes. Belief-neutral: the goal is the question being
+                    // settled, never a belief.
+                    set_goal_in_session(
+                        &mut goal,
+                        &text,
+                        "user",
+                        config,
+                        &mut logger,
+                        answered_turn,
+                        output,
+                    )?;
+                    continue;
+                }
+                AnswerInput::Rest => {
+                    // trace:STORY-160 | ai:claude
+                    // "Rest your case": a PHASE TRANSITION out of the
+                    // question/answer loop into the CLOSING ritual. The user
+                    // (the only party who rests at the frontier) states their
+                    // settled position(s); the challenger answers each with its
+                    // strongest remaining objection; the ritual ends on
+                    // `verdict` or `terminate` (terminator forfeits the last
+                    // word). The session ALWAYS ends after the ritual, so this
+                    // breaks the main loop with the closing outcome.
+                    let outcome = run_closing_phase(
+                        config,
+                        &observer,
+                        goal.as_deref(),
+                        ClosingParty::User,
+                        &mut logger,
+                        answered_turn,
+                        &mut input,
+                        &mut free_text_input,
+                        output,
+                    )?;
+                    // trace:STORY-160 | ai:claude — a rested case is meaningful
+                    // session activity even if no question was answered, so the
+                    // log survives (it carries the closing statements + verdict)
+                    // rather than being discarded as empty (STORY-81).
+                    answer_recorded = true;
+                    ended_at_frontier = true;
+                    logger.session_ended(
+                        &config.session_id,
+                        &config.user_id,
+                        &config.branch_id,
+                        answered_turn,
+                        outcome.summary,
+                    )?;
+                    break;
+                }
+                AnswerInput::Verdict => {
+                    // trace:STORY-160 | ai:claude
+                    // A direct request for the FINAL VERDICT at the frontier:
+                    // rest the case and render the belief-neutral roundedness
+                    // verdict immediately (no objection exchange). Logged as a
+                    // closing phase transition so the log shows the ritual.
+                    logger.phase_changed(
+                        &config.session_id,
+                        &config.user_id,
+                        &config.branch_id,
+                        answered_turn,
+                        "closing",
+                        ClosingParty::User.as_str(),
+                    )?;
+                    let outcome = finish_with_verdict(config, &observer, goal.as_deref(), output)?;
+                    // trace:STORY-160 | ai:claude — keep the rested/verdict
+                    // session (it carries the phase transition + verdict).
+                    answer_recorded = true;
+                    ended_at_frontier = true;
+                    logger.session_ended(
+                        &config.session_id,
+                        &config.user_id,
+                        &config.branch_id,
+                        answered_turn,
+                        outcome.summary,
+                    )?;
+                    break;
+                }
+                AnswerInput::Terminate => {
+                    // trace:STORY-160 | ai:claude
+                    // `terminate` at the frontier: the user rests AND
+                    // terminates in one step. By the fairness rule the user
+                    // forfeits the last word, so the CHALLENGER makes the final
+                    // closing statement (its strongest remaining objection)
+                    // before the verdict renders.
+                    logger.phase_changed(
+                        &config.session_id,
+                        &config.user_id,
+                        &config.branch_id,
+                        answered_turn,
+                        "closing",
+                        ClosingParty::User.as_str(),
+                    )?;
+                    render_closing_banner(output)?;
+                    render_terminate_note(ClosingParty::User, output)?;
+                    let objection = {
+                        let _spinner = crate::spinner::Spinner::start("closing objection");
+                        observer.closing_objection("", goal.as_deref())
+                    };
+                    render_closing_objection(&objection, true, output)?;
+                    logger.closing_statement(
+                        &config.session_id,
+                        &config.user_id,
+                        &config.branch_id,
+                        answered_turn,
+                        ClosingParty::Challenger.as_str(),
+                        &objection.objection,
+                        true,
+                    )?;
+                    let outcome = finish_with_verdict(config, &observer, goal.as_deref(), output)?;
+                    // trace:STORY-160 | ai:claude — keep the terminated session.
+                    answer_recorded = true;
+                    ended_at_frontier = true;
+                    logger.session_ended(
+                        &config.session_id,
+                        &config.user_id,
+                        &config.branch_id,
+                        answered_turn,
+                        outcome.summary,
+                    )?;
+                    break;
+                }
+                AnswerInput::End => {
+                    // trace:STORY-80 | ai:claude
+                    ended_at_frontier = true;
+                    logger.session_ended(
+                        &config.session_id,
+                        &config.user_id,
+                        &config.branch_id,
+                        answered_turn,
+                        "User ended session.",
+                    )?;
+                    break;
+                }
             };
+            (answered_turn, answer)
+        };
         let probed_terms = load_probed_terms(bank, &current);
         if answer.normalized == "explore" {
             // trace:STORY-52 | ai:codex
@@ -1841,12 +2313,19 @@ fn ask_contradiction_follow_up(
         // trace:STORY-159 | ai:claude — likewise the goal command: this transient
         // runtime contradiction prompt has no goal state in scope, so a stray
         // `/goal` here is a no-op rather than re-orienting mid-resolution.
+        // trace:STORY-160 | ai:claude — the closing-ritual controls (rest /
+        // verdict / terminate) likewise have no closing-phase state in scope on a
+        // transient contradiction follow-up, so a stray one here is a no-op rather
+        // than opening the closing ritual mid-resolution.
         AnswerInput::Add
         | AnswerInput::Back
         | AnswerInput::Forward
         | AnswerInput::Observe
         | AnswerInput::Synopsis
-        | AnswerInput::Goal(_) => Ok(false),
+        | AnswerInput::Goal(_)
+        | AnswerInput::Rest
+        | AnswerInput::Verdict
+        | AnswerInput::Terminate => Ok(false),
     }
 }
 
@@ -2126,6 +2605,12 @@ fn browse_answered_path(
             // here is a no-op rather than re-orienting from inside review. (The
             // goal is set at the frontier, where it can orient the next question.)
             AnswerInput::Goal(_) => continue,
+            // trace:STORY-160 | ai:claude — the closing ritual begins at the
+            // FRONTIER (where the live position + goal state are in scope), not
+            // from inside the review pane re-walking the saved path. A stray
+            // rest / verdict / terminate here is a no-op; the user returns to the
+            // frontier (Forward / Back to the live edge) to rest their case.
+            AnswerInput::Rest | AnswerInput::Verdict | AnswerInput::Terminate => continue,
             AnswerInput::End => return Ok(ReviewOutcome::End),
         }
     }
@@ -2722,6 +3207,65 @@ impl SessionLogger {
             "turn": turn,
             "goal": goal,
             "source": source,
+        }))
+    }
+
+    // trace:STORY-160 | ai:claude
+    /// Record the PHASE TRANSITION into the closing ritual (the session stops
+    /// asking questions and switches to closing statements). `caller` records who
+    /// rested the case (`"user"`; the challenger never rests first). Logged so a
+    /// resumed/inspected session can see where the closing ritual began.
+    fn phase_changed(
+        &mut self,
+        session_id: &str,
+        user_id: &str,
+        branch_id: &str,
+        turn: u64,
+        phase: &str,
+        caller: &str,
+    ) -> Result<()> {
+        let event_id = self.event_id();
+        self.write(json!({
+            "event_id": event_id,
+            "event_type": "phase_changed",
+            "occurred_at": Utc::now().to_rfc3339(),
+            "session_id": session_id,
+            "user_id": user_id,
+            "branch_id": branch_id,
+            "turn": turn,
+            "phase": phase,
+            "caller": caller,
+        }))
+    }
+
+    // trace:STORY-160 | ai:claude
+    /// Record one CLOSING STATEMENT in the closing ritual: either the user's
+    /// settled position (`speaker:"user"`) or the challenger's strongest remaining
+    /// objection (`speaker:"challenger"`). The `final_word` flag marks the last
+    /// statement made under the terminator-forfeits-last-word fairness rule.
+    #[allow(clippy::too_many_arguments)]
+    fn closing_statement(
+        &mut self,
+        session_id: &str,
+        user_id: &str,
+        branch_id: &str,
+        turn: u64,
+        speaker: &str,
+        statement: &str,
+        final_word: bool,
+    ) -> Result<()> {
+        let event_id = self.event_id();
+        self.write(json!({
+            "event_id": event_id,
+            "event_type": "closing_statement",
+            "occurred_at": Utc::now().to_rfc3339(),
+            "session_id": session_id,
+            "user_id": user_id,
+            "branch_id": branch_id,
+            "turn": turn,
+            "speaker": speaker,
+            "statement": statement,
+            "final_word": final_word,
         }))
     }
 

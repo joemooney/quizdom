@@ -316,6 +316,122 @@ pub fn parse_goal_proposal(text: &str) -> Option<GoalProposal> {
     Some(GoalProposal { goal, rationale })
 }
 
+// trace:STORY-160 | ai:claude
+/// The challenger's CLOSING STATEMENT in the closing ritual: its strongest
+/// remaining OBJECTION to the user's settled position. Belief-neutral and
+/// STRUCTURAL — it presses on a gap/tension/unmet axis in the user's CASE, it
+/// never asserts the user's belief is false or advocates an opposing belief.
+#[derive(Debug, Clone, Eq, PartialEq)]
+pub struct ClosingObjection {
+    /// The strongest remaining objection, phrased as a structural challenge to
+    /// the user's case (what it leaves unaddressed), never a counter-belief.
+    pub objection: String,
+    /// True when this objection was synthesized structurally (offline / degraded)
+    /// rather than by the LLM.
+    pub degraded: bool,
+}
+
+/// System prompt pinning the closing-objection step to its belief-neutral,
+/// structural contract. The challenger steelmans the WEAKNESS in the user's case
+/// without ever asserting a belief is true or false.
+const CLOSING_OBJECTION_SYSTEM_PROMPT: &str = "You are quizdom's challenger making your CLOSING statement. You are STRICTLY belief-neutral. The user has rested their case with a settled position. State the single STRONGEST REMAINING OBJECTION to that position — the most important gap, tension, ambiguity, or unmet burden their case still leaves open. Press on the STRUCTURE of their argument (consistency / clarity / completeness / coherence), NEVER asserting their belief is false and NEVER advocating an opposing belief. You are not trying to win a belief; you are naming what their case has not yet answered. Be concise and specific.";
+
+/// Build the closing-objection prompt from the user's most recent settled
+/// position (their just-rested closing statement) and the goal being resolved.
+fn closing_objection_prompt(position: &str, goal: Option<&str>) -> String {
+    let mut prompt = String::new();
+    if let Some(goal) = goal.map(str::trim).filter(|g| !g.is_empty()) {
+        prompt.push_str(&format!("The question being resolved (the goal): {goal}\n"));
+    }
+    prompt.push_str(&format!(
+        "The user's settled / closing position: {position}\n\nReturn only JSON: {{\"objection\":\"the single strongest remaining objection, as a STRUCTURAL challenge to their case — what it leaves unaddressed — never a counter-belief and never asserting their belief is false\"}}.",
+    ));
+    prompt
+}
+
+/// Ask the challenger for its strongest remaining objection to the user's rested
+/// position, degrading to a structural objection when the call fails or returns
+/// something unusable — so the closing ritual always has a challenger turn,
+/// online or off.
+pub fn read_closing_objection<C: LLMClient>(
+    client: &C,
+    position: &str,
+    goal: Option<&str>,
+) -> ClosingObjection {
+    match llm_closing_objection(client, position, goal) {
+        Some(objection) => objection,
+        None => structural_objection(position, goal),
+    }
+}
+
+/// The LLM leg of [`read_closing_objection`]. Returns `None` on any failure so
+/// the caller degrades to the structural objection.
+fn llm_closing_objection<C: LLMClient>(
+    client: &C,
+    position: &str,
+    goal: Option<&str>,
+) -> Option<ClosingObjection> {
+    let prompt = closing_objection_prompt(position, goal);
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_time()
+        .build()
+        .ok()?;
+    let (text, _tool_calls) = runtime
+        .block_on(client.call(
+            CLOSING_OBJECTION_SYSTEM_PROMPT,
+            &[Message::user(prompt)],
+            &[],
+        ))
+        .ok()?;
+    parse_closing_objection(&text, position)
+}
+
+/// Parse the challenger's JSON into a [`ClosingObjection`]. Returns `None` when
+/// the payload is not the expected object or carries no objection text, so the
+/// caller degrades. A field that merely echoes the user's own position verbatim
+/// is scrubbed (it is not an objection).
+pub fn parse_closing_objection(text: &str, position: &str) -> Option<ClosingObjection> {
+    let value: Value = serde_json::from_str(text.trim()).ok()?;
+    if !value.is_object() {
+        return None;
+    }
+    let objection = value
+        .get("objection")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .map(|raw| scrub_supplied_answer(raw, position))
+        .filter(|objection| !objection.is_empty())?;
+    Some(ClosingObjection {
+        objection,
+        degraded: false,
+    })
+}
+
+/// The offline / degraded closing objection: a minimal STRUCTURAL challenge
+/// derived purely from the rested position (and goal). It invents no
+/// counter-belief — it points at the structural burden any rested case still
+/// carries, so the challenger always gets a closing turn with no model available.
+pub fn structural_objection(position: &str, goal: Option<&str>) -> ClosingObjection {
+    let focus = goal
+        .map(str::trim)
+        .filter(|g| !g.is_empty())
+        .map(|g| format!("whether your case fully resolves \"{}\"", first_sentence(g)))
+        .unwrap_or_else(|| "whether your case is complete".to_string());
+    let objection = if position.trim().is_empty() {
+        format!(
+            "Offline objection: no settled position was stated, so {focus} cannot yet be assessed — state the strongest version of your case before the verdict."
+        )
+    } else {
+        format!(
+            "Offline objection: the strongest remaining challenge to your case is {focus} — name the one consideration it does not yet address and why your position still holds despite it."
+        )
+    };
+    ClosingObjection {
+        objection,
+        degraded: true,
+    }
+}
+
 /// The first sentence (or the whole string if it has no terminator), trimmed,
 /// used to keep the structural note compact without echoing a long prompt.
 fn first_sentence(text: &str) -> String {
@@ -527,5 +643,60 @@ mod tests {
     fn parse_goal_proposal_requires_crystallized_true() {
         assert!(parse_goal_proposal(r#"{"goal":"x"}"#).is_none());
         assert!(parse_goal_proposal(r#"{"crystallized":true,"goal":"x"}"#).is_some());
+    }
+
+    // ---- STORY-160: the challenger's closing objection ---------------------
+
+    #[test]
+    fn reads_the_challengers_strongest_remaining_objection() {
+        // trace:STORY-160 | ai:claude
+        let client = MockClient::ok(
+            r#"{"objection":"Your case never says what 'free' rules out, so completeness is unmet."}"#,
+        );
+        let objection = read_closing_objection(
+            &client,
+            "Free will is real because we deliberate.",
+            Some("can libertarian free will be held consistently?"),
+        );
+        assert!(!objection.degraded);
+        assert!(objection.objection.contains("completeness"));
+        // The prompt pins belief-neutral STRUCTURE, and carries the goal.
+        let prompt = client.last_prompt.borrow().clone().unwrap();
+        assert!(prompt.contains("STRUCTURAL challenge"));
+        assert!(prompt.contains("can libertarian free will be held consistently?"));
+    }
+
+    #[test]
+    fn closing_objection_never_echoes_the_users_position_verbatim() {
+        // trace:STORY-160 | ai:claude — a model that just parrots the user's
+        // position back is not an objection; it is SCRUBBED so the user's own words
+        // are never handed back as a "challenge".
+        let position = "Free will is real.";
+        let client = MockClient::ok(r#"{"objection":"Free will is real."}"#);
+        let objection = read_closing_objection(&client, position, None);
+        assert!(!objection.objection.contains("Free will is real."));
+        assert!(objection.objection.contains("withheld"));
+    }
+
+    #[test]
+    fn closing_objection_degrades_to_a_structural_challenge_offline() {
+        // trace:STORY-160 | ai:claude — offline still produces a belief-neutral
+        // STRUCTURAL objection so the closing ritual has a challenger turn.
+        let objection = read_closing_objection(
+            &MockClient::err(),
+            "Determinism is true.",
+            Some("is determinism true?"),
+        );
+        assert!(objection.degraded);
+        assert!(objection.objection.contains("is determinism true?"));
+        // Belief-neutral: it challenges the STRUCTURE, never asserts a belief.
+        assert!(!objection.objection.to_lowercase().contains("you are wrong"));
+    }
+
+    #[test]
+    fn structural_objection_handles_an_empty_position() {
+        let objection = structural_objection("   ", None);
+        assert!(objection.degraded);
+        assert!(objection.objection.contains("no settled position"));
     }
 }

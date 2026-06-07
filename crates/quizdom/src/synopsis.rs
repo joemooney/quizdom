@@ -220,6 +220,36 @@ pub fn arc_from_session_log(reader: impl Read, branch: Option<&str>) -> Result<S
                         .push((term.to_string(), definition.to_string()));
                 }
             }
+            // trace:STORY-160 | ai:claude — fold the closing ritual into the arc so
+            // the verdict reflects it: the user's closing STATEMENTS count as
+            // positions (their settled case), and the challenger's objections are
+            // recorded as structural tensions the verdict can weigh. Belief-neutral:
+            // both are about the STRUCTURE of the case, never which belief is true.
+            Some("closing_statement") => {
+                let speaker = value.get("speaker").and_then(Value::as_str).unwrap_or("");
+                let statement = value
+                    .get("statement")
+                    .and_then(Value::as_str)
+                    .unwrap_or("")
+                    .trim()
+                    .to_string();
+                if statement.is_empty() {
+                    continue;
+                }
+                let turn = value.get("turn").and_then(Value::as_u64).unwrap_or(0);
+                match speaker {
+                    "user" => arc.turns.push(SessionTurn {
+                        turn,
+                        branch: event_branch.to_string(),
+                        question: "Closing statement".to_string(),
+                        position: statement,
+                    }),
+                    "challenger" => arc
+                        .tensions
+                        .push(format!("Unanswered objection: {statement}")),
+                    _ => {}
+                }
+            }
             Some("contradiction_resolved") => {
                 let left = value
                     .get("left_belief")
