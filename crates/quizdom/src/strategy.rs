@@ -11,6 +11,51 @@ use std::collections::BTreeSet;
 
 const SOCRATIC_SYSTEM_PROMPT: &str = "You are quizdom's Socratic belief-exploration engine. There are no correct answers. Explore and challenge the user's beliefs, probe semantic nuance, and prefer formal or shared definitions before bespoke meanings. Decide whether to select an existing follow-up question or generate one new concise follow-up question.";
 
+// trace:STORY-161 | ai:claude
+/// System prompt for DEBATE mode (`--mode debate`): instead of neutrally
+/// challenging the user's own position, the questioner explicitly STEELMANS the
+/// OPPOSING side and presses the strongest two-sided case for it. It remains
+/// STRICTLY belief-neutral on TRUTH — it argues the opposing side's CRAFT to
+/// stress-test the user, never asserting that side's belief is actually true.
+const DEBATE_SYSTEM_PROMPT: &str = "You are quizdom's DEBATE-mode questioner. There are no correct answers and you are STRICTLY belief-neutral on which belief is TRUE. Your job is to STEELMAN the OPPOSING position to the user's: build and press the STRONGEST, most charitable version of the case AGAINST the user's stated view, so they must argue two-sided. Generate or select the follow-up question that best advances the opposing case — surface its best evidence, its sharpest objection to the user, the consideration their view has not yet answered. You are arguing the opposing side's CRAFT (to test the user), NEVER asserting that the opposing belief is actually true and NEVER advocating it as correct. Decide whether to select an existing follow-up question or generate one new concise follow-up question that advances the opposing case.";
+
+// trace:STORY-161 | ai:claude
+/// The two session MODES (the EPIC-158 toggle). `Socratic` (default) keeps the
+/// questioner a NEUTRAL CHALLENGER of the user's own position; `Debate` makes it
+/// STEELMAN the OPPOSING side two-sided. Belief-neutral throughout — neither mode
+/// asserts which belief is true; debate mode judges argument CRAFT, not truth.
+#[derive(Debug, Clone, Copy, Default, Eq, PartialEq)]
+pub enum SessionMode {
+    /// Default: the questioner neutrally challenges the user's OWN position.
+    #[default]
+    Socratic,
+    /// Opt-in: the questioner steelmans the OPPOSING position and debates it
+    /// two-sided; the verdict judges which CASE was better-argued structurally.
+    Debate,
+}
+
+impl SessionMode {
+    /// The wire/CLI token for this mode (`socratic` / `debate`), used for the
+    /// `--mode` flag, the session log, and resume restore.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Socratic => "socratic",
+            Self::Debate => "debate",
+        }
+    }
+
+    /// Parse a `--mode` value (or a logged mode token) into a [`SessionMode`].
+    /// Returns `None` for an unrecognized token so the caller can report a usage
+    /// error (CLI) or fall back to the default (log restore).
+    pub fn parse(value: &str) -> Option<Self> {
+        match value.trim().to_ascii_lowercase().as_str() {
+            "socratic" | "neutral" => Some(Self::Socratic),
+            "debate" => Some(Self::Debate),
+            _ => None,
+        }
+    }
+}
+
 pub trait NextQuestionStrategy {
     fn next_question(
         &self,
@@ -110,6 +155,13 @@ pub struct StrategyContext {
     /// prompt is unchanged. Belief-neutral: the goal is the question being
     /// settled, never a belief to advocate.
     pub goal: Option<String>,
+    // trace:STORY-161 | ai:claude
+    /// The session MODE (the EPIC-158 toggle). `Socratic` (default) keeps the
+    /// next-question prompt a neutral challenge of the user's OWN position;
+    /// `Debate` switches the prompt + system prompt to STEELMAN the OPPOSING
+    /// side. Belief-neutral throughout: debate mode argues the opposing case's
+    /// CRAFT, never asserts the opposing belief is true.
+    pub mode: SessionMode,
 }
 
 #[derive(Debug, Clone, Eq, PartialEq)]
@@ -433,6 +485,16 @@ fn strategy_prompt(
     candidates: &[Question],
 ) -> String {
     let mut prompt = String::new();
+    // trace:STORY-161 | ai:claude
+    // In DEBATE mode, lead the prompt by naming the steelman stance so the model
+    // builds the OPPOSING case rather than neutrally challenging the user's own
+    // view. Belief-neutral: it presses the strongest version of the other side to
+    // stress-test the user, never asserting the opposing belief is actually true.
+    if context.mode == SessionMode::Debate {
+        prompt.push_str(
+            "DEBATE MODE: steelman the OPPOSING position to the user's. Pick or generate the follow-up that best advances the STRONGEST case AGAINST the user's stated view — its best evidence, its sharpest objection — so they must argue two-sided. Stay belief-neutral on truth: argue the opposing side's CRAFT to test the user, never assert the opposing belief is actually true.\n\n",
+        );
+    }
     // trace:STORY-159 | ai:claude
     // When a session GOAL/thesis is set, lead the prompt with it so the model
     // ORIENTS its selection toward RESOLVING the goal — picking or generating the
@@ -652,10 +714,17 @@ where
         // call, and persistence (below) after it. The session loop now holds a
         // single spinner across the whole `next_question` computation so the
         // indicator spans the entire delay between answer and next question.
+        // trace:STORY-161 | ai:claude — debate mode swaps in the steelman system
+        // prompt so the questioner argues the OPPOSING side; default stays
+        // Socratic-neutral-challenger.
+        let system_prompt = match context.mode {
+            SessionMode::Socratic => SOCRATIC_SYSTEM_PROMPT,
+            SessionMode::Debate => DEBATE_SYSTEM_PROMPT,
+        };
         let (text, _tool_calls) = runtime
             .block_on(
                 self.client
-                    .call(SOCRATIC_SYSTEM_PROMPT, &[Message::user(prompt)], &[]),
+                    .call(system_prompt, &[Message::user(prompt)], &[]),
             )
             .map_err(|error| QuizdomError::Aida(error.to_string()))?;
         let next = apply_llm_decision(&text, &candidates)?;
@@ -1037,7 +1106,7 @@ mod weighted_index_tests {
 // trace:STORY-159 | ai:claude
 #[cfg(test)]
 mod goal_orientation_tests {
-    use super::{strategy_prompt, AnsweredQuestion, StrategyContext};
+    use super::{strategy_prompt, AnsweredQuestion, SessionMode, StrategyContext};
     use crate::model::{Answer, AnswerKind, Question};
 
     fn question() -> Question {
@@ -1058,6 +1127,15 @@ mod goal_orientation_tests {
             },
             recent_path: Vec::<AnsweredQuestion>::new(),
             goal: goal.map(str::to_string),
+            mode: SessionMode::Socratic,
+        }
+    }
+
+    // trace:STORY-161 | ai:claude
+    fn debate_context(goal: Option<&str>) -> StrategyContext {
+        StrategyContext {
+            mode: SessionMode::Debate,
+            ..context(goal)
         }
     }
 
@@ -1090,5 +1168,51 @@ mod goal_orientation_tests {
         // A whitespace-only goal is treated as no goal — no orientation preamble.
         let prompt = strategy_prompt(&question(), &context(Some("   ")), &[]);
         assert!(!prompt.contains("Session goal"));
+    }
+
+    // trace:STORY-161 | ai:claude
+    #[test]
+    fn debate_mode_prompt_steelmans_the_opposing_side() {
+        // Debate mode leads the prompt with the steelman stance so the model
+        // argues the OPPOSING case, not a neutral challenge of the user's view.
+        let prompt = strategy_prompt(&question(), &debate_context(None), &[]);
+        assert!(
+            prompt.contains("DEBATE MODE"),
+            "debate prompt must announce the mode: {prompt}"
+        );
+        assert!(
+            prompt
+                .to_lowercase()
+                .contains("steelman the opposing position"),
+            "debate prompt must instruct steelmanning the opposing side: {prompt}"
+        );
+        // Belief-neutral on TRUTH: it argues the opposing side's CRAFT to test
+        // the user, it never asserts the opposing belief is actually true.
+        assert!(prompt.to_lowercase().contains("belief-neutral"));
+        assert!(
+            prompt.contains("never assert the opposing belief is actually true"),
+            "debate prompt must stay belief-neutral on truth: {prompt}"
+        );
+    }
+
+    // trace:STORY-161 | ai:claude
+    #[test]
+    fn default_mode_carries_no_debate_preamble() {
+        // Default (Socratic) mode is unchanged — no steelman/debate preamble.
+        let prompt = strategy_prompt(&question(), &context(None), &[]);
+        assert!(!prompt.contains("DEBATE MODE"));
+        assert!(!prompt.to_lowercase().contains("steelman the opposing"));
+    }
+
+    // trace:STORY-161 | ai:claude
+    #[test]
+    fn debate_mode_composes_with_a_goal() {
+        // Debate + a goal: both preambles appear; the steelman leads, the goal
+        // still orients. Belief-neutral throughout.
+        let goal = "can compatibilist free will answer the consequence argument?";
+        let prompt = strategy_prompt(&question(), &debate_context(Some(goal)), &[]);
+        assert!(prompt.contains("DEBATE MODE"));
+        assert!(prompt.contains(goal));
+        assert!(prompt.contains("Orient the next question toward resolving this goal"));
     }
 }

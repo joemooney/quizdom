@@ -56,7 +56,7 @@ pub use signals::{
     ReweightOutcome, DEEP_BRANCH_DEPTH, PUNT_RATE_THRESHOLD,
 };
 pub use strategy::{
-    assist_user_question, reweight, AnsweredQuestion, QualitySignal, StrategyContext,
+    assist_user_question, reweight, AnsweredQuestion, QualitySignal, SessionMode, StrategyContext,
     UserQuestionAssist,
 };
 pub use strategy::{

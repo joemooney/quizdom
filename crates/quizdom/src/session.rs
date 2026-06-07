@@ -27,7 +27,7 @@ use crate::persist::{
     NoopQuestionReweighter, NoopUserAuthoredQuestionPersister, NoopUserSpecificTermPersister,
 };
 use crate::strategy::{
-    different_topic_punt_question, AnsweredQuestion, QualitySignal, StrategyContext,
+    different_topic_punt_question, AnsweredQuestion, QualitySignal, SessionMode, StrategyContext,
 };
 use crate::strategy::{
     DeterministicNextQuestionStrategy, LlmNextQuestionStrategy, NextQuestionStrategy,
@@ -71,6 +71,17 @@ pub(crate) struct CliConfig {
     /// and the Observer proposal, handled in the loop). `None` means the session
     /// starts free-flowing. Belief-neutral: the claim/question being resolved.
     pub(crate) goal: Option<String>,
+    // trace:STORY-161 | ai:claude
+    /// The session MODE (the EPIC-158 toggle), set at start via `--mode
+    /// socratic|debate` (default `Socratic`) and overridable in-session via
+    /// `/mode debate`. In `Debate` the questioner steelmans the OPPOSING side and
+    /// the verdict judges which CASE was better-argued; `Socratic` keeps the
+    /// neutral-challenger default. Belief-neutral throughout — never which belief
+    /// is true.
+    pub(crate) mode: SessionMode,
+    // trace:STORY-161 | ai:claude — whether `--mode` was passed explicitly, so a
+    // resume restores the logged mode only when the user did not override it.
+    pub(crate) mode_provided: bool,
 }
 
 #[derive(Debug, Clone, Copy, Eq, PartialEq)]
@@ -113,6 +124,9 @@ impl CliConfig {
         let mut llm_backend = env_llm_backend();
         // trace:STORY-159 | ai:claude
         let mut goal = None;
+        // trace:STORY-161 | ai:claude
+        let mut mode = SessionMode::default();
+        let mut mode_provided = false;
         let mut args = args.into_iter().peekable();
 
         if matches!(args.peek().map(String::as_str), Some("session")) {
@@ -161,6 +175,18 @@ impl CliConfig {
                 // session goal at start (way 1 of 3). An empty value is rejected
                 // by `next_arg`, so a bare `--goal` is a usage error.
                 "--goal" => goal = Some(next_arg(&mut args, "--goal")?),
+                // trace:STORY-161 | ai:claude — the `--mode socratic|debate` flag
+                // sets the session mode at start. An unrecognized value is a usage
+                // error (so a typo never silently falls back to the default).
+                "--mode" => {
+                    let value = next_arg(&mut args, "--mode")?;
+                    mode = SessionMode::parse(&value).ok_or_else(|| {
+                        QuizdomError::Usage(format!(
+                            "unknown mode: {value}; expected socratic or debate"
+                        ))
+                    })?;
+                    mode_provided = true;
+                }
                 "--proposition" => proposition = Some(next_arg(&mut args, "--proposition")?),
                 "--agree-seed" => agree_seed = Some(next_arg(&mut args, "--agree-seed")?),
                 "--disagree-seed" => disagree_seed = Some(next_arg(&mut args, "--disagree-seed")?),
@@ -201,6 +227,8 @@ impl CliConfig {
             strategy_provided,
             llm_backend,
             goal,
+            mode,
+            mode_provided,
         })
     }
 }
@@ -311,6 +339,7 @@ fn usage() -> String {
         "Options:",
         "  --seed Q-23                         Seed question for start",
         "  --goal text                         Goal/thesis to orient the session",
+        "  --mode socratic|debate              Questioning mode (debate steelmans the opposing side)",
         "  --branch main                       Session branch to read/write",
         "  --strategy deterministic|weighted|llm  Follow-up selection strategy",
         "  --user local-user                   User id for session logs",
@@ -433,6 +462,13 @@ pub(crate) fn resolve_resume_config(mut config: CliConfig) -> Result<CliConfig> 
             if config.goal.is_none() {
                 config.goal = metadata.goal;
             }
+            // trace:STORY-161 | ai:claude — restore the mode so a resumed session
+            // keeps the same questioning style (debate stays debate). An explicit
+            // `--mode` on the resume command wins (it overrides the default before
+            // restore, so only fall back when the user did not pass one).
+            if !config.mode_provided {
+                config.mode = metadata.mode;
+            }
         }
     }
     Ok(config)
@@ -446,6 +482,10 @@ struct SessionStrategyMetadata {
     // a resumed session keeps orienting toward the same thesis without re-passing
     // `--goal`. The most recent `goal_set` event (if any) overrides this.
     goal: Option<String>,
+    // trace:STORY-161 | ai:claude — the mode set at start, restored on resume so a
+    // resumed session keeps the same questioning style. The most recent `mode_set`
+    // event (if any) overrides this.
+    mode: SessionMode,
 }
 
 impl SessionStrategyMetadata {
@@ -465,6 +505,9 @@ impl SessionStrategyMetadata {
         // event still gates whether any metadata is returned at all.
         let mut started: Option<Self> = None;
         let mut latest_goal: Option<String> = None;
+        // trace:STORY-161 | ai:claude — the most recent mode (start or `mode_set`)
+        // wins, mirroring the goal restore.
+        let mut latest_mode: Option<SessionMode> = None;
         for line in reader.lines() {
             let line = line?;
             if line.trim().is_empty() {
@@ -481,6 +524,12 @@ impl SessionStrategyMetadata {
                 .map(str::trim)
                 .filter(|goal| !goal.is_empty())
                 .map(str::to_string);
+            // trace:STORY-161 | ai:claude — an unrecognized mode token is ignored,
+            // leaving the default Socratic.
+            let mode_field = value
+                .get("mode")
+                .and_then(Value::as_str)
+                .and_then(SessionMode::parse);
             match value.get("event_type").and_then(Value::as_str) {
                 Some("session_started") => {
                     let Some(strategy_value) = value.get("strategy").and_then(Value::as_str) else {
@@ -495,10 +544,14 @@ impl SessionStrategyMetadata {
                     if let Some(goal) = goal_field.clone() {
                         latest_goal = Some(goal);
                     }
+                    if let Some(mode) = mode_field {
+                        latest_mode = Some(mode);
+                    }
                     started = Some(Self {
                         strategy,
                         llm_backend,
                         goal: None,
+                        mode: SessionMode::default(),
                     });
                 }
                 // trace:STORY-159 | ai:claude — an in-session / Observer-proposed
@@ -508,11 +561,19 @@ impl SessionStrategyMetadata {
                         latest_goal = Some(goal);
                     }
                 }
+                // trace:STORY-161 | ai:claude — an in-session mode toggle logged
+                // after start; the most recent one wins.
+                Some("mode_set") => {
+                    if let Some(mode) = mode_field {
+                        latest_mode = Some(mode);
+                    }
+                }
                 _ => {}
             }
         }
         if let Some(mut metadata) = started {
             metadata.goal = latest_goal;
+            metadata.mode = latest_mode.unwrap_or_default();
             return Ok(Some(metadata));
         }
         Ok(None)
@@ -851,6 +912,50 @@ fn set_goal_in_session(
     Ok(())
 }
 
+// trace:STORY-161 | ai:claude
+/// Apply an in-session `/mode` toggle. A non-empty `token` SETS the live mode and
+/// logs a `mode_set` event (so resume restores it and the verdict path frames the
+/// debate); a bare `/mode` (empty `token`) just SHOWS the current mode without
+/// changing it. An unrecognized token is reported and leaves the mode unchanged
+/// (the session never silently falls back). Belief-neutral throughout: debate
+/// steelmans the OPPOSING side's CRAFT, never asserting which belief is true.
+fn set_mode_in_session(
+    mode: &mut SessionMode,
+    token: &str,
+    config: &CliConfig,
+    logger: &mut SessionLogger,
+    turn: u64,
+    output: &mut impl Write,
+) -> Result<()> {
+    let token = token.trim();
+    if token.is_empty() {
+        writeln!(output, "Current mode: {}", mode.as_str())?;
+        return Ok(());
+    }
+    let Some(new_mode) = SessionMode::parse(token) else {
+        writeln!(
+            output,
+            "Unknown mode: {token} (expected socratic or debate). Mode unchanged ({}).",
+            mode.as_str()
+        )?;
+        return Ok(());
+    };
+    *mode = new_mode;
+    logger.mode_set(
+        &config.session_id,
+        &config.user_id,
+        &config.branch_id,
+        turn,
+        new_mode,
+    )?;
+    let note = match new_mode {
+        SessionMode::Debate => "(The questioner now steelmans the OPPOSING side; the verdict will judge which CASE was better-argued — never which belief is true.)",
+        SessionMode::Socratic => "(The questioner is again a neutral challenger of your OWN position.)",
+    };
+    writeln!(output, "Mode set: {}\n{note}", new_mode.as_str())?;
+    Ok(())
+}
+
 // trace:STORY-159 | ai:claude
 /// When no goal is set yet, ask the Observer whether a thesis has crystallized
 /// and, if so, OFFER it as the session goal. The user decides (agency: the
@@ -1146,14 +1251,24 @@ fn render_verdict(
     output: &mut impl Write,
 ) -> Result<()> {
     let meta = crate::style::meta();
-    writeln!(
-        output,
-        "\n{}",
-        crate::style::paint(
-            meta,
+    let arc = match File::open(log_path) {
+        Ok(file) => arc_from_session_log(file, branch).unwrap_or_default(),
+        Err(_) => SessionArc::default(),
+    };
+    // trace:STORY-161 | ai:claude — the verdict header is mode-aware: in DEBATE
+    // mode it pins the WHICH-CASE-WAS-BETTER-ARGUED contract (argument STRUCTURE),
+    // in Socratic it assesses the user's OWN case. Belief-neutral in both — never
+    // which belief is true. The mode is read from the log (the arc), so a resumed
+    // debate session renders the debate verdict.
+    let header = match arc.mode {
+        SessionMode::Debate => {
+            "META (final verdict) — debate mode: which CASE was better-ARGUED (the argument STRUCTURE of each side: consistency / clarity / completeness / coherence), NOT which belief is true:"
+        }
+        SessionMode::Socratic => {
             "META (final verdict) — a belief-neutral assessment of your case's STRUCTURE (consistency / clarity / completeness / coherence), NOT whether your belief is true:"
-        )
-    )?;
+        }
+    };
+    writeln!(output, "\n{}", crate::style::paint(meta, header))?;
     if let Some(goal) = goal.map(str::trim).filter(|g| !g.is_empty()) {
         writeln!(
             output,
@@ -1161,10 +1276,6 @@ fn render_verdict(
             crate::style::paint(meta, &format!("  Resolving: {goal}"))
         )?;
     }
-    let arc = match File::open(log_path) {
-        Ok(file) => arc_from_session_log(file, branch).unwrap_or_default(),
-        Err(_) => SessionArc::default(),
-    };
     if arc.is_empty() {
         writeln!(
             output,
@@ -1543,6 +1654,13 @@ fn run_session_from_current(
     // breadcrumb. `None` = free-flowing. Belief-neutral: the question being
     // resolved, never a belief.
     let mut goal: Option<String> = config.goal.clone();
+    // trace:STORY-161 | ai:claude
+    // The live session MODE. Seeded from `--mode` / the resumed start
+    // (config.mode) and updated in-session by the `/mode` toggle. It drives the
+    // next-question prompt (via StrategyContext) and is logged so the verdict path
+    // and resume read the same mode. Belief-neutral: debate argues craft, never
+    // which belief is true.
+    let mut mode: SessionMode = config.mode;
     let mut current = bank.load_question(&config.seed)?;
     let mut settled_terms = Vec::new();
     let mut surfaced_contradictions = BTreeSet::new();
@@ -1568,6 +1686,8 @@ fn run_session_from_current(
             config.llm_backend,
             // trace:STORY-159 | ai:claude
             config.goal.as_deref(),
+            // trace:STORY-161 | ai:claude
+            config.mode,
         )?;
     }
 
@@ -1782,6 +1902,27 @@ fn run_session_from_current(
                     )?;
                     continue;
                 }
+                AnswerInput::Mode(token) => {
+                    // trace:STORY-161 | ai:claude
+                    // In-session mode toggle: `/mode debate` makes the
+                    // questioner steelman the OPPOSING side; `/mode socratic`
+                    // returns to the neutral-challenger default. A non-empty
+                    // token SETS the mode (logged as a `mode_set` event so
+                    // resume restores it and the verdict path frames the
+                    // debate); a bare `/mode` SHOWS the current mode. Then the
+                    // SAME question is re-presented under the new mode.
+                    // Belief-neutral: debate argues craft, never which belief is
+                    // true.
+                    set_mode_in_session(
+                        &mut mode,
+                        &token,
+                        config,
+                        &mut logger,
+                        answered_turn,
+                        output,
+                    )?;
+                    continue;
+                }
                 AnswerInput::Rest => {
                     // trace:STORY-160 | ai:claude
                     // "Rest your case": a PHASE TRANSITION out of the
@@ -1974,6 +2115,8 @@ fn run_session_from_current(
                         recent_path: recent_path.clone(),
                         // trace:STORY-159 | ai:claude — orient toward the goal.
                         goal: goal.clone(),
+                        // trace:STORY-161 | ai:claude — carry the live mode.
+                        mode,
                     };
                     match dead_end_menu(
                         bank,
@@ -2061,6 +2204,9 @@ fn run_session_from_current(
             // trace:STORY-159 | ai:claude — the next-question selection orients
             // toward the live goal so questions aim at resolving it.
             goal: goal.clone(),
+            // trace:STORY-161 | ai:claude — and follows the live mode so debate
+            // mode steelmans the opposing side.
+            mode,
         };
 
         // trace:BUG-100 | ai:claude
@@ -2323,6 +2469,9 @@ fn ask_contradiction_follow_up(
         | AnswerInput::Observe
         | AnswerInput::Synopsis
         | AnswerInput::Goal(_)
+        // trace:STORY-161 | ai:claude — a stray `/mode` toggle on a transient
+        // contradiction follow-up is a no-op here (no loop mode state in scope).
+        | AnswerInput::Mode(_)
         | AnswerInput::Rest
         | AnswerInput::Verdict
         | AnswerInput::Terminate => Ok(false),
@@ -2605,6 +2754,10 @@ fn browse_answered_path(
             // here is a no-op rather than re-orienting from inside review. (The
             // goal is set at the frontier, where it can orient the next question.)
             AnswerInput::Goal(_) => continue,
+            // trace:STORY-161 | ai:claude — the mode toggle, like `/goal`, takes
+            // effect at the FRONTIER (where the live mode drives the next-question
+            // prompt), so a stray `/mode` in the review pane is a no-op.
+            AnswerInput::Mode(_) => continue,
             // trace:STORY-160 | ai:claude — the closing ritual begins at the
             // FRONTIER (where the live position + goal state are in scope), not
             // from inside the review pane re-walking the saved path. A stray
@@ -2747,6 +2900,8 @@ fn resume_session_with_term_persister(
         // trace:STORY-159 | ai:claude — a resumed session keeps orienting toward
         // its restored goal when auto-continuing a terminal saved path.
         goal: config.goal.clone(),
+        // trace:STORY-161 | ai:claude — and keeps its restored mode.
+        mode: config.mode,
     };
 
     let auto = {
@@ -3161,6 +3316,9 @@ impl SessionLogger {
         // trace:STORY-159 | ai:claude — the goal set at start (`--goal`), recorded
         // so resume can restore it and the arc/synopsis can orient to it.
         goal: Option<&str>,
+        // trace:STORY-161 | ai:claude — the mode set at start (`--mode`), recorded
+        // so resume restores it and the verdict path frames the debate correctly.
+        mode: SessionMode,
     ) -> Result<()> {
         let event_id = self.event_id();
         let llm_backend_value = (strategy == StrategyKind::Llm).then(|| llm_backend.as_str());
@@ -3179,6 +3337,7 @@ impl SessionLogger {
             "llm_backend": llm_backend_value,
             "llm_model": llm_model,
             "goal": goal,
+            "mode": mode.as_str(),
         }))
     }
 
@@ -3207,6 +3366,33 @@ impl SessionLogger {
             "turn": turn,
             "goal": goal,
             "source": source,
+        }))
+    }
+
+    // trace:STORY-161 | ai:claude
+    /// Record a session MODE toggled IN-SESSION via the `/mode` command. The most
+    /// recent `mode_set` event is what the arc/verdict and resume restore read, so
+    /// this is how an in-session toggle overrides the `--mode` flag (or the
+    /// default). Belief-neutral: the mode picks the questioning style, never a
+    /// belief.
+    fn mode_set(
+        &mut self,
+        session_id: &str,
+        user_id: &str,
+        branch_id: &str,
+        turn: u64,
+        mode: SessionMode,
+    ) -> Result<()> {
+        let event_id = self.event_id();
+        self.write(json!({
+            "event_id": event_id,
+            "event_type": "mode_set",
+            "occurred_at": Utc::now().to_rfc3339(),
+            "session_id": session_id,
+            "user_id": user_id,
+            "branch_id": branch_id,
+            "turn": turn,
+            "mode": mode.as_str(),
         }))
     }
 

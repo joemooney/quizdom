@@ -80,6 +80,13 @@ pub struct SessionArc {
     /// from the most recent `session_started`/`goal_set` event in the log;
     /// belief-neutral — the goal is a question being settled, never a belief.
     pub goal: Option<String>,
+    // trace:STORY-161 | ai:claude
+    /// The session MODE (the EPIC-158 toggle), read from the `session_started`
+    /// event (and any later `mode_set`). In `Debate` mode the verdict judges which
+    /// CASE was better-ARGUED structurally; in `Socratic` (default) it assesses
+    /// the user's own position's roundedness. Belief-neutral in both: the score is
+    /// STRUCTURE, never which belief is true.
+    pub mode: crate::strategy::SessionMode,
 }
 
 impl SessionArc {
@@ -168,6 +175,23 @@ pub fn arc_from_session_log(reader: impl Read, branch: Option<&str>) -> Result<S
                 .filter(|goal| !goal.is_empty())
             {
                 arc.goal = Some(goal.to_string());
+            }
+        }
+
+        // trace:STORY-161 | ai:claude — capture the session MODE from the start
+        // event or any later `mode_set` event (the most recent wins, so an
+        // in-session toggle overrides the `--mode` flag). An unrecognized token is
+        // ignored, leaving the default Socratic mode.
+        if matches!(
+            value.get("event_type").and_then(Value::as_str),
+            Some("session_started") | Some("mode_set")
+        ) {
+            if let Some(mode) = value
+                .get("mode")
+                .and_then(Value::as_str)
+                .and_then(crate::strategy::SessionMode::parse)
+            {
+                arc.mode = mode;
             }
         }
 
@@ -388,6 +412,12 @@ pub struct SessionSynopsis {
     /// — carried through from the [`SessionArc`] so the render can surface the
     /// convergence target. Belief-neutral: the question being settled.
     pub goal: Option<String>,
+    // trace:STORY-161 | ai:claude
+    /// The session MODE this synopsis was produced under, carried from the
+    /// [`SessionArc`] so the render can frame the verdict correctly: in `Debate`
+    /// mode the header says it judges which CASE was better-ARGUED (structure),
+    /// in `Socratic` it assesses the user's own position. Belief-neutral in both.
+    pub mode: crate::strategy::SessionMode,
     /// True when this synopsis was synthesized structurally (offline / degraded)
     /// rather than by the LLM.
     pub degraded: bool,
@@ -416,11 +446,30 @@ impl SessionSynopsis {
 /// System prompt pinning the synopsis to its belief-neutral, clarify-only
 /// contract. Mirrors the per-exchange observer's contract, scaled to a whole
 /// session.
+// trace:STORY-161 | ai:claude
+/// System prompt for the DEBATE-mode verdict. Unlike the Socratic synopsis (which
+/// scores the user's OWN position's roundedness), the debate verdict assesses
+/// which CASE was better-ARGUED — the STRUCTURAL/argument quality of each side —
+/// while staying STRICTLY belief-neutral on which belief is actually TRUE. It
+/// judges craft (consistency / clarity / completeness / coherence of each case),
+/// never truth.
+const DEBATE_SYNOPSIS_SYSTEM_PROMPT: &str = "You are quizdom's session Synopsis observer in DEBATE mode. The session was a two-sided debate: the user argued their position and the questioner steelmanned the OPPOSING side. You are STRICTLY belief-neutral on which belief is TRUE — you MUST NOT assert which belief is correct, advocate a position, or say which SIDE is right about reality. Your verdict judges which CASE was better-ARGUED: the STRUCTURAL/argument quality of each side (consistency, definitional clarity, completeness in meeting the other side's objections, coherence). Summarize the arc of the debate: the positions each side took, how the argument evolved, the internal tensions in each case (without resolving them), where the exchange now stands, and what is still unresolved. You ALSO score the ROUNDEDNESS of the better-argued case on four STRUCTURAL dimensions, each 0-100: consistency, definitional_clarity, completeness (addresses the opposing objections raised), coherence. This score measures ARGUMENT CRAFT ONLY — never belief-correctness: a well-argued case for a false-seeming view still scores HIGH on craft, and you NEVER say which side's belief is true. Name the single LIMITING GAP holding the score back, belief-neutrally. Stay descriptive about argument quality, never prescriptive about belief.";
+
 const SYNOPSIS_SYSTEM_PROMPT: &str = "You are quizdom's session Synopsis observer. You are STRICTLY belief-neutral and clarify-only. You read a WHOLE session — the positions the user took across many questions — and summarize the ARC so the user can see their own thinking more clearly. You MUST NOT supply the user's answer, take a side, assert which belief is correct, advocate a position, or grade which belief is better. Assess ENGAGEMENT only: clarity, internal consistency, and precision — never belief correctness. Only: list the positions taken, describe how they evolved, name the internal tensions (without resolving them), summarize where the user now stands, and list what is still unresolved. You ALSO score the ROUNDEDNESS of the arc on four STRUCTURAL dimensions, each 0-100: consistency (no internal contradictions), definitional_clarity (key terms pinned), completeness (addresses the live objections raised), coherence (the parts follow). This score measures STRUCTURE ONLY — never belief-correctness: two OPPOSITE well-formed positions must score COMPARABLY. A confident, clearly-defined, internally-consistent position that has met its objections scores HIGH whatever it concludes. Also name the single LIMITING GAP holding the score back, belief-neutrally (the one dimension to shore up), NEVER advocating a belief. Stay descriptive, not prescriptive.";
 
 /// Build the synopsis prompt for one [`SessionArc`].
 fn synopsis_prompt(arc: &SessionArc) -> String {
     let mut log = String::new();
+    // trace:STORY-161 | ai:claude
+    // In DEBATE mode, frame the verdict around which CASE was better-ARGUED
+    // (argument craft) rather than the user's own position's roundedness. Stays
+    // belief-neutral on truth: it scores STRUCTURE/craft, never which side is
+    // right about reality.
+    if arc.mode == crate::strategy::SessionMode::Debate {
+        log.push_str(
+            "DEBATE MODE: this was a two-sided debate (the user vs the steelmanned opposing side). Judge which CASE was better-ARGUED — the structural/argument quality of each side — and score the better-argued case's roundedness. Stay belief-neutral on TRUTH: never say which side's belief is true; assess argument craft only.\n\n",
+        );
+    }
     // trace:STORY-159 | ai:claude
     // When the session carries a GOAL, lead with it so the roundedness score is
     // measured WITH RESPECT TO it ("how well-settled is THIS goal?") — the goal
@@ -484,8 +533,14 @@ fn llm_synopsize<C: LLMClient>(client: &C, arc: &SessionArc) -> Option<SessionSy
         .enable_time()
         .build()
         .ok()?;
+    // trace:STORY-161 | ai:claude — debate mode swaps in the better-argued-case
+    // verdict system prompt; default stays the position-roundedness synopsis.
+    let system_prompt = match arc.mode {
+        crate::strategy::SessionMode::Socratic => SYNOPSIS_SYSTEM_PROMPT,
+        crate::strategy::SessionMode::Debate => DEBATE_SYNOPSIS_SYSTEM_PROMPT,
+    };
     let (text, _tool_calls) = runtime
-        .block_on(client.call(SYNOPSIS_SYSTEM_PROMPT, &[Message::user(prompt)], &[]))
+        .block_on(client.call(system_prompt, &[Message::user(prompt)], &[]))
         .ok()?;
     parse_synopsis(&text, arc)
 }
@@ -561,6 +616,9 @@ pub fn parse_synopsis(text: &str, arc: &SessionArc) -> Option<SessionSynopsis> {
         // trace:STORY-159 | ai:claude — carry the goal the score was measured
         // against through to the render.
         goal: arc.goal.clone(),
+        // trace:STORY-161 | ai:claude — carry the mode so the render frames the
+        // verdict (debate = better-argued case; socratic = own position).
+        mode: arc.mode,
         degraded: false,
     })
 }
@@ -709,6 +767,9 @@ pub fn structural_synopsis(arc: &SessionArc) -> SessionSynopsis {
         // trace:STORY-159 | ai:claude — carry the goal so even the offline render
         // shows the convergence target.
         goal: arc.goal.clone(),
+        // trace:STORY-161 | ai:claude — carry the mode so the offline render still
+        // frames the (needs-LLM) verdict by mode.
+        mode: arc.mode,
         degraded: true,
     }
 }
@@ -731,10 +792,22 @@ fn first_sentence(text: &str) -> String {
 /// tensions, and lists open threads — it never advocates a belief. Pure over the
 /// buffer + synopsis, so it is unit-testable without a live LLM.
 pub fn render_synopsis(synopsis: &SessionSynopsis, output: &mut impl Write) -> Result<()> {
-    let header = if synopsis.degraded {
-        "META (synopsis, offline) — a belief-neutral reading of this session:"
-    } else {
-        "META (synopsis) — a belief-neutral reading of this session:"
+    // trace:STORY-161 | ai:claude — in debate mode the header pins the
+    // better-argued-case framing (argument STRUCTURE, never which belief is true);
+    // Socratic mode keeps the original belief-neutral reading header.
+    let header = match (synopsis.mode, synopsis.degraded) {
+        (crate::strategy::SessionMode::Debate, true) => {
+            "META (synopsis, offline) — debate mode: which case was better-ARGUED (argument STRUCTURE), never which belief is true:"
+        }
+        (crate::strategy::SessionMode::Debate, false) => {
+            "META (synopsis) — debate mode: which case was better-ARGUED (argument STRUCTURE), never which belief is true:"
+        }
+        (crate::strategy::SessionMode::Socratic, true) => {
+            "META (synopsis, offline) — a belief-neutral reading of this session:"
+        }
+        (crate::strategy::SessionMode::Socratic, false) => {
+            "META (synopsis) — a belief-neutral reading of this session:"
+        }
     };
     writeln!(
         output,
@@ -1762,6 +1835,7 @@ mod tests {
                 limiting_gap: String::new(),
             }),
             goal: None,
+            mode: crate::strategy::SessionMode::Socratic,
             degraded: false,
         };
         let mut out = Vec::new();
@@ -1859,6 +1933,92 @@ mod tests {
         assert!(synopsis
             .standing
             .contains("Goal: \"can libertarian free will be held consistently?\""));
+    }
+
+    // ---- STORY-161: debate-mode verdict -----------------------------------
+
+    // trace:STORY-161 | ai:claude
+    // A session started in DEBATE mode (the questioner steelmanned the opposing
+    // side). The verdict must judge which CASE was better-argued, never truth.
+    const DEBATE_LOG: &str = r#"
+{"event_type":"session_started","session_id":"sess-d","user_id":"ada","branch_id":"main","strategy":"deterministic","mode":"debate"}
+{"event_type":"question_presented","session_id":"sess-d","user_id":"ada","branch_id":"main","turn":1,"question_ref":"Q-1","question_text":"Is moral realism defensible?"}
+{"event_type":"answer_recorded","session_id":"sess-d","user_id":"ada","branch_id":"main","turn":1,"question_ref":"Q-1","raw_answer":"yes","normalized_answer":"yes"}
+"#;
+
+    fn debate_arc() -> SessionArc {
+        arc_from_session_log(DEBATE_LOG.as_bytes(), Some("main")).expect("arc parses")
+    }
+
+    #[test]
+    fn arc_captures_the_debate_mode() {
+        // trace:STORY-161 | ai:claude — the mode is read from the start event.
+        assert_eq!(debate_arc().mode, crate::strategy::SessionMode::Debate);
+        // The default-mode SAMPLE_LOG stays Socratic.
+        assert_eq!(arc(None).mode, crate::strategy::SessionMode::Socratic);
+    }
+
+    #[test]
+    fn debate_synopsis_prompt_judges_argument_structure_not_truth() {
+        // trace:STORY-161 | ai:claude — the debate verdict prompt asks which CASE
+        // was better-ARGUED and stays belief-neutral on which side is true.
+        let client = MockClient::ok(r#"{"standing":"s"}"#);
+        let _ = synopsize(&client, &debate_arc());
+        let prompt = client.last_prompt.borrow().clone().unwrap();
+        assert!(prompt.contains("DEBATE MODE"));
+        assert!(prompt.contains("which CASE was better-ARGUED"));
+        assert!(prompt.to_lowercase().contains("belief-neutral on truth"));
+        assert!(prompt.contains("never say which side's belief is true"));
+    }
+
+    #[test]
+    fn default_synopsis_prompt_has_no_debate_framing() {
+        // trace:STORY-161 | ai:claude — Socratic (default) verdict is unchanged.
+        let client = MockClient::ok(r#"{"standing":"s"}"#);
+        let _ = synopsize(&client, &arc(None));
+        let prompt = client.last_prompt.borrow().clone().unwrap();
+        assert!(!prompt.contains("DEBATE MODE"));
+        assert!(!prompt.contains("which CASE was better-ARGUED"));
+    }
+
+    #[test]
+    fn debate_synopsis_scores_structure_and_renders_the_better_argued_framing() {
+        // trace:STORY-161 | ai:claude — the debate verdict still scores STRUCTURE
+        // (argument craft) and the render pins the better-argued-case framing,
+        // never asserting a belief is true.
+        let client = MockClient::ok(&synopsis_body(
+            "the realist case is the tighter one",
+            88,
+            80,
+            75,
+            82,
+            "the opposing objection on disagreement is unmet",
+        ));
+        let synopsis = synopsize(&client, &debate_arc());
+        assert!(!synopsis.degraded);
+        assert_eq!(synopsis.mode, crate::strategy::SessionMode::Debate);
+        let rounded = synopsis.roundedness.as_ref().expect("structural score");
+        assert_eq!(rounded.consistency, 88);
+        let mut out = Vec::new();
+        render_synopsis(&synopsis, &mut out).expect("render");
+        let rendered = String::from_utf8(out).expect("utf8");
+        assert!(rendered.contains("which case was better-ARGUED"));
+        assert!(rendered.contains("never which belief is true"));
+    }
+
+    #[test]
+    fn offline_debate_synopsis_keeps_the_mode_and_framing() {
+        // trace:STORY-161 | ai:claude — offline degrades structurally but the mode
+        // (and its render framing) survives; no fabricated score.
+        let synopsis = structural_synopsis(&debate_arc());
+        assert!(synopsis.degraded);
+        assert!(synopsis.roundedness.is_none());
+        assert_eq!(synopsis.mode, crate::strategy::SessionMode::Debate);
+        let mut out = Vec::new();
+        render_synopsis(&synopsis, &mut out).expect("render");
+        let rendered = String::from_utf8(out).expect("utf8");
+        assert!(rendered.contains("debate mode"));
+        assert!(rendered.contains("never which belief is true"));
     }
 
     /// Write `contents` to a unique temp file and return its path.
