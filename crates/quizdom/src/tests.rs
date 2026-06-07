@@ -1477,9 +1477,10 @@ fn renders_all_question_kinds() {
         // trace:STORY-128 | ai:claude — `/synopsis` joins the advertised set.
         // trace:STORY-159 | ai:claude — `/goal` joins the advertised set.
         // trace:STORY-160 | ai:claude — `/rest` (rest your case) joins the set.
+        // trace:STORY-161 | ai:claude — `/mode` joins the advertised set.
         (
             AnswerKind::FreeText,
-            "Answer in your own words, or /observe /synopsis /goal /rest /explore /add /punt /back /quit",
+            "Answer in your own words, or /observe /synopsis /goal /mode /rest /explore /add /punt /back /quit",
         ),
     ];
 
@@ -2674,6 +2675,9 @@ fn start_end_resume_round_trip_replays_path_and_finishes() {
         strategy_provided: false,
         llm_backend: LlmBackendKind::ClaudeCli,
         goal: None,
+        // trace:STORY-161 | ai:claude
+        mode: SessionMode::Socratic,
+        mode_provided: false,
     };
     let mut start_output = Vec::new();
 
@@ -2976,6 +2980,9 @@ fn forked_agree_and_disagree_branches_are_recoverable_independently() {
         strategy_provided: false,
         llm_backend: LlmBackendKind::ClaudeCli,
         goal: None,
+        // trace:STORY-161 | ai:claude
+        mode: SessionMode::Socratic,
+        mode_provided: false,
     };
     let mut fork_output = Vec::new();
     fork_session(&fork_config, &mut fork_output).unwrap();
@@ -3181,6 +3188,9 @@ fn test_config(path: &Path, seed: &str) -> CliConfig {
         strategy_provided: false,
         llm_backend: LlmBackendKind::ClaudeCli,
         goal: None,
+        // trace:STORY-161 | ai:claude
+        mode: SessionMode::Socratic,
+        mode_provided: false,
     }
 }
 
@@ -3192,6 +3202,8 @@ fn strategy_context(raw: &str) -> StrategyContext {
         },
         recent_path: Vec::new(),
         goal: None,
+        // trace:STORY-161 | ai:claude
+        mode: SessionMode::Socratic,
     }
 }
 
@@ -4358,6 +4370,258 @@ fn closing_phase_eof_renders_the_verdict_instead_of_hanging() {
     assert!(
         rendered.contains("final verdict"),
         "EOF at the closing prompt should render the verdict; got:\n{rendered}"
+    );
+
+    let _ = fs::remove_file(path);
+}
+
+// ---- STORY-161: debate mode --------------------------------------------
+
+// trace:STORY-161 | ai:claude — `--mode debate` sets the session mode at start;
+// the default is Socratic.
+#[test]
+fn mode_flag_sets_debate_at_start() {
+    let config = CliConfig::parse([
+        "session".to_string(),
+        "start".to_string(),
+        "--mode".to_string(),
+        "debate".to_string(),
+    ])
+    .unwrap();
+    assert_eq!(config.mode, SessionMode::Debate);
+    assert!(config.mode_provided);
+}
+
+// trace:STORY-161 | ai:claude — default mode is unchanged (Socratic) and not
+// flagged as provided.
+#[test]
+fn default_mode_is_socratic() {
+    let config = CliConfig::parse(["session".to_string(), "start".to_string()]).unwrap();
+    assert_eq!(config.mode, SessionMode::Socratic);
+    assert!(!config.mode_provided);
+}
+
+// trace:STORY-161 | ai:claude — an unknown `--mode` value is a usage error (a
+// typo never silently falls back to the default).
+#[test]
+fn unknown_mode_flag_is_a_usage_error() {
+    let error = CliConfig::parse([
+        "session".to_string(),
+        "--mode".to_string(),
+        "wager".to_string(),
+    ])
+    .unwrap_err();
+    assert!(matches!(error, QuizdomError::Usage(_)));
+}
+
+// trace:STORY-161 | ai:claude — the in-session `/mode <text>` toggle parser.
+// Recognized ONLY in the leading slash form (`/mode`); a bare `mode` keyword or a
+// mid-answer mention of "mode" is NOT a command (unlike `/goal`).
+#[test]
+fn mode_command_parses_the_in_session_form() {
+    assert_eq!(mode_command_text("/mode debate").as_deref(), Some("debate"));
+    assert_eq!(
+        mode_command_text("/MODE  Socratic").as_deref(),
+        Some("Socratic")
+    );
+    // Bare `/mode` (no text) carries an empty string — the session reads it as
+    // "show the current mode".
+    assert_eq!(mode_command_text("/mode").as_deref(), Some(""));
+    // A bare `mode` keyword or a free-text answer that merely contains "mode"
+    // mid-sentence is an answer, not a command.
+    assert!(mode_command_text("mode debate").is_none());
+    assert!(mode_command_text("my mode of thinking is careful").is_none());
+    assert!(mode_command_text("yes").is_none());
+}
+
+// trace:STORY-161 | ai:claude — the `--mode` flag is recorded on the start event
+// so the verdict path frames the debate and resume restores it.
+#[test]
+fn start_records_the_mode_on_the_session_started_event() {
+    let path = std::env::temp_dir().join(format!(
+        "quizdom-story-161-start-mode-{}.jsonl",
+        std::process::id()
+    ));
+    let _ = fs::remove_file(&path);
+    let bank = FakeBank::new([question_with_tags(
+        "Q-1",
+        70,
+        AnswerKind::YesNo,
+        ["topic:free-will", "answer:yes-no", "weight:70"],
+    )]);
+    let mut config = test_config(&path, "Q-1");
+    config.mode = SessionMode::Debate;
+    let mut output = Vec::new();
+
+    run_session(
+        &config,
+        &bank,
+        &DeterministicNextQuestionStrategy,
+        "yes\nq\n".as_bytes(),
+        &mut output,
+    )
+    .unwrap();
+
+    let log = fs::read_to_string(&path).unwrap();
+    assert!(log.contains(r#""event_type":"session_started""#));
+    assert!(log.contains(r#""mode":"debate""#), "log:\n{log}");
+
+    let _ = fs::remove_file(path);
+}
+
+// trace:STORY-161 | ai:claude — a resumed debate session restores its mode (from
+// the start event, then the latest in-session `mode_set`) so it keeps the same
+// questioning style without re-passing `--mode`.
+#[test]
+fn resume_restores_the_mode_latest_wins() {
+    let path = std::env::temp_dir().join(format!(
+        "quizdom-story-161-resume-mode-{}.jsonl",
+        std::process::id()
+    ));
+    let _ = fs::remove_file(&path);
+    fs::write(
+        &path,
+        concat!(
+            r#"{"event_type":"session_started","branch_id":"main","strategy":"deterministic","mode":"socratic","session_id":"sess-test","user_id":"test-user","seed_question_ref":"Q-1"}"#,
+            "\n",
+            r#"{"event_type":"mode_set","branch_id":"main","turn":1,"mode":"debate","session_id":"sess-test","user_id":"test-user"}"#,
+            "\n",
+        ),
+    )
+    .unwrap();
+    let config = CliConfig::parse([
+        "session".to_string(),
+        "resume".to_string(),
+        "--log".to_string(),
+        path.to_string_lossy().to_string(),
+    ])
+    .unwrap();
+
+    let resolved = resolve_resume_config(config).unwrap();
+    assert_eq!(resolved.mode, SessionMode::Debate);
+
+    let _ = fs::remove_file(path);
+}
+
+// trace:STORY-161 | ai:claude — an explicit `--mode` on the resume command wins
+// over the logged mode (the user's override is respected).
+#[test]
+fn explicit_mode_flag_overrides_the_logged_mode_on_resume() {
+    let path = std::env::temp_dir().join(format!(
+        "quizdom-story-161-resume-mode-override-{}.jsonl",
+        std::process::id()
+    ));
+    let _ = fs::remove_file(&path);
+    fs::write(
+        &path,
+        concat!(
+            r#"{"event_type":"session_started","branch_id":"main","strategy":"deterministic","mode":"debate","session_id":"sess-test","user_id":"test-user","seed_question_ref":"Q-1"}"#,
+            "\n",
+        ),
+    )
+    .unwrap();
+    let config = CliConfig::parse([
+        "session".to_string(),
+        "resume".to_string(),
+        "--mode".to_string(),
+        "socratic".to_string(),
+        "--log".to_string(),
+        path.to_string_lossy().to_string(),
+    ])
+    .unwrap();
+
+    let resolved = resolve_resume_config(config).unwrap();
+    assert_eq!(resolved.mode, SessionMode::Socratic);
+
+    let _ = fs::remove_file(path);
+}
+
+// trace:STORY-161 | ai:claude — end-to-end: toggling to debate in-session via
+// `/mode debate` records a `mode_set` event and confirms the switch; the
+// confirmation pins the belief-neutral-on-truth contract.
+#[test]
+fn in_session_mode_toggle_sets_debate_and_logs_it() {
+    let path = std::env::temp_dir().join(format!(
+        "quizdom-story-161-toggle-{}.jsonl",
+        std::process::id()
+    ));
+    let _ = fs::remove_file(&path);
+    let bank = FakeBank::new([question_with_tags(
+        "Q-1",
+        70,
+        AnswerKind::YesNo,
+        ["topic:free-will", "answer:yes-no", "weight:70"],
+    )]);
+    let config = test_config(&path, "Q-1");
+    let mut output = Vec::new();
+
+    // Toggle to debate (re-presents the seed), answer the seed (so the session
+    // survives), then quit at the dead-end menu.
+    run_session(
+        &config,
+        &bank,
+        &DeterministicNextQuestionStrategy,
+        "/mode debate\nyes\nq\n".as_bytes(),
+        &mut output,
+    )
+    .unwrap();
+
+    let rendered = String::from_utf8(output).unwrap();
+    assert!(rendered.contains("Mode set: debate"), "{rendered}");
+    assert!(
+        rendered.contains("never which belief is true"),
+        "the toggle must pin belief-neutrality on truth:\n{rendered}"
+    );
+    let log = fs::read_to_string(&path).unwrap();
+    assert!(log.contains(r#""event_type":"mode_set""#), "log:\n{log}");
+    assert!(log.contains(r#""mode":"debate""#), "log:\n{log}");
+
+    let _ = fs::remove_file(path);
+}
+
+// trace:STORY-161 | ai:claude — the debate-mode verdict judges which CASE was
+// better-ARGUED (argument STRUCTURE), never which belief is true. The default
+// Socratic verdict is unchanged (asserted by the STORY-160 verdict test).
+#[test]
+fn debate_mode_verdict_judges_argument_structure_not_truth() {
+    let path = std::env::temp_dir().join(format!(
+        "quizdom-story-161-verdict-{}.jsonl",
+        std::process::id()
+    ));
+    let _ = fs::remove_file(&path);
+    let bank = FakeBank::new([question_with_tags(
+        "Q-1",
+        70,
+        AnswerKind::YesNo,
+        ["topic:free-will", "answer:yes-no", "weight:70"],
+    )]);
+    let mut config = test_config(&path, "Q-1");
+    config.mode = SessionMode::Debate;
+    let mut output = Vec::new();
+
+    // Go straight to the verdict from the frontier prompt.
+    run_session(
+        &config,
+        &bank,
+        &DeterministicNextQuestionStrategy,
+        "verdict\n".as_bytes(),
+        &mut output,
+    )
+    .unwrap();
+
+    let rendered = String::from_utf8(output).unwrap();
+    assert!(
+        rendered.contains("final verdict"),
+        "verdict header missing in:\n{rendered}"
+    );
+    // Debate framing: which CASE was better-argued (STRUCTURE), never truth.
+    assert!(
+        rendered.contains("which CASE was better-ARGUED"),
+        "debate verdict framing missing in:\n{rendered}"
+    );
+    assert!(
+        rendered.contains("NOT which belief is true"),
+        "belief-neutral-on-truth framing missing in:\n{rendered}"
     );
 
     let _ = fs::remove_file(path);

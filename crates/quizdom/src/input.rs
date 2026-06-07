@@ -158,11 +158,14 @@ fn control_prompt(prefix: &str, context: InputContext) -> String {
         // trace:STORY-160 | ai:claude — `/rest` (rest your case) joins the typed
         // controls; it begins the closing ritual, so it is shown alongside `/goal`
         // rather than taking a single key.
+        // trace:STORY-161 | ai:claude — `/mode <socratic|debate>` joins the typed
+        // controls; it toggles the questioning stance, so it is shown alongside
+        // `/goal` rather than taking a single key.
         InputContext::Frontier => {
-            format!("{prefix}  [?] Observe  [S] Synopsis  [X] eXplore  [A] Add  [P] Punt  [B] Back  [Q] Quit  (/goal <text>, /rest)")
+            format!("{prefix}  [?] Observe  [S] Synopsis  [X] eXplore  [A] Add  [P] Punt  [B] Back  [Q] Quit  (/goal <text>, /mode <socratic|debate>, /rest)")
         }
         InputContext::Review => {
-            format!("{prefix}  [?] Observe  [S] Synopsis  [X] eXplore  [P] Punt  [B] Back  [F] Forward  [Q] Quit  (/goal <text>, /rest)")
+            format!("{prefix}  [?] Observe  [S] Synopsis  [X] eXplore  [P] Punt  [B] Back  [F] Forward  [Q] Quit  (/goal <text>, /mode <socratic|debate>, /rest)")
         }
     }
 }
@@ -182,12 +185,14 @@ fn free_text_controls(context: InputContext) -> String {
         // control set for the free-text line-mode prompt.
         // trace:STORY-160 | ai:claude — `/rest` (rest your case) mirrors the typed
         // control set; it opens the closing ritual.
+        // trace:STORY-161 | ai:claude — `/mode` mirrors the typed control set; it
+        // toggles the questioning stance (socratic/debate).
         InputContext::Frontier => {
-            "/observe /synopsis /goal /rest /explore /add /punt /back /quit to navigate."
+            "/observe /synopsis /goal /mode /rest /explore /add /punt /back /quit to navigate."
                 .to_string()
         }
         InputContext::Review => {
-            "/observe /synopsis /goal /rest /explore /punt /back /forward /quit to navigate."
+            "/observe /synopsis /goal /mode /rest /explore /punt /back /forward /quit to navigate."
                 .to_string()
         }
     }
@@ -218,6 +223,14 @@ pub(crate) enum AnswerInput {
     // bare `/goal` with no text carries an empty string, which the session
     // treats as "show the current goal" rather than clearing it.
     Goal(String),
+    // trace:STORY-161 | ai:claude
+    // The user toggled the session MODE in-session via `/mode <socratic|debate>`
+    // (the EPIC-158 toggle). Carries the raw mode token (trimmed). Non-destructive:
+    // the session switches the questioner's stance, then re-presents the SAME
+    // question. A bare `/mode` (empty token) SHOWS the current mode without
+    // changing it. Belief-neutral: debate steelmans the opposing side's CRAFT,
+    // never asserting which belief is true.
+    Mode(String),
     // trace:STORY-160 | ai:claude
     // The user (or challenger) called "rest your case": a PHASE TRANSITION out of
     // the question/answer loop into the CLOSING phase, where the exchange becomes
@@ -366,6 +379,12 @@ pub(crate) fn read_answer_or_end(
         // same question), so it is recognized in every context.
         if let Some(goal) = goal_command_text(&raw) {
             return Ok(AnswerInput::Goal(goal));
+        }
+        // trace:STORY-161 | ai:claude — the `/mode <socratic|debate>` toggle is
+        // non-destructive (it switches the questioner's stance, then re-presents
+        // the same question), so it is recognized in every context.
+        if let Some(mode) = mode_command_text(&raw) {
+            return Ok(AnswerInput::Mode(mode));
         }
         // trace:STORY-160 | ai:claude — the closing-ritual controls are
         // non-destructive at the input layer (the session decides what each does)
@@ -535,6 +554,26 @@ pub(crate) fn goal_command_text(raw: &str) -> Option<String> {
             if rest.is_empty() || rest.starts_with(char::is_whitespace) {
                 return Some(rest.trim().to_string());
             }
+        }
+    }
+    None
+}
+
+// trace:STORY-161 | ai:claude
+/// The in-session mode toggle: switch the questioning MODE (the EPIC-158 toggle).
+/// Recognised ONLY as a leading `/mode <text>` keyword (slash-prefixed), so an
+/// ordinary free-text answer that merely contains the word "mode" mid-sentence is
+/// left as an answer — unlike `/goal`, we do not accept a bare `mode` keyword
+/// because "mode" is a far more common ordinary word. Returns the mode token
+/// (trimmed) when the line is a mode command — an empty string for a bare `/mode`
+/// (the session treats that as "show the current mode"). Returns `None` otherwise.
+pub(crate) fn mode_command_text(raw: &str) -> Option<String> {
+    let trimmed = raw.trim();
+    let keyword = "/mode";
+    if trimmed.len() >= keyword.len() && trimmed[..keyword.len()].eq_ignore_ascii_case(keyword) {
+        let rest = &trimmed[keyword.len()..];
+        if rest.is_empty() || rest.starts_with(char::is_whitespace) {
+            return Some(rest.trim().to_string());
         }
     }
     None
