@@ -83,6 +83,27 @@ impl SessionArc {
     }
 }
 
+// trace:STORY-156 | ai:claude
+/// One belief-neutral line summarizing the user's OWN most recent recorded
+/// position, used by the graceful conclude path. Purely structural: it echoes
+/// the user's own words (no model, no belief invented, never advocating). When
+/// no position was recorded it returns `None`, so the conclude path can fall
+/// back rather than fabricate a standing the user never took.
+pub fn concluding_standing(arc: &SessionArc) -> Option<String> {
+    arc.turns
+        .iter()
+        .rev()
+        .find(|turn| !turn.position.is_empty())
+        .map(|last| {
+            let asked = first_sentence(&last.question);
+            if asked.is_empty() {
+                last.position.clone()
+            } else {
+                format!("On \"{asked}\": {}", last.position)
+            }
+        })
+}
+
 /// Build the structural [`SessionArc`] from a session JSONL log.
 ///
 /// `branch` filters to a single branch (matching `branch_id`, default `"main"`);
@@ -225,6 +246,17 @@ pub struct Roundedness {
     pub limiting_gap: String,
 }
 
+// trace:STORY-156 | ai:claude
+/// The composite roundedness % at (or above) which a position is "well-rounded":
+/// coherent, consistent, clearly-defined, and having addressed its live
+/// objections. Crossing it is what makes the on-demand synopsis OFFER to
+/// conclude (EPIC-154). Belief-neutral: the threshold reads STRUCTURE only — it
+/// never asserts the belief at the centre is correct, only that the *argument*
+/// is well-formed. Set below 100 so a strong-but-imperfect arc still earns the
+/// offer; the EPIC's 75% worked example sits just under it (shows the gap, no
+/// offer yet).
+pub const WELL_ROUNDED_THRESHOLD: u8 = 80;
+
 impl Roundedness {
     /// The four belief-neutral structural dimensions, lowest-first won't matter
     /// here — order is fixed (consistency, clarity, completeness, coherence) so
@@ -259,6 +291,15 @@ impl Roundedness {
             .min_by_key(|(_, score)| *score)
             .unwrap_or(("consistency", 0))
     }
+
+    // trace:STORY-156 | ai:claude
+    /// True when the composite has crossed the well-rounded threshold — the arc
+    /// is coherent, consistent, clearly-defined, and has addressed its live
+    /// objections, so the synopsis OFFERS to conclude. Belief-neutral: this reads
+    /// STRUCTURE only and never asserts the centred belief is correct.
+    pub fn is_well_rounded(&self) -> bool {
+        self.composite() >= WELL_ROUNDED_THRESHOLD
+    }
 }
 
 /// A belief-neutral, clarify-only synopsis of a whole [`SessionArc`].
@@ -291,6 +332,26 @@ pub struct SessionSynopsis {
     /// True when this synopsis was synthesized structurally (offline / degraded)
     /// rather than by the LLM.
     pub degraded: bool,
+}
+
+impl SessionSynopsis {
+    // trace:STORY-156 | ai:claude
+    /// True when this synopsis crossed the well-rounded threshold and so OFFERS
+    /// to conclude. `false` offline / when no score was produced — there is no
+    /// offer without a real number. The in-session conclude path keys off this
+    /// to prompt the user; below threshold the synopsis just shows the gap.
+    pub fn offers_conclude(&self) -> bool {
+        self.roundedness
+            .as_ref()
+            .map(Roundedness::is_well_rounded)
+            .unwrap_or(false)
+    }
+
+    // trace:STORY-156 | ai:claude
+    /// The composite roundedness %, if scored. Used by the conclude offer line.
+    pub fn composite(&self) -> Option<u8> {
+        self.roundedness.as_ref().map(Roundedness::composite)
+    }
 }
 
 /// System prompt pinning the synopsis to its belief-neutral, clarify-only
@@ -681,11 +742,135 @@ fn render_roundedness(synopsis: &SessionSynopsis, output: &mut impl Write) -> Re
     } else {
         rounded.limiting_gap.trim().to_string()
     };
+    // trace:STORY-156 | ai:claude
+    // At/above the well-rounded threshold the synopsis OFFERS to conclude
+    // (coherent, consistent, addresses the main objections) and lets the user
+    // decide — preserving agency. Below threshold it just names the gap to
+    // close. Belief-neutral throughout: "conclude" summarizes the user's OWN
+    // well-formed position, never advocating a belief.
+    if rounded.is_well_rounded() {
+        writeln!(
+            output,
+            "{}",
+            crate::style::paint(
+                meta,
+                &format!(
+                    "    Your position is ~{}% rounded (coherent, consistent, addresses the main objections).",
+                    rounded.composite()
+                )
+            )
+        )?;
+        writeln!(
+            output,
+            "{}",
+            crate::style::paint(
+                meta,
+                "    Conclude with a summary of where you've landed, or keep probing edge cases?"
+            )
+        )?;
+        // The remaining gap is still worth naming as the natural edge case to
+        // probe if the user keeps going.
+        writeln!(
+            output,
+            "{}",
+            crate::style::paint(meta, &format!("    Edge case to probe: {gap}"))
+        )?;
+    } else {
+        writeln!(
+            output,
+            "{}",
+            crate::style::paint(meta, &format!("    Limiting gap: {gap}"))
+        )?;
+    }
+    Ok(())
+}
+
+// trace:STORY-156 | ai:claude
+/// Render the FINAL belief-neutral conclusion when the user accepts the offer to
+/// conclude. It summarizes the user's OWN well-formed position from the
+/// synopsis + the arc — never advocating a belief, never asserting the position
+/// is correct, only reflecting where the user has landed. Pure over the synopsis
+/// + arc, so it is unit-testable without a live LLM.
+///
+/// `arc` supplies the user's own most-recent recorded standing as a structural
+/// fallback when the LLM synopsis withheld or omitted a standing line.
+pub fn render_conclusion(
+    synopsis: &SessionSynopsis,
+    arc: &SessionArc,
+    output: &mut impl Write,
+) -> Result<()> {
+    let meta = crate::style::meta();
     writeln!(
         output,
-        "{}",
-        crate::style::paint(meta, &format!("    Limiting gap: {gap}"))
+        "\n{}",
+        crate::style::paint(
+            meta,
+            "META (conclusion) — a belief-neutral summary of where YOUR position landed:"
+        )
     )?;
+
+    // Prefer the LLM's standing read; fall back to the user's own recorded
+    // words so a withheld/empty standing never leaves the conclusion blank.
+    let standing = if synopsis.standing.trim().is_empty() {
+        concluding_standing(arc).unwrap_or_default()
+    } else {
+        synopsis.standing.trim().to_string()
+    };
+    if !standing.is_empty() {
+        writeln!(
+            output,
+            "{}",
+            crate::style::paint(meta, &format!("  Where you stand: {standing}"))
+        )?;
+    }
+
+    if !synopsis.positions.is_empty() {
+        writeln!(
+            output,
+            "{}",
+            crate::style::paint(meta, "  The position you built, in your own terms:")
+        )?;
+        for position in &synopsis.positions {
+            writeln!(
+                output,
+                "{}",
+                crate::style::paint(meta, &format!("    - {position}"))
+            )?;
+        }
+    }
+
+    if let Some(composite) = synopsis.composite() {
+        writeln!(
+            output,
+            "{}",
+            crate::style::paint(
+                meta,
+                &format!(
+                    "  Roundedness: ~{composite}% (belief-neutral — this reflects how well-FORMED your case is, not whether it is \"right\")."
+                )
+            )
+        )?;
+    }
+
+    // Open threads remain genuinely open — concluding is not closing them for
+    // the user, just marking a coherent stopping point they can resume from.
+    if !synopsis.open_threads.is_empty() {
+        writeln!(
+            output,
+            "{}",
+            crate::style::paint(
+                meta,
+                "  Still open if you return — concluding does not settle these for you:"
+            )
+        )?;
+        for thread in &synopsis.open_threads {
+            writeln!(
+                output,
+                "{}",
+                crate::style::paint(meta, &format!("    - {thread}"))
+            )?;
+        }
+    }
     Ok(())
 }
 
@@ -1333,6 +1518,165 @@ mod tests {
         let rendered = String::from_utf8(out).expect("utf8");
         // definitional clarity (50) is weakest, so the gap line names it.
         assert!(rendered.contains("Limiting gap: the definitional clarity dimension"));
+    }
+
+    // ---- STORY-156: offer-to-conclude at the well-rounded threshold ---------
+
+    #[test]
+    fn well_rounded_threshold_gates_the_offer() {
+        // trace:STORY-156 | ai:claude
+        // At/above the threshold the synopsis offers to conclude; below it does
+        // not. The boundary is inclusive.
+        let at = MockClient::ok(&synopsis_body(
+            "s",
+            WELL_ROUNDED_THRESHOLD,
+            WELL_ROUNDED_THRESHOLD,
+            WELL_ROUNDED_THRESHOLD,
+            WELL_ROUNDED_THRESHOLD,
+            "edge cases",
+        ));
+        let synopsis = synopsize(&at, &arc(None));
+        assert!(synopsis.offers_conclude(), "at threshold must offer");
+        assert_eq!(synopsis.composite(), Some(WELL_ROUNDED_THRESHOLD));
+
+        let below = WELL_ROUNDED_THRESHOLD - 5;
+        let under = MockClient::ok(&synopsis_body("s", below, below, below, below, "the gap"));
+        let synopsis = synopsize(&under, &arc(None));
+        assert!(
+            !synopsis.offers_conclude(),
+            "below threshold must not offer"
+        );
+    }
+
+    #[test]
+    fn render_offers_conclude_at_or_above_threshold() {
+        // trace:STORY-156 | ai:claude
+        let client = MockClient::ok(&synopsis_body(
+            "free will is real",
+            95,
+            90,
+            85,
+            90,
+            "edge cases on coercion",
+        ));
+        let synopsis = synopsize(&client, &arc(None));
+        let mut out = Vec::new();
+        render_synopsis(&synopsis, &mut out).expect("render");
+        let rendered = String::from_utf8(out).expect("utf8");
+        // The OFFER line surfaces with the composite %, framed as a choice.
+        assert!(rendered.contains("% rounded"));
+        assert!(rendered.contains("Conclude with a summary"));
+        assert!(rendered.contains("keep probing edge cases"));
+        // Below-threshold "Limiting gap:" framing is NOT used when offering.
+        assert!(!rendered.contains("Limiting gap:"));
+        // Belief-neutral: never advocates a side.
+        assert!(!rendered.to_lowercase().contains("you should believe"));
+    }
+
+    #[test]
+    fn render_shows_gap_not_offer_below_threshold() {
+        // trace:STORY-156 | ai:claude
+        let client = MockClient::ok(&synopsis_body(
+            "determinism is true",
+            70,
+            70,
+            50,
+            70,
+            "address responsibility",
+        ));
+        let synopsis = synopsize(&client, &arc(None));
+        assert!(!synopsis.offers_conclude());
+        let mut out = Vec::new();
+        render_synopsis(&synopsis, &mut out).expect("render");
+        let rendered = String::from_utf8(out).expect("utf8");
+        assert!(rendered.contains("Limiting gap: address responsibility"));
+        assert!(!rendered.contains("Conclude with a summary"));
+    }
+
+    #[test]
+    fn offline_synopsis_never_offers_to_conclude() {
+        // trace:STORY-156 | ai:claude — no score offline, so no offer is ever made.
+        let synopsis = structural_synopsis(&arc(None));
+        assert!(synopsis.degraded);
+        assert!(!synopsis.offers_conclude());
+        assert_eq!(synopsis.composite(), None);
+    }
+
+    #[test]
+    fn opposite_well_formed_positions_both_offer_conclude() {
+        // trace:STORY-156 | ai:claude — belief-neutral: two OPPOSITE positions
+        // with identical structure both cross the threshold and both offer.
+        let pro = MockClient::ok(&synopsis_body("free will is real", 90, 90, 90, 90, "g"));
+        let con = MockClient::ok(&synopsis_body(
+            "free will is an illusion",
+            90,
+            90,
+            90,
+            90,
+            "g",
+        ));
+        assert!(synopsize(&pro, &arc(None)).offers_conclude());
+        assert!(synopsize(&con, &arc(None)).offers_conclude());
+    }
+
+    #[test]
+    fn conclusion_summarizes_the_users_own_position_belief_neutrally() {
+        // trace:STORY-156 | ai:claude
+        let client = MockClient::ok(&synopsis_body(
+            "a coherent compatibilist standing",
+            90,
+            90,
+            90,
+            90,
+            "g",
+        ));
+        let arc = arc(None);
+        let synopsis = synopsize(&client, &arc);
+        let mut out = Vec::new();
+        render_conclusion(&synopsis, &arc, &mut out).expect("render");
+        let rendered = String::from_utf8(out).expect("utf8");
+        assert!(rendered.contains("META (conclusion)"));
+        // Summarizes the user's OWN standing + roundedness, framed as well-FORMED
+        // (structure), never as correct.
+        assert!(rendered.contains("Where you stand: a coherent compatibilist standing"));
+        assert!(rendered.contains("Roundedness: ~90%"));
+        assert!(rendered.contains("well-FORMED"));
+        // Belief-neutral: never advocates which belief is right.
+        let lc = rendered.to_lowercase();
+        assert!(!lc.contains("you should believe"));
+        assert!(!lc.contains("is correct"));
+        assert!(!lc.contains("the right answer"));
+    }
+
+    #[test]
+    fn conclusion_falls_back_to_the_users_own_recorded_standing() {
+        // trace:STORY-156 | ai:claude — when the LLM withheld/omitted a standing,
+        // the conclusion uses the user's OWN most-recent recorded words from the
+        // arc rather than leaving the summary blank or inventing one.
+        let arc = arc(None);
+        let synopsis = SessionSynopsis {
+            positions: Vec::new(),
+            evolution: String::new(),
+            consistency: String::new(),
+            standing: String::new(),
+            open_threads: Vec::new(),
+            engagement: String::new(),
+            roundedness: Some(Roundedness {
+                consistency: 90,
+                definitional_clarity: 90,
+                completeness: 90,
+                coherence: 90,
+                limiting_gap: String::new(),
+            }),
+            degraded: false,
+        };
+        let mut out = Vec::new();
+        render_conclusion(&synopsis, &arc, &mut out).expect("render");
+        let rendered = String::from_utf8(out).expect("utf8");
+        // The SAMPLE_LOG's last position (turn 3, branch agree) is "yes"; the
+        // fallback echoes the user's own recorded standing.
+        let expected = concluding_standing(&arc).expect("a recorded standing");
+        assert!(rendered.contains(&expected));
     }
 
     /// Write `contents` to a unique temp file and return its path.

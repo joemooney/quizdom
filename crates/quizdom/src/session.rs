@@ -667,7 +667,7 @@ fn render_session_synopsis(
     log_path: &Path,
     branch: Option<&str>,
     output: &mut impl Write,
-) -> Result<()> {
+) -> Result<Option<(SessionSynopsis, SessionArc)>> {
     let arc = match File::open(log_path) {
         Ok(file) => arc_from_session_log(file, branch).unwrap_or_default(),
         Err(_) => SessionArc::default(),
@@ -681,13 +681,42 @@ fn render_session_synopsis(
                 "\nMETA (synopsis) — nothing recorded yet to summarize."
             )
         )?;
-        return Ok(());
+        return Ok(None);
     }
     let synopsis = {
         let _spinner = crate::spinner::Spinner::start("synopsizing");
         observer.synopsize(&arc)
     };
-    render_synopsis(&synopsis, output)
+    render_synopsis(&synopsis, output)?;
+    // trace:STORY-156 | ai:claude — hand the synopsis + arc back so the caller
+    // can offer the conclude path when the score crossed the well-rounded
+    // threshold. Callers that don't conclude (the dead-end menu, the review
+    // pane) simply ignore the return.
+    Ok(Some((synopsis, arc)))
+}
+
+// trace:STORY-156 | ai:claude
+/// Prompt the user to accept the offer to conclude (printed by the synopsis when
+/// the position crossed the well-rounded threshold). Returns `true` to conclude,
+/// `false` to keep exploring.
+///
+/// Agency is preserved: the DEFAULT is to keep exploring. Only an explicit
+/// affirmative (`c`/`conclude`/`y`/`yes`) concludes; anything else — including a
+/// blank line, `keep`, or `no` — keeps probing. Degrades gracefully on a
+/// non-TTY / EOF prompt (no answer): treated as "keep exploring", so a piped or
+/// offline run never gets stuck or auto-concludes against the user's wishes.
+fn prompt_to_conclude(
+    input: &mut impl BufRead,
+    free_text_input: &mut FreeTextInput,
+    output: &mut impl Write,
+) -> Result<bool> {
+    let prompt = "Conclude with a summary? [c]onclude / [k]eep exploring (default keep): ";
+    let choice = match free_text_input.read_line(input, output, prompt)? {
+        Some(line) => line.trim().to_ascii_lowercase(),
+        // EOF / non-TTY: do not conclude on the user's behalf.
+        None => return Ok(false),
+    };
+    Ok(matches!(choice.as_str(), "c" | "conclude" | "y" | "yes"))
 }
 
 // trace:STORY-127 | ai:claude
@@ -956,6 +985,10 @@ fn run_session_from_current(
     // a resume command for a log we are about to delete would be a lie. We print
     // the id + resume footer once we know the session survives.
     let mut ended_at_frontier = false;
+    // trace:STORY-156 | ai:claude — set when the user accepted the offer to
+    // conclude at the well-rounded threshold, so the end footer can preface the
+    // resume line with a graceful convergence note (vs a plain quit).
+    let mut concluded = false;
 
     if write_start_event {
         logger.session_started(
@@ -1093,12 +1126,37 @@ fn run_session_from_current(
                         // log so far as a belief-neutral META voice, then
                         // re-present the SAME question (like Observe). Nothing is
                         // logged or mutated.
-                        render_session_synopsis(
+                        let rendered = render_session_synopsis(
                             &observer,
                             &config.log_path,
                             Some(&config.branch_id),
                             output,
                         )?;
+                        // trace:STORY-156 | ai:claude
+                        // CONVERGENCE terminal: when the synopsis crossed the
+                        // well-rounded threshold it OFFERED to conclude. Prompt
+                        // the user (agency preserved). Accepting prints a final
+                        // belief-neutral summary of their OWN position and ends
+                        // the session gracefully with the resume footer; declining
+                        // (or any non-conclude path / offline) just re-presents the
+                        // SAME question and keeps exploring.
+                        if let Some((synopsis, arc)) = rendered {
+                            if synopsis.offers_conclude()
+                                && prompt_to_conclude(&mut input, &mut free_text_input, output)?
+                            {
+                                crate::synopsis::render_conclusion(&synopsis, &arc, output)?;
+                                ended_at_frontier = true;
+                                concluded = true;
+                                logger.session_ended(
+                                    &config.session_id,
+                                    &config.user_id,
+                                    &config.branch_id,
+                                    answered_turn,
+                                    "User concluded at the well-rounded threshold.",
+                                )?;
+                                break;
+                            }
+                        }
                         continue;
                     }
                     AnswerInput::Forward => continue,
@@ -1380,7 +1438,16 @@ fn run_session_from_current(
         if discarded {
             writeln!(output, "Session ended.")?;
         } else {
-            render_session_end(None, &config.session_id, output)?;
+            // trace:STORY-156 | ai:claude — a concluded session reached a GOOD
+            // (convergence) terminal, so preface the resume footer with a
+            // belief-neutral note rather than ending silently. Resume still works
+            // — concluding marks a coherent stopping point, not a closed door.
+            let preface = if concluded {
+                Some("Concluded — your position is well-rounded. You can still resume to probe edge cases.")
+            } else {
+                None
+            };
+            render_session_end(preface, &config.session_id, output)?;
         }
     }
 
@@ -1666,7 +1733,13 @@ fn dead_end_menu(
                     output,
                 )?;
             }
-            Some('s') => render_session_synopsis(observer, log_path, Some(branch), output)?,
+            Some('s') => {
+                // trace:STORY-156 | ai:claude — the dead-end menu surfaces the
+                // synopsis (with its conclude OFFER line when well-rounded) but
+                // stays in the menu; the graceful conclude path lives at the
+                // frontier handler, so the return is intentionally ignored here.
+                render_session_synopsis(observer, log_path, Some(branch), output)?;
+            }
             Some('q') => return Ok(DeadEndOutcome::Quit),
             _ => writeln!(output, "Pick one of G, P, A, S, or Q.")?,
         }
@@ -2578,4 +2651,44 @@ fn next_event_number(path: &Path) -> Result<u64> {
         })
         .count();
     Ok(count as u64 + 1)
+}
+
+// trace:STORY-156 | ai:claude
+#[cfg(test)]
+mod conclude_tests {
+    use super::*;
+
+    fn ask(line: &str) -> bool {
+        let mut input = std::io::Cursor::new(format!("{line}\n"));
+        let mut free_text = FreeTextInput::Plain;
+        let mut out = Vec::new();
+        prompt_to_conclude(&mut input, &mut free_text, &mut out).expect("prompt")
+    }
+
+    #[test]
+    fn affirmative_answers_conclude() {
+        // Only an explicit affirmative concludes — the offer is honoured.
+        for yes in ["c", "conclude", "y", "yes", "Conclude", "YES"] {
+            assert!(ask(yes), "{yes:?} should conclude");
+        }
+    }
+
+    #[test]
+    fn anything_else_keeps_exploring() {
+        // Agency: the default is to keep exploring. A blank line, "keep", "no",
+        // or noise must NOT auto-conclude against the user's wishes.
+        for keep in ["", "k", "keep", "n", "no", "edge cases", "probe"] {
+            assert!(!ask(keep), "{keep:?} should keep exploring");
+        }
+    }
+
+    #[test]
+    fn eof_offline_does_not_conclude() {
+        // Non-TTY / piped / EOF: degrade gracefully — never conclude on the
+        // user's behalf when there is no answer to read.
+        let mut input = std::io::Cursor::new(Vec::new());
+        let mut free_text = FreeTextInput::Plain;
+        let mut out = Vec::new();
+        assert!(!prompt_to_conclude(&mut input, &mut free_text, &mut out).expect("prompt"));
+    }
 }
