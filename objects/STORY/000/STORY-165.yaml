@@ -1,0 +1,18 @@
+id: 019e9fe8-c9e0-78a3-b6d3-2d52b5345f15
+spec_id: STORY-165
+agreed_id: STORY-165
+title: '/tutor: articulation & nuance coach (content-aware; never supplies the belief)'
+description: 'A more ACTIVE teaching aid than /observe: helps the user ARTICULATE the point they''re reaching for and surfaces the NUANCE they may be MISSING. Reflects their own half-formed view back more precisely (''you seem to be getting at X — is that it?''), teaches the relevant distinction, and names what they haven''t addressed — WITHOUT telling them what to believe (asks ''is this what you mean?'', never supplies the belief or takes a side). Distinct from /observe (neutral diagnostic) and /help (process). LLM-backed (observer-engine variant); non-destructive; offline degrades. Lane: observer.rs (tutor variant) + the command wiring. ## Acceptance: ''/tutor'' reflects+sharpens the user''s OWN point and surfaces the missing nuance without supplying a belief or taking a side; non-destructive (returns to the question); mocked-LLM tests cover the articulation/nuance output + the no-belief-supplied guarantee.'
+status: Approved
+priority: High
+owner: ''
+feature: Uncategorized
+created_at: 2026-06-07T02:28:13.920319979Z
+modified_at: 2026-06-07T02:28:13.920319979Z
+req_type: Story
+tags:
+- articulation
+- coach
+- llm
+- story
+- tutor
