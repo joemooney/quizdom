@@ -25,7 +25,7 @@ priority: High
 owner: ''
 feature: Uncategorized
 created_at: 2026-06-07T15:09:09.292766841Z
-modified_at: 2026-06-07T15:09:56.040544366Z
+modified_at: 2026-06-07T15:11:06.298912828Z
 req_type: Story
 tags:
 - editor
@@ -41,3 +41,9 @@ relationships:
   target_id: 019e7fa0-6020-72b3-972a-9892567fd71a
   created_at: 2026-06-07T15:09:56.040537087Z
   created_by: joe
+comments:
+- id: 019ea2a3-383a-7393-95c9-c6ed0e0da730
+  author: joe
+  content: 'DECIDED (user): (1) editing model = FOLLOW $EDITOR — infer at startup: $EDITOR/$VISUAL matching vi/vim/nvim -> Vim modal (wire tui-textarea''s vim layer); otherwise Emacs/readline default. Mirrors STORY-51''s selection logic (reuse it if present). (2) INCLUDE the open-in-$EDITOR escape on Ctrl-X Ctrl-E: suspend the TUI (TerminalGuard leave/restore), edit the buffer in $VISUAL/$EDITOR via a tempfile, read back on save. Belt-and-suspenders capability: in-pane modal/readline editing for quick edits + the real editor for long-form.'
+  created_at: 2026-06-07T15:11:06.298912828Z
+  modified_at: 2026-06-07T15:11:06.298912828Z
