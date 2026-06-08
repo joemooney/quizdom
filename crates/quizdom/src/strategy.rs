@@ -542,6 +542,123 @@ fn triggering_answer(current: &Question, context: &StrategyContext) -> Option<St
     }
 }
 
+// trace:STORY-195 | ai:claude
+/// How many of the most-recent answered turns are rendered VERBATIM in the
+/// next-question prompt (zone 1). Everything older is compressed into the
+/// id-anchored standing-commitments ledger (zone 2). Tunable in one place: a
+/// larger window trades cost for recency fidelity. Chosen ~10 (SPIKE-189).
+const BOUNDED_RECENT_WINDOW: usize = 10;
+
+// trace:STORY-195 | ai:claude
+/// Render the `recent_path` for the interrogator prompt with BOUNDED context so
+/// per-turn cost grows ~linearly instead of O(turns^2) (SPIKE-189). This is a
+/// pure PRESENTATION-LAYER transform at the prompt boundary — it does NOT touch
+/// `StrategyContext`, the log, resume/replay, or the synopsis path.
+///
+/// Two zones:
+/// - Zone 1 (Recent exchange, VERBATIM): the last `window` turns of the path,
+///   rendered byte-for-byte as the legacy `- ref: text => answer` line.
+/// - Zone 2 (Standing commitments LEDGER): everything OLDER than the window,
+///   one ID-anchored line per kept position — `ref: <first sentence> => answer`
+///   — so the Socratic through-line can still cite early commitments by id.
+///   Empty-answer / navigation-only turns are dropped; near-identical positions
+///   are de-duplicated keeping the FIRST occurrence (its original introducing
+///   id is the cited handle). The `question_ref` is NEVER paraphrased or
+///   dropped — it is the load-bearing citation handle.
+///
+/// BYTE-IDENTICAL invariant: when `recent_path.len() <= window` the output is
+/// exactly the legacy verbatim loop (no zone headers), so short sessions render
+/// indistinguishably from before this change.
+fn bounded_path_view(recent_path: &[AnsweredQuestion], window: usize) -> String {
+    // Short session: emit the legacy verbatim body unchanged (byte-identical).
+    if recent_path.len() <= window {
+        let mut body = String::new();
+        for item in recent_path {
+            push_verbatim_turn(&mut body, item);
+        }
+        return body;
+    }
+
+    let split = recent_path.len() - window;
+    let (older, recent) = recent_path.split_at(split);
+
+    let mut body = String::new();
+
+    // Zone 2: standing-commitments ledger (older positions, cite by id).
+    let ledger = build_commitment_ledger(older);
+    if !ledger.is_empty() {
+        body.push_str("Standing commitments (earlier positions, cite by id):\n");
+        for item in &ledger {
+            body.push_str(&format!(
+                "- {}: {} => {}\n",
+                item.question_ref,
+                first_sentence(&item.question_text),
+                item.raw_answer
+            ));
+        }
+        body.push('\n');
+    }
+
+    // Zone 1: recent exchange, rendered VERBATIM exactly as the legacy loop.
+    body.push_str("Recent exchange (verbatim):\n");
+    for item in recent {
+        push_verbatim_turn(&mut body, item);
+    }
+
+    body
+}
+
+// trace:STORY-195 | ai:claude
+/// The legacy verbatim turn line — kept in one place so zone 1 and the
+/// short-session path render byte-identically.
+fn push_verbatim_turn(body: &mut String, item: &AnsweredQuestion) {
+    body.push_str(&format!(
+        "- {}: {} => {}\n",
+        item.question_ref, item.question_text, item.raw_answer
+    ));
+}
+
+// trace:STORY-195 | ai:claude
+/// Build the id-anchored ledger from the OLDER (pre-window) turns: drop
+/// empty-answer / navigation-only turns, then de-duplicate near-identical
+/// positions keeping the FIRST occurrence (so the original introducing id is
+/// the one cited). Order is preserved (oldest first).
+fn build_commitment_ledger(older: &[AnsweredQuestion]) -> Vec<AnsweredQuestion> {
+    let mut seen: Vec<String> = Vec::new();
+    let mut kept: Vec<AnsweredQuestion> = Vec::new();
+    for item in older {
+        // Drop empty-answer / navigation-only turns — they carry no committed
+        // position to cite.
+        if item.raw_answer.trim().is_empty() {
+            continue;
+        }
+        // De-dup near-identical positions, keeping the FIRST occurrence (and
+        // therefore its original introducing question_ref).
+        let key = normalize_question_title(&item.question_text);
+        if seen.contains(&key) {
+            continue;
+        }
+        seen.push(key);
+        kept.push(item.clone());
+    }
+    kept
+}
+
+// trace:STORY-195 | ai:claude
+/// First sentence of a question, for the compact ledger line. Splits on the
+/// first sentence terminator (`.`, `?`, `!`) and keeps it; if there is none the
+/// whole (trimmed) text is used. The `question_ref` is rendered separately and
+/// is NEVER touched here.
+fn first_sentence(text: &str) -> String {
+    let trimmed = text.trim();
+    for (idx, ch) in trimmed.char_indices() {
+        if matches!(ch, '.' | '?' | '!') {
+            return trimmed[..=idx].to_string();
+        }
+    }
+    trimmed.to_string()
+}
+
 fn strategy_prompt(
     current: &Question,
     context: &StrategyContext,
@@ -597,12 +714,14 @@ fn strategy_prompt(
         raw = context.answer.raw,
         normalized = context.answer.normalized,
     ));
-    for item in &context.recent_path {
-        prompt.push_str(&format!(
-            "- {}: {} => {}\n",
-            item.question_ref, item.question_text, item.raw_answer
-        ));
-    }
+    // trace:STORY-195 | ai:claude — bound the per-turn context (SPIKE-189): a
+    // verbatim recent window + an id-anchored standing-commitments ledger for
+    // older positions, so cost grows ~linearly. Short sessions (path len <=
+    // window) render BYTE-IDENTICAL to the legacy verbatim loop.
+    prompt.push_str(&bounded_path_view(
+        &context.recent_path,
+        BOUNDED_RECENT_WINDOW,
+    ));
     prompt.push_str("\nCandidate bank questions:\n");
     if candidates.is_empty() {
         prompt.push_str("(none)\n");
@@ -1282,7 +1401,10 @@ mod weighted_index_tests {
 // trace:STORY-159 | ai:claude
 #[cfg(test)]
 mod goal_orientation_tests {
-    use super::{strategy_prompt, AnsweredQuestion, SessionMode, StrategyContext};
+    use super::{
+        first_sentence, strategy_prompt, AnsweredQuestion, SessionMode, StrategyContext,
+        BOUNDED_RECENT_WINDOW,
+    };
     use crate::model::{Answer, AnswerKind, Question};
 
     fn question() -> Question {
@@ -1420,6 +1542,254 @@ mod goal_orientation_tests {
         assert!(prompt.contains("DEBATE MODE"));
         assert!(prompt.contains(goal));
         assert!(prompt.contains("Orient the next question toward resolving this goal"));
+    }
+
+    // ===== STORY-195: bounded prompt context =====================================
+    // trace:STORY-195 | ai:claude
+
+    /// A synthetic answered turn with an explicit id. The question text carries a
+    /// terminator so the ledger's first-sentence rendering has something to cut.
+    fn turn(n: usize) -> AnsweredQuestion {
+        // Realistic shape: a short FIRST sentence (what the ledger keeps) followed
+        // by a long elaboration (what verbatim rendering pays for every turn). The
+        // gap between the two is what makes the bounded view ~linear.
+        AnsweredQuestion {
+            question_ref: format!("Q-{n}"),
+            question_text: format!(
+                "Position {n}? But consider whether this commitment survives the \
+                 prior objections, the symmetry argument, and the consequence \
+                 argument that the earlier turns raised against it at length."
+            ),
+            raw_answer: format!("answer {n}"),
+            normalized_answer: format!("answer {n}"),
+        }
+    }
+
+    /// Build a synthetic recent_path of `t` turns (ids Q-1..=Q-t).
+    fn synthetic_path(t: usize) -> Vec<AnsweredQuestion> {
+        (1..=t).map(turn).collect()
+    }
+
+    /// Slice the prompt's path section: everything between "Recent path:\n" and
+    /// the trailing "\nCandidate bank questions:\n".
+    fn path_section(prompt: &str) -> &str {
+        let start = prompt.find("Recent path:\n").expect("path header") + "Recent path:\n".len();
+        let end = prompt
+            .find("\nCandidate bank questions:\n")
+            .expect("candidate header");
+        &prompt[start..end]
+    }
+
+    fn context_with_path(path: Vec<AnsweredQuestion>) -> StrategyContext {
+        StrategyContext {
+            recent_path: path,
+            ..context(None)
+        }
+    }
+
+    #[test]
+    fn short_session_path_is_byte_identical_to_legacy() {
+        // BYTE-IDENTICAL invariant: at or below the window, the path section is
+        // exactly the legacy verbatim loop — no zone headers, no ledger.
+        for t in [0usize, 1, 5, BOUNDED_RECENT_WINDOW] {
+            let path = synthetic_path(t);
+            let mut legacy = String::new();
+            for item in &path {
+                legacy.push_str(&format!(
+                    "- {}: {} => {}\n",
+                    item.question_ref, item.question_text, item.raw_answer
+                ));
+            }
+            let prompt = strategy_prompt(&question(), &context_with_path(path), &[]);
+            assert_eq!(
+                path_section(&prompt),
+                legacy,
+                "path len {t} must render byte-identically to the legacy loop"
+            );
+            // No zone headers leak in at/under the window.
+            assert!(!prompt.contains("Standing commitments"));
+            assert!(!prompt.contains("Recent exchange (verbatim):"));
+        }
+    }
+
+    #[test]
+    fn window_zone_is_exactly_min_t_window_lines_and_grows_linearly() {
+        // Linear-growth: the verbatim window is exactly min(T, window) lines and
+        // the ledger is one short line per older retained position, so the path
+        // section grows ~linearly (not quadratically). For T=150 the char count
+        // sits under an explicit ceiling far below T*avg_full_line.
+        let window = BOUNDED_RECENT_WINDOW;
+        let mut prev_chars = 0usize;
+        for t in [5usize, 20, 80, 150] {
+            let prompt = strategy_prompt(&question(), &context_with_path(synthetic_path(t)), &[]);
+            let section = path_section(&prompt);
+
+            // Verbatim window: exactly min(T, window) "Recent exchange" lines.
+            let expected_window = t.min(window);
+            if t <= window {
+                // Short session: no zones, all verbatim.
+                let verbatim_lines = section.lines().filter(|l| l.starts_with("- ")).count();
+                assert_eq!(verbatim_lines, expected_window);
+            } else {
+                let recent_marker = "Recent exchange (verbatim):\n";
+                let recent_at = section.find(recent_marker).expect("recent zone");
+                let recent_block = &section[recent_at + recent_marker.len()..];
+                let window_lines = recent_block.lines().filter(|l| l.starts_with("- ")).count();
+                assert_eq!(
+                    window_lines, window,
+                    "T={t}: window zone must be exactly {window} verbatim lines"
+                );
+                // Ledger: one line per older retained position = T - window.
+                let ledger_block = &section[..recent_at];
+                let ledger_lines = ledger_block.lines().filter(|l| l.starts_with("- ")).count();
+                assert_eq!(
+                    ledger_lines,
+                    t - window,
+                    "T={t}: ledger must hold one line per older position"
+                );
+            }
+
+            // Char count is monotonic and ~linear in T.
+            let chars = section.chars().count();
+            assert!(chars >= prev_chars, "section must not shrink as T grows");
+            prev_chars = chars;
+        }
+
+        // Explicit ceiling for T=150: a full verbatim render would be ~150 lines
+        // of the long legacy form; the bounded section stays far under it.
+        let prompt = strategy_prompt(&question(), &context_with_path(synthetic_path(150)), &[]);
+        let bounded_chars = path_section(&prompt).chars().count();
+
+        let mut full = String::new();
+        for item in &synthetic_path(150) {
+            full.push_str(&format!(
+                "- {}: {} => {}\n",
+                item.question_ref, item.question_text, item.raw_answer
+            ));
+        }
+        let full_chars = full.chars().count();
+
+        const T150_CEILING: usize = 9_000;
+        assert!(
+            bounded_chars < T150_CEILING,
+            "T=150 bounded section ({bounded_chars} chars) must be under the {T150_CEILING} ceiling (full history = {full_chars} chars)"
+        );
+        assert!(
+            bounded_chars * 2 < full_chars,
+            "bounded ({bounded_chars}) must be far under full history ({full_chars})"
+        );
+    }
+
+    #[test]
+    fn early_commitments_outside_the_window_survive_by_id() {
+        // Citation preservation: Q-46 and Q-74 sit OUTSIDE the verbatim window in
+        // a 150-turn path, yet the rendered prompt still contains both ids with
+        // their answers, and no retained id is altered/paraphrased (ledger lines
+        // start with the verbatim question_ref).
+        let prompt = strategy_prompt(&question(), &context_with_path(synthetic_path(150)), &[]);
+        let section = path_section(&prompt);
+
+        for id in ["Q-46", "Q-74"] {
+            assert!(section.contains(id), "{id} must survive in the ledger");
+        }
+        // Each ledger line starts with the verbatim ref and carries the answer.
+        assert!(section.contains("- Q-46: "));
+        assert!(section.contains("=> answer 46"));
+        assert!(section.contains("- Q-74: "));
+        assert!(section.contains("=> answer 74"));
+        // The ledger uses the FIRST SENTENCE only (terminator kept, elaboration
+        // dropped) — id preserved verbatim, answer preserved. Check the ledger
+        // block specifically (the verbatim window legitimately keeps elaborations).
+        let recent_at = section
+            .find("Recent exchange (verbatim):")
+            .expect("recent zone");
+        let ledger_block = &section[..recent_at];
+        assert!(ledger_block.contains("- Q-46: Position 46? => answer 46"));
+        assert!(
+            !ledger_block.contains("consequence argument that the earlier turns raised against it"),
+            "ledger must compress older positions to the first sentence"
+        );
+    }
+
+    #[test]
+    fn preamble_still_present_regardless_of_elision() {
+        // Goal / open objection / mode preamble survive even on a long, elided
+        // path (extends STORY-159/161/175 prompt tests).
+        let goal = "can libertarian free will be held consistently?";
+        let mut ctx = StrategyContext {
+            mode: SessionMode::Debate,
+            ..context_with_path(synthetic_path(150))
+        };
+        ctx.goal = Some(goal.to_string());
+        ctx.objection = Some("you never defined 'free'".to_string());
+
+        let prompt = strategy_prompt(&question(), &ctx, &[]);
+        assert!(prompt.contains("DEBATE MODE"));
+        assert!(prompt.contains("OPEN OBJECTION"));
+        assert!(prompt.contains(goal));
+        assert!(prompt.contains("Orient the next question toward resolving this goal"));
+        // And the bounded zones are present too.
+        assert!(prompt.contains("Standing commitments (earlier positions, cite by id):"));
+        assert!(prompt.contains("Recent exchange (verbatim):"));
+    }
+
+    #[test]
+    fn ledger_drops_empty_answers_and_dedups_keeping_first_id() {
+        // De-dup/empty: a repeated near-identical position keeps only the FIRST
+        // (its original id), and empty-answer turns never reach the ledger.
+        let window = BOUNDED_RECENT_WINDOW;
+        let older: Vec<AnsweredQuestion> = vec![
+            // A committed position introduced by Q-5.
+            AnsweredQuestion {
+                question_ref: "Q-5".to_string(),
+                question_text: "Do we have free will?".to_string(),
+                raw_answer: "yes".to_string(),
+                normalized_answer: "yes".to_string(),
+            },
+            // A near-identical restatement later under a different id — must be dropped.
+            AnsweredQuestion {
+                question_ref: "Q-9".to_string(),
+                question_text: "  Do we have free will  ".to_string(),
+                raw_answer: "still yes".to_string(),
+                normalized_answer: "still yes".to_string(),
+            },
+            // An empty-answer / navigation-only turn — must be dropped.
+            AnsweredQuestion {
+                question_ref: "Q-7".to_string(),
+                question_text: "Skipped via nav?".to_string(),
+                raw_answer: "   ".to_string(),
+                normalized_answer: String::new(),
+            },
+        ];
+
+        // Pad with enough verbatim-window turns so the above are all "older".
+        let mut path = older.clone();
+        for n in 100..(100 + window) {
+            path.push(turn(n));
+        }
+
+        let prompt = strategy_prompt(&question(), &context_with_path(path), &[]);
+        let section = path_section(&prompt);
+
+        // First occurrence's id survives; the duplicate's id and the empty turn
+        // never appear in the ledger.
+        assert!(section.contains("- Q-5: Do we have free will? => yes"));
+        assert!(
+            !section.contains("Q-9"),
+            "near-identical dup must be dropped"
+        );
+        assert!(
+            !section.contains("Q-7"),
+            "empty-answer turn must be dropped"
+        );
+    }
+
+    #[test]
+    fn first_sentence_keeps_terminator_and_falls_back_to_whole_text() {
+        assert_eq!(first_sentence("One. Two."), "One.");
+        assert_eq!(first_sentence("Just a question?"), "Just a question?");
+        assert_eq!(first_sentence("No terminator here"), "No terminator here");
+        assert_eq!(first_sentence("  trim me!  and drop"), "trim me!");
     }
 }
 
