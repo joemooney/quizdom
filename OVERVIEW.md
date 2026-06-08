@@ -54,16 +54,26 @@ Decided early:
   the AIDA git-canonical store, dogfooding it as a general substrate (VIS-2).
   Where AIDA can't express what quizdom needs, file an AIDA finding rather than
   working around it.
-- **Interface → CLI/TUI first (ADR-4).** Terminal, Claude-Code-style prompt.
-  Web deferred to the multi-user era; the session/graph core stays
-  interface-agnostic.
+- **Interface → CLI/TUI first (ADR-4).** A full-screen **ratatui + crossterm**
+  TUI is now the default for interactive sessions (EPIC-167); a headless line
+  front-end behind the same engine seam serves non-TTY / scripted / piped paths
+  and the standalone commands. Web deferred to the multi-user era; the
+  session/graph core stays interface-agnostic.
+- **One turn-envelope LLM call per turn (ADR-187).** The interrogator's
+  next-question call returns a structured envelope — `{ next_question,
+  objection?, goal_offer? }` — so the objection / goal-offer decisions are a
+  near-free byproduct of a call we already make, instead of separate
+  full-history probes every turn (a cost fix).
 
 Still open:
 
-- **LLM integration.** Which model / API drives answer analysis and question
-  generation (Claude API is the natural default on this machine).
-- **Graph model specifics.** Exact node and edge types (question, belief,
-  definition; begets, contradicts, refines, agrees/disagrees) — owned by EPIC-5.
+- **LLM integration.** Settled in EPIC-7: a provider-agnostic `llm` crate with a
+  `ClaudeCliClient` default (runs on the Max plan via `claude -p`, ADR-39) and an
+  opt-in `AnthropicClient`. Tracked-separately: the deeper O(turns²) full-history
+  re-send growth (a finding noted in ADR-187).
+- **Graph model specifics.** Settled in EPIC-5: question / belief / definition
+  nodes joined by `begets` / `contradicts` / `refines` / `agrees` / `disagrees`
+  custom edges (`docs/architecture/graph-schema.md`).
 
 ## Non-goals (v1)
 
@@ -120,10 +130,44 @@ decision`); progress in the EPIC tree (`aida list --type epic`).
 - **EPIC-162 (TUI overlays) — complete.** A `/` slash-command palette (menu +
   descriptions + `?`-help, crossterm), plus `/help` (how the tool works) and
   `/tutor` (helps you articulate your point + the nuance you're missing).
+- **EPIC-167 (full ratatui TUI front-end) — landed.** The interactive front-end
+  is now a real full-screen TUI, built on a front-end seam that keeps the session
+  engine front-end-agnostic (STORY-168): a headless line front-end preserves
+  every existing test / non-TTY / scripted path, while a ratatui front-end is the
+  default for an interactive TTY. What landed across STORY-168..194:
+  - **Shell + palette** (STORY-169): alternate screen, layout, event loop, and a
+    live `/` palette that opens on the keystroke and redraws in place (replacing
+    the EPIC-162 Enter-to-open overlay) — with filter modes (leading-`/` =
+    command-name prefix vs. substring search, STORY-177) and context-aware greying
+    of inapplicable commands (STORY-190).
+  - **Theme** (STORY-171, BUG-172): colored borders, gold cursor, per-role colors,
+    symmetric quote-attribution.
+  - **Keyboard + discoverability** (STORY-176): navigation keys and a cheat-sheet
+    driven from one keymap registry; F1 help alias (STORY-194).
+  - **Markdown rendering** (STORY-179, BUG-178): inline + block markdown in the
+    transcript with an always-on quote-yellow color.
+  - **Free-text editor** (STORY-180, BUG-183/184): a capable answer editor —
+    readline/Emacs + optional Vim via `tui-textarea`, open-in-`$EDITOR` escape,
+    soft-wrap + dynamic vertical grow, and a post-submit "thinking" state.
+  - **Focus + transcript** (STORY-193, STORY-191): Tab focus model, scrollbar,
+    mouse support, and a full styled scrollable transcript that hydrates prior
+    history on resume.
+  - **Settings** (STORY-194): a `/settings` panel + runtime `/editor` toggle
+    (vim/emacs/auto), persisted to config.
+  - Session-mechanic stories also landed in this batch: request-a-goal when none
+    is set (STORY-173), the `/score` distance-to-goal gauge (STORY-174), and the
+    `/objection` court mechanic — pin a contested point, asymmetric `/resolved`
+    (objector) vs. `/judge` (other party → Observer ruling) exits (STORY-175).
+  - **Cost fix** (ADR-187, STORY-188): consolidated the per-turn goal / objection
+    probes into one structured turn-envelope on the next-question call — one LLM
+    call per turn instead of 2-3 full-history spawns (BUG-181 also de-flaked the
+    score-gauge gate test off a live LLM).
 
-**Every epic is complete** (~336 tests, CI green, runs on the Max plan by
-default). The product is the full vision plus the use-driven extensions; further
-work is driven entirely by real use.
+**Every epic is complete** (~521 quizdom + 7 llm tests, CI green, runs on the Max
+plan by default). The product is the full vision plus the use-driven extensions;
+further work is driven entirely by real use.
 
 Substrate gaps surfaced by dogfooding (VIS-2) are filed as findings or upstream
-`~/ai/aida` issues (FR-282 custom-edge traversal, BUG-415/417).
+`~/ai/aida` issues (FR-282 custom-edge traversal, BUG-415/417). Cost / scaling
+gaps surfaced by real use — the O(turns²) full-history re-send growth flagged in
+ADR-187 — are likewise tracked as findings.
