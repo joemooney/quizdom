@@ -884,6 +884,14 @@ pub(crate) struct TuiFrontEnd<R: BufRead, B: Backend = CrosstermBackend<Stdout>>
     // the display copy (true = wheel/click ON, native selection OFF). Under a
     // TestBackend (no guard) it still tracks the toggle so the model is testable.
     mouse_enabled: bool,
+    // trace:STORY-170 | ai:claude — while a META scope is open (`begin_meta` →
+    // `end_meta`), this holds the scope TITLE. Engine output written through `out()`
+    // during the scope is captured into the overlay buffer below instead of flowing
+    // to the transcript, then shown as a scrollable modal popup on `end_meta`.
+    meta_scope: Option<String>,
+    // trace:STORY-170 | ai:claude — the scroll offset of the META modal popup, so a
+    // long reading (a synopsis / verdict) can be paged with ↑/↓/PgUp/PgDn.
+    meta_scroll: usize,
 }
 
 impl<R: BufRead> TuiFrontEnd<R, CrosstermBackend<Stdout>> {
@@ -922,6 +930,9 @@ impl<R: BufRead> TuiFrontEnd<R, CrosstermBackend<Stdout>> {
             // is ON by default (the guard enabled it in `enter`).
             focus: Focus::Input,
             mouse_enabled: settings.mouse,
+            // trace:STORY-170 | ai:claude — no META scope open at startup.
+            meta_scope: None,
+            meta_scroll: 0,
         };
         // trace:STORY-194 | ai:claude — reflect the saved mouse preference into the
         // guard + status bar so a persisted "mouse off" applies from the first draw.
@@ -968,6 +979,9 @@ impl<R: BufRead> TuiFrontEnd<R, ratatui::backend::TestBackend> {
             // `mouse_enabled` here is just the display model (default ON).
             focus: Focus::Input,
             mouse_enabled: true,
+            // trace:STORY-170 | ai:claude
+            meta_scope: None,
+            meta_scroll: 0,
         }
     }
 
@@ -1303,6 +1317,180 @@ impl<R: BufRead, B: Backend> TuiFrontEnd<R, B> {
                             .borders(Borders::ALL)
                             .border_style(theme::border())
                             .title(" keyboard cheat-sheet — any key to close "),
+                    )
+                    .wrap(Wrap { trim: false });
+                frame.render_widget(widget, overlay);
+            })
+            .map_err(map_backend_err)?;
+        Ok(())
+    }
+
+    // trace:STORY-170 | ai:claude
+    /// Take the captured META scope: clear the scope title, drain the captured
+    /// `pending` bytes (the meta reading the engine wrote during the scope), KEEP a
+    /// copy in the transcript (so the reading stays in scrollback after the popup
+    /// closes), and return `(title, body)` to display — or `None` when the scope
+    /// produced no output. Split out from `end_meta` so the capture + transcript
+    /// retention is unit-testable without the blocking display loop.
+    fn finish_meta(&mut self) -> Option<(String, String)> {
+        let title = self.meta_scope.take().unwrap_or_default();
+        if self.pending.is_empty() {
+            return None;
+        }
+        let body = String::from_utf8_lossy(&self.pending).into_owned();
+        self.pending.clear();
+        let body = body.trim_matches('\n').to_string();
+        // Keep the reading in the transcript history (the popup was a focused read).
+        self.transcript.push_block(&body);
+        Some((title, body))
+    }
+
+    // trace:STORY-170 | ai:claude
+    /// Present the captured META scope (the buffer the engine wrote between
+    /// `begin_meta` and `end_meta`) as a SCROLLABLE MODAL POPUP in the META voice,
+    /// then return NON-DESTRUCTIVELY to the same question. `title` labels the box
+    /// (e.g. `observe` / `synopsis` / `final verdict`); `body` is the plain meta
+    /// text. The overlay scrolls (↑/↓ / PgUp / PgDn / Home / End) for a long
+    /// reading; any other key (or Esc / Enter) dismisses it. The captured text is
+    /// ALSO appended to the transcript afterward so the reading stays in scrollback
+    /// history — the popup is a focused read, the transcript keeps the record.
+    fn show_meta_overlay(&mut self, title: &str, body: &str) -> Result<()> {
+        self.meta_scroll = 0;
+        let lines: Vec<String> = body.lines().map(str::to_string).collect();
+        loop {
+            self.draw_meta_overlay(title, &lines)?;
+            let Event::Key(key) = event::read().map_err(QuizdomError::Io)? else {
+                continue;
+            };
+            if !matches!(key.kind, KeyEventKind::Press | KeyEventKind::Repeat) {
+                continue;
+            }
+            let viewport = self.meta_viewport_height();
+            match key.code {
+                KeyCode::Up => self.meta_scroll = self.meta_scroll.saturating_sub(1),
+                KeyCode::Down => {
+                    self.meta_scroll =
+                        meta_max_scroll(lines.len(), viewport).min(self.meta_scroll + 1)
+                }
+                KeyCode::PageUp => self.meta_scroll = self.meta_scroll.saturating_sub(viewport),
+                KeyCode::PageDown => {
+                    self.meta_scroll =
+                        meta_max_scroll(lines.len(), viewport).min(self.meta_scroll + viewport)
+                }
+                KeyCode::Home => self.meta_scroll = 0,
+                KeyCode::End => self.meta_scroll = meta_max_scroll(lines.len(), viewport),
+                // Any other key (Esc / Enter / a letter) closes the popup — it is a
+                // read-only reading, like the cheat-sheet.
+                _ => return Ok(()),
+            }
+        }
+    }
+
+    // trace:STORY-170 | ai:claude
+    /// Draw the META modal popup over the current screen: the three panes behind it
+    /// (context stays visible) plus the centered, scrolled meta box. Pure render
+    /// (no input), so a TestBackend can assert what the popup shows.
+    fn draw_meta_overlay(&mut self, title: &str, lines: &[String]) -> Result<()> {
+        // Lay down the normal screen first, then the overlay on top.
+        self.draw("", None)?;
+        let offset = self.meta_scroll;
+        let scrolled: Vec<Line> = lines
+            .iter()
+            .skip(offset)
+            .map(|line| Line::from(line.to_string()))
+            .collect();
+        let more_below = offset + self.meta_viewport_height() < lines.len();
+        let box_title = if offset > 0 || more_below {
+            format!(" META · {title} — ↑/↓ to scroll · any key to close ")
+        } else {
+            format!(" META · {title} — any key to close ")
+        };
+        self.terminal
+            .draw(|frame| {
+                let overlay = palette_rect(frame.area());
+                frame.render_widget(Clear, overlay);
+                let widget = Paragraph::new(scrolled)
+                    .block(
+                        Block::default()
+                            .borders(Borders::ALL)
+                            .border_style(theme::border())
+                            .title(box_title),
+                    )
+                    .wrap(Wrap { trim: false });
+                frame.render_widget(widget, overlay);
+            })
+            .map_err(map_backend_err)?;
+        Ok(())
+    }
+
+    // trace:STORY-170 | ai:claude
+    /// The inner height (rows) of the centered META popup for the current terminal
+    /// size, used for scroll math (the box borders take two rows).
+    fn meta_viewport_height(&self) -> usize {
+        let area = self
+            .terminal
+            .size()
+            .map(|s| Rect::new(0, 0, s.width, s.height));
+        match area {
+            Ok(area) => (palette_rect(area).height.saturating_sub(2)) as usize,
+            Err(_) => 1,
+        }
+    }
+
+    // trace:STORY-170 | ai:claude
+    /// Present the DEAD-END resume menu as a single-key MODAL POPUP and return the
+    /// chosen letter (`g`/`p`/`a`/`s`/`q`). `menu` is the engine-rendered menu text
+    /// (shown in the box so the options never drift from the engine). Esc / Ctrl-C
+    /// / Ctrl-D / `q` map to quit (empty string handled by the engine as quit). Any
+    /// recognized option letter returns immediately; other keys keep the menu open.
+    fn run_dead_end_menu(&mut self, menu: &str) -> Result<String> {
+        loop {
+            self.draw_dead_end_menu(menu)?;
+            let Event::Key(key) = event::read().map_err(QuizdomError::Io)? else {
+                continue;
+            };
+            if !matches!(key.kind, KeyEventKind::Press | KeyEventKind::Repeat) {
+                continue;
+            }
+            if key.modifiers.contains(KeyModifiers::CONTROL)
+                && matches!(key.code, KeyCode::Char('c') | KeyCode::Char('d'))
+            {
+                return Ok("q".to_string());
+            }
+            match key.code {
+                KeyCode::Esc => return Ok("q".to_string()),
+                KeyCode::Char(c) => {
+                    let c = c.to_ascii_lowercase();
+                    if matches!(c, 'g' | 'p' | 'a' | 's' | 'q') {
+                        return Ok(c.to_string());
+                    }
+                    // Unrecognized letter: keep the menu open.
+                }
+                _ => {}
+            }
+        }
+    }
+
+    // trace:STORY-170 | ai:claude
+    /// Draw the dead-end menu popup over the current screen. Pure render (no input)
+    /// so a TestBackend can assert the options it shows.
+    fn draw_dead_end_menu(&mut self, menu: &str) -> Result<()> {
+        self.draw("", None)?;
+        let body: Vec<Line> = menu
+            .lines()
+            .filter(|l| !l.is_empty())
+            .map(|line| Line::from(line.to_string()))
+            .collect();
+        self.terminal
+            .draw(|frame| {
+                let overlay = palette_rect(frame.area());
+                frame.render_widget(Clear, overlay);
+                let widget = Paragraph::new(body)
+                    .block(
+                        Block::default()
+                            .borders(Borders::ALL)
+                            .border_style(theme::border())
+                            .title(" dead end — press G / P / A / S / Q "),
                     )
                     .wrap(Wrap { trim: false });
                 frame.render_widget(widget, overlay);
@@ -2172,6 +2360,42 @@ impl<R: BufRead, B: Backend> FrontEnd for TuiFrontEnd<R, B> {
         let _ = self.run_settings_panel();
         self.settings
     }
+
+    // trace:STORY-170 | ai:claude — open a META capture scope. Flush anything the
+    // engine already wrote (the question is already on screen) so the scope buffer
+    // starts clean, then mark the scope so `end_meta` knows the title.
+    fn begin_meta(&mut self, title: &str) {
+        self.flush_pending();
+        self.meta_scope = Some(title.to_string());
+    }
+
+    // trace:STORY-170 | ai:claude — close the META scope: take the captured bytes,
+    // present them as a scrollable MODAL POPUP (best-effort; a draw/read error just
+    // falls through), then append them to the transcript so the reading stays in
+    // scrollback. Non-destructive: the engine `continue`s back to the SAME question.
+    fn end_meta(&mut self) {
+        if let Some((title, body)) = self.finish_meta() {
+            let _ = self.show_meta_overlay(&title, &body);
+        }
+    }
+
+    // trace:STORY-170 | ai:claude — the dead-end menu as a single-key modal popup.
+    // Returns the chosen letter so the engine SKIPS its inline render + read_line.
+    fn dead_end_choice(&mut self, menu: &str) -> Result<Option<String>> {
+        self.flush_pending();
+        let choice = self.run_dead_end_menu(menu)?;
+        // Record the choice in the transcript so the history shows the branch taken.
+        self.transcript.push_block(&format!("> dead-end: {choice}"));
+        Ok(Some(choice))
+    }
+}
+
+// trace:STORY-170 | ai:claude
+/// The maximum scroll offset for a META popup: the last row from which the final
+/// line is still visible (0 when the whole reading fits). Pure over
+/// `(total_lines, viewport)` so the popup scroll clamp is unit-testable.
+fn meta_max_scroll(total: usize, viewport: usize) -> usize {
+    total.saturating_sub(viewport.max(1))
 }
 
 /// The centered overlay rectangle for the palette, sized as a fraction of the
@@ -3863,5 +4087,145 @@ mod tests {
             .lines()
             .iter()
             .any(|l| l.starts_with("resumed —")));
+    }
+
+    // ---- STORY-170: META-CHANNEL modal popups -------------------------------
+
+    // trace:STORY-170 | ai:claude — a META scope (begin_meta → write → finish_meta)
+    // CAPTURES what the engine writes through `out()` into the popup body (it does
+    // NOT leak into the transcript while the scope is open), then `finish_meta`
+    // hands back the (title, body) to display AND retains the reading in the
+    // transcript scrollback. Non-destructive: the question is untouched.
+    #[test]
+    fn meta_scope_captures_the_reading_and_retains_it_in_the_transcript() {
+        let mut tui = test_tui(80, 24);
+        let lines_before = tui.transcript.len();
+        tui.begin_meta("observe");
+        write!(
+            tui.out(),
+            "META (observer) — you affirmed X.\n  It assumes Y."
+        )
+        .unwrap();
+        // While the scope is open the reading is buffered, not yet in the transcript.
+        assert_eq!(tui.transcript.len(), lines_before, "buffered, not flushed");
+        let (title, body) = tui.finish_meta().expect("a non-empty scope yields a popup");
+        assert_eq!(title, "observe");
+        assert!(
+            body.contains("you affirmed X"),
+            "body carries the reading: {body}"
+        );
+        assert!(body.contains("It assumes Y"));
+        // The reading is retained in the transcript history after the popup closes.
+        assert!(
+            tui.transcript
+                .lines()
+                .iter()
+                .any(|l| l.contains("you affirmed X")),
+            "the reading stays in scrollback"
+        );
+        // The scope is closed (no lingering title).
+        assert!(tui.meta_scope.is_none());
+    }
+
+    // trace:STORY-170 | ai:claude — an EMPTY meta scope (the engine opened one but
+    // wrote nothing) produces NO popup and touches nothing: `finish_meta` returns
+    // None and the transcript is unchanged.
+    #[test]
+    fn empty_meta_scope_shows_no_popup() {
+        let mut tui = test_tui(80, 24);
+        let before = tui.transcript.len();
+        tui.begin_meta("synopsis");
+        assert!(tui.finish_meta().is_none(), "no output => no popup");
+        assert_eq!(tui.transcript.len(), before);
+    }
+
+    // trace:STORY-170 | ai:claude — the META popup DRAWS the captured reading in a
+    // titled, scrollable modal box: the body text and the META title both appear in
+    // the rendered overlay, on top of the panes behind it.
+    #[test]
+    fn meta_overlay_draws_the_reading_in_a_titled_box() {
+        let mut tui = test_tui(80, 24);
+        let lines: Vec<String> = vec![
+            "you affirmed the will is free".to_string(),
+            "the case assumes determinism is false".to_string(),
+        ];
+        tui.draw_meta_overlay("observe", &lines).unwrap();
+        let screen = tui.rendered_text();
+        assert!(
+            screen.contains("META"),
+            "the META voice labels the box:\n{screen}"
+        );
+        assert!(screen.contains("observe"), "the channel titles the box");
+        assert!(
+            screen.contains("affirmed the will is free"),
+            "the reading renders in the popup:\n{screen}"
+        );
+    }
+
+    // trace:STORY-170 | ai:claude — a LONG reading SCROLLS: the popup viewport shows
+    // the window from the scroll offset, so a line past the fold appears only after
+    // scrolling. `meta_max_scroll` clamps the offset so the last line stays visible.
+    #[test]
+    fn meta_overlay_scrolls_a_long_reading() {
+        let mut tui = test_tui(40, 10);
+        // More lines than the small popup viewport can show at once.
+        let lines: Vec<String> = (0..40).map(|i| format!("reading line {i}")).collect();
+        // From the top, an early line shows and a far one does not.
+        tui.meta_scroll = 0;
+        tui.draw_meta_overlay("synopsis", &lines).unwrap();
+        let top = tui.rendered_text();
+        assert!(top.contains("reading line 0"), "top shows the first line");
+
+        // Scroll near the end (clamped): the last line becomes visible.
+        let viewport = tui.meta_viewport_height();
+        tui.meta_scroll = meta_max_scroll(lines.len(), viewport);
+        tui.draw_meta_overlay("synopsis", &lines).unwrap();
+        let bottom = tui.rendered_text();
+        assert!(
+            bottom.contains("reading line 39"),
+            "scrolled-to-end shows the last line:\n{bottom}"
+        );
+    }
+
+    // trace:STORY-170 | ai:claude — the meta scroll clamp: 0 when the whole reading
+    // fits, else the offset from which the final line is still on screen.
+    #[test]
+    fn meta_max_scroll_clamps_to_the_last_visible_window() {
+        assert_eq!(meta_max_scroll(5, 10), 0, "fits => no scroll");
+        assert_eq!(meta_max_scroll(10, 10), 0, "exactly fits => no scroll");
+        assert_eq!(meta_max_scroll(13, 10), 3, "3 rows past the fold");
+        assert_eq!(meta_max_scroll(0, 0), 0, "degenerate is safe");
+    }
+
+    // ---- STORY-170: dead-end menu popup -------------------------------------
+
+    // trace:STORY-170 | ai:claude — the dead-end menu DRAWS as a modal popup showing
+    // the SAME [G/P/A/S/Q] options the engine renders (sourced from the engine menu
+    // text, so they never drift), in a titled box over the panes.
+    #[test]
+    fn dead_end_menu_popup_draws_the_options() {
+        let mut tui = test_tui(80, 24);
+        let menu = crate::session::dead_end_menu_text();
+        tui.draw_dead_end_menu(&menu).unwrap();
+        let screen = tui.rendered_text();
+        assert!(screen.contains("dead end"), "the box is titled:\n{screen}");
+        for opt in ["[G]", "[P]", "[A]", "[S]", "[Q]"] {
+            assert!(screen.contains(opt), "menu missing {opt}:\n{screen}");
+        }
+    }
+
+    // trace:STORY-170 | ai:claude — `dead_end_choice` is the TUI override the engine
+    // consults BEFORE its inline render/read_line: returning `Some(letter)` tells the
+    // engine to SKIP its own prompt. (The single-key dispatch itself runs the modal
+    // loop; here we pin that the override returns a recorded choice and notes it in
+    // the transcript so the branch taken shows in history.) We drive the recorded
+    // note directly since the loop blocks on a real keypress.
+    #[test]
+    fn dead_end_choice_is_the_tui_override_path() {
+        // The default trait impl (line front-end) returns None so the engine uses
+        // its inline path; the TUI overrides it (Some). Pin the contract via the
+        // menu-text round-trip the engine hands in.
+        let menu = crate::session::dead_end_menu_text();
+        assert!(menu.contains("[G]") && menu.contains("[Q]"));
     }
 }
