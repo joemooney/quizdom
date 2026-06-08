@@ -3,12 +3,12 @@ spec_id: STORY-196
 agreed_id: STORY-196
 title: In-TUI interactive quick-add (/add) — feed the STORY-87 authoring core live keystrokes instead of an empty line stream
 description: 'STORY-170 deferred this. The /add quick-add authoring core (STORY-87) reads many sequential prompts off a BufRead via FrontEnd::author_io(); in the TUI author_input is empty (immediate EOF), so interactive /add does not work in the TUI. Make /add a first-class TUI flow: either (a) drive the existing authoring core with a synthesized live keystroke->line stream sourced from the TUI editor, or (b) a TUI-native multi-step authoring panel that calls the same front-end-agnostic question_add engine. Reuse the engine (NO logic change); keep the headless line path byte-unchanged. ## Acceptance: /add in the TUI walks the same prompts as the line front-end (title/type/links/etc.), writes the same Q-* object, and returns to the question; headless /add unchanged; tests cover the TUI authoring flow with a scripted input.'
-status: InProgress
+status: Completed
 priority: Medium
 owner: ''
 feature: Uncategorized
 created_at: 2026-06-08T04:02:10.859514317Z
-modified_at: 2026-06-08T04:03:08.528667951Z
+modified_at: 2026-06-08T04:14:59.772949Z
 req_type: Story
 tags:
 - parity
