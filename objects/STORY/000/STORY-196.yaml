@@ -8,10 +8,15 @@ priority: Medium
 owner: ''
 feature: Uncategorized
 created_at: 2026-06-08T04:02:10.859514317Z
-modified_at: 2026-06-08T04:02:10.859514317Z
+modified_at: 2026-06-08T04:02:34.877611232Z
 req_type: Story
 tags:
 - parity
 - quick-add
 - story
 - tui
+relationships:
+- rel_type: References
+  target_id: 019ea07e-4659-7ba0-85ac-ee7948f89fa6
+  created_at: 2026-06-08T04:02:34.877602694Z
+  created_by: joe
