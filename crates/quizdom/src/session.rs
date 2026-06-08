@@ -3884,6 +3884,11 @@ fn ask_contradiction_follow_up(
 // trace:STORY-168 | ai:claude — front-end seam: the quick-add banner renders via
 // `fe.out()`, then the STORY-87 authoring core runs against the front-end's raw
 // line channels (`fe.author_io`) so that shared, standalone-also core is unchanged.
+// trace:STORY-196 | ai:claude — the core invocation now routes through
+// `fe.author_question`, whose DEFAULT is the byte-identical `author_io` path
+// (headless line front-end unchanged) and whose TUI override feeds the SAME core a
+// LIVE keystroke→line stream from the input box, so interactive `/add` works in the
+// TUI without touching the authoring engine.
 fn quick_add_from_current(
     bank: &dyn QuestionBank,
     strategy: &dyn NextQuestionStrategy,
@@ -3903,16 +3908,7 @@ fn quick_add_from_current(
     let link = QuestionLink::Begets {
         origin_id: current.id.clone(),
     };
-    let (input, output) = fe.author_io();
-    crate::question_add::author_question(
-        &existing,
-        strategy,
-        user_authored_persister,
-        &topic,
-        &link,
-        input,
-        output,
-    )?;
+    fe.author_question(&existing, strategy, user_authored_persister, &topic, &link)?;
     Ok(())
 }
 
