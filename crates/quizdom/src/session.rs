@@ -1959,13 +1959,13 @@ fn run_closing_phase(
             Some(raw) => raw,
             // EOF / non-TTY: do not hang. Render the verdict on what we have.
             None => {
-                return finish_with_verdict(config, observer, goal, fe.out());
+                return finish_with_verdict(config, observer, goal, fe);
             }
         };
         if crate::input::is_verdict_command(&raw) {
             // A direct request for the FINAL VERDICT — no terminator, no forfeited
             // last word; render the belief-neutral assessment and end.
-            return finish_with_verdict(config, observer, goal, fe.out());
+            return finish_with_verdict(config, observer, goal, fe);
         }
         if crate::input::is_terminate_command(&raw) {
             // The USER terminates: the fairness rule gives the CHALLENGER the final
@@ -1988,7 +1988,7 @@ fn run_closing_phase(
                 &objection.objection,
                 true,
             )?;
-            return finish_with_verdict(config, observer, goal, fe.out());
+            return finish_with_verdict(config, observer, goal, fe);
         }
         if crate::input::is_end_command(&raw) {
             // A plain quit during the closing ritual: end without a verdict (the
@@ -2042,15 +2042,21 @@ fn finish_with_verdict(
     config: &CliConfig,
     observer: &ObserverEngine,
     goal: Option<&str>,
-    output: &mut dyn Write,
+    fe: &mut dyn FrontEnd,
 ) -> Result<ClosingOutcome> {
-    render_verdict(
+    // trace:STORY-170 | ai:claude — the FINAL VERDICT is a META reading: scope it
+    // so the TUI presents it as a distinct modal popup in the META voice (a clear
+    // close to the ritual). Headless writes it inline, byte-for-byte as before.
+    fe.begin_meta("final verdict");
+    let result = render_verdict(
         observer,
         &config.log_path,
         Some(&config.branch_id),
         goal,
-        output,
-    )?;
+        fe.out(),
+    );
+    fe.end_meta();
+    result?;
     Ok(ClosingOutcome {
         summary: "Closing ritual reached a final verdict.",
     })
@@ -2885,7 +2891,12 @@ fn run_session_from_current(
                             let _spinner = crate::spinner::Spinner::start("observing");
                             observer.read(&exchange)
                         };
+                        // trace:STORY-170 | ai:claude — render the observer reading
+                        // inside a META scope so the TUI shows it as a modal popup and
+                        // returns to the SAME question; headless stays inline.
+                        fe.begin_meta("observe");
                         render_exchange_reading(&reading, fe.out())?;
+                        fe.end_meta();
                         continue;
                     }
                     AnswerInput::Synopsis => {
@@ -2894,12 +2905,18 @@ fn run_session_from_current(
                         // log so far as a belief-neutral META voice, then
                         // re-present the SAME question (like Observe). Nothing is
                         // logged or mutated.
+                        // trace:STORY-170 | ai:claude — the whole-session synopsis is
+                        // a META reading: scope it so the TUI shows it as a scrollable
+                        // modal popup. The conclude/goal prompts that may follow read
+                        // input, so they stay OUTSIDE the meta scope.
+                        fe.begin_meta("synopsis");
                         let rendered = render_session_synopsis(
                             &observer,
                             &config.log_path,
                             Some(&config.branch_id),
                             fe.out(),
                         )?;
+                        fe.end_meta();
                         // trace:STORY-156 | ai:claude
                         // CONVERGENCE terminal: when the synopsis crossed the
                         // well-rounded threshold it OFFERED to conclude. Prompt
@@ -3173,8 +3190,7 @@ fn run_session_from_current(
                             "closing",
                             ClosingParty::User.as_str(),
                         )?;
-                        let outcome =
-                            finish_with_verdict(config, &observer, goal.as_deref(), fe.out())?;
+                        let outcome = finish_with_verdict(config, &observer, goal.as_deref(), fe)?;
                         // trace:STORY-160 | ai:claude — keep the rested/verdict
                         // session (it carries the phase transition + verdict).
                         answer_recorded = true;
@@ -3219,8 +3235,7 @@ fn run_session_from_current(
                             &objection.objection,
                             true,
                         )?;
-                        let outcome =
-                            finish_with_verdict(config, &observer, goal.as_deref(), fe.out())?;
+                        let outcome = finish_with_verdict(config, &observer, goal.as_deref(), fe)?;
                         // trace:STORY-160 | ai:claude — keep the terminated session.
                         answer_recorded = true;
                         ended_at_frontier = true;
@@ -3242,7 +3257,10 @@ fn run_session_from_current(
                             let _spinner = crate::spinner::Spinner::start("helping");
                             observer.help(&question)
                         };
+                        // trace:STORY-170 | ai:claude — META popup in the TUI.
+                        fe.begin_meta("help");
                         render_help_answer(&answer, fe.out())?;
+                        fe.end_meta();
                         continue;
                     }
                     AnswerInput::Tutor(text) => {
@@ -3256,7 +3274,10 @@ fn run_session_from_current(
                             let _spinner = crate::spinner::Spinner::start("tutoring");
                             observer.tutor(&context)
                         };
+                        // trace:STORY-170 | ai:claude — META popup in the TUI.
+                        fe.begin_meta("tutor");
                         render_tutor_reading(&reading, fe.out())?;
+                        fe.end_meta();
                         continue;
                     }
                     AnswerInput::Objection(text) => {
@@ -3923,19 +3944,15 @@ enum DeadEndOutcome {
 /// Render the dead-end menu. Plain text so it reads correctly under NO_COLOR /
 /// non-TTY (matching the rest of the session controls).
 fn render_dead_end_menu(output: &mut dyn Write) -> Result<()> {
-    writeln!(
-        output,
-        "\nNo further questions on this path — but you're not stuck. What next?"
-    )?;
-    writeln!(
-        output,
-        "  [G] Generate a fresh question   [P] Punt to a different topic"
-    )?;
-    writeln!(
-        output,
-        "  [A] Add your own question       [S] Synopsis   [Q] Quit"
-    )?;
+    write!(output, "{}", dead_end_menu_text())?;
     Ok(())
+}
+
+// trace:STORY-170 | ai:claude — the dead-end menu text, factored out so the TUI
+// can render the SAME options as a single-key modal popup (`dead_end_choice`)
+// while the headless path writes it inline through `render_dead_end_menu`.
+pub(crate) fn dead_end_menu_text() -> String {
+    "\nNo further questions on this path — but you're not stuck. What next?\n  [G] Generate a fresh question   [P] Punt to a different topic\n  [A] Add your own question       [S] Synopsis   [Q] Quit\n".to_string()
 }
 
 // trace:BUG-136 | ai:claude
@@ -3963,10 +3980,19 @@ fn dead_end_menu(
     fe: &mut dyn FrontEnd,
 ) -> Result<DeadEndOutcome> {
     loop {
-        render_dead_end_menu(fe.out())?;
-        let choice = match fe.read_line("> ")? {
+        // trace:STORY-170 | ai:claude — let a graphical front-end present the menu
+        // as a single-key MODAL POPUP. `dead_end_choice` returns `Some(letter)` in
+        // the TUI (which drew the popup itself); the headless line front-end returns
+        // `None`, so we render the menu inline + read a line exactly as before.
+        let choice = match fe.dead_end_choice(&dead_end_menu_text())? {
             Some(line) => line.trim().to_ascii_lowercase(),
-            None => return Ok(DeadEndOutcome::Quit),
+            None => {
+                render_dead_end_menu(fe.out())?;
+                match fe.read_line("> ")? {
+                    Some(line) => line.trim().to_ascii_lowercase(),
+                    None => return Ok(DeadEndOutcome::Quit),
+                }
+            }
         };
         match choice.chars().next() {
             Some('g') => {
@@ -4114,19 +4140,25 @@ fn browse_answered_path(
                     let _spinner = crate::spinner::Spinner::start("observing");
                     review.observer.read(&exchange)
                 };
+                // trace:STORY-170 | ai:claude — META popup in the TUI (review pane).
+                fe.begin_meta("observe");
                 render_exchange_reading(&reading, fe.out())?;
+                fe.end_meta();
                 continue;
             }
             // trace:STORY-128 | ai:claude — non-destructive GLOBAL synopsis in
             // review: read the whole session log so far and stay on the same
             // reviewed answer.
             AnswerInput::Synopsis => {
+                // trace:STORY-170 | ai:claude — META popup in the TUI (review pane).
+                fe.begin_meta("synopsis");
                 render_session_synopsis(
                     review.observer,
                     review.log_path,
                     Some(review.branch),
                     fe.out(),
                 )?;
+                fe.end_meta();
                 continue;
             }
             // trace:STORY-174 | ai:claude — the `/score` gauge toggle takes effect
@@ -4173,7 +4205,10 @@ fn browse_answered_path(
                     let _spinner = crate::spinner::Spinner::start("helping");
                     review.observer.help(&question)
                 };
+                // trace:STORY-170 | ai:claude — META popup in the TUI (review pane).
+                fe.begin_meta("help");
                 render_help_answer(&answer, fe.out())?;
+                fe.end_meta();
                 continue;
             }
             // trace:STORY-165 | ai:claude — `/tutor` in review coaches the user's
@@ -4195,7 +4230,10 @@ fn browse_answered_path(
                     let _spinner = crate::spinner::Spinner::start("tutoring");
                     review.observer.tutor(&context)
                 };
+                // trace:STORY-170 | ai:claude — META popup in the TUI (review pane).
+                fe.begin_meta("tutor");
                 render_tutor_reading(&reading, fe.out())?;
+                fe.end_meta();
                 continue;
             }
             // trace:STORY-175 | ai:claude — the court-case `/objection` controls

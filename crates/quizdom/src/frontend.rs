@@ -127,6 +127,35 @@ pub(crate) trait FrontEnd {
     /// piped tests assert, so it must NOT also inject the styled hydration. Only
     /// the ratatui TUI overrides this to build the clean styled transcript.
     fn hydrate_resume(&mut self, _turns: &[(String, String)]) {}
+
+    // trace:STORY-170 | ai:claude — META-CHANNEL scoping for a graphical front-end.
+    /// Open a META scope titled `title`: everything the engine writes through
+    /// [`out`](FrontEnd::out) until the matching [`end_meta`](FrontEnd::end_meta)
+    /// is part of ONE meta reading (an `/observe` / `/tutor` / `/help` /
+    /// `/synopsis` answer, or the closing verdict). The DEFAULT is a NO-OP: the
+    /// headless [`LineFrontEnd`] keeps writing the meta text inline, byte-for-byte
+    /// as today (the ~336 piped tests assert that). Only the ratatui TUI overrides
+    /// these to CAPTURE the scoped bytes and present them as a scrollable MODAL
+    /// POPUP in the META voice, returning NON-DESTRUCTIVELY to the same question.
+    fn begin_meta(&mut self, _title: &str) {}
+
+    /// Close the META scope opened by [`begin_meta`](FrontEnd::begin_meta). The
+    /// default is a NO-OP (headless inline rendering). The TUI flushes the
+    /// captured scope into a modal overlay, displays it (scrollable if long), and
+    /// waits for a dismiss key before returning to the question.
+    fn end_meta(&mut self) {}
+
+    // trace:STORY-170 | ai:claude — the DEAD-END menu as a graphical popup.
+    /// Present the dead-end resume menu and read ONE choice. `menu` is the
+    /// engine-rendered `[G/P/A/S/Q]` menu text. The DEFAULT returns `None`, which
+    /// signals the engine to use its EXISTING path (render the menu through
+    /// `out()` + `read_line`), preserving the headless line behavior byte-for-byte.
+    /// The TUI overrides this to draw the menu as a single-key MODAL POPUP and
+    /// returns the chosen letter (e.g. `"g"`); `Some(String::new())`/EOF maps to
+    /// quit. Returning `Some(choice)` tells the engine to SKIP its own prompt.
+    fn dead_end_choice(&mut self, _menu: &str) -> Result<Option<String>> {
+        Ok(None)
+    }
 }
 
 /// The HEADLESS LINE front-end: today's behavior, behind the seam.
@@ -394,6 +423,38 @@ mod tests {
         assert!(
             out.is_empty(),
             "headless hydrate_resume must not touch the byte-exact replay output"
+        );
+    }
+
+    // trace:STORY-170 | ai:claude — the headless line front-end's META scoping is a
+    // NO-OP: `begin_meta`/`end_meta` write NOTHING and never disturb the inline
+    // bytes the engine emits between them, so the ~336 piped byte-tests are
+    // unaffected. The reading the engine writes through `out()` passes straight
+    // through to the sink exactly as before.
+    #[test]
+    fn line_front_end_meta_scope_is_a_noop_passthrough() {
+        let mut fe = LineFrontEnd::new(Cursor::new(Vec::new()), Vec::new()).unwrap();
+        fe.begin_meta("observe");
+        write!(fe.out(), "META (observer) — inline reading.").unwrap();
+        fe.end_meta();
+        let out = String::from_utf8(fe.into_output()).unwrap();
+        assert_eq!(
+            out, "META (observer) — inline reading.",
+            "begin/end_meta must not add or reorder any bytes"
+        );
+    }
+
+    // trace:STORY-170 | ai:claude — the headless line front-end uses its INLINE
+    // dead-end path: `dead_end_choice` returns None (no graphical popup), so the
+    // engine renders the menu through `out()` + reads a line, byte-for-byte as
+    // today. Only the TUI overrides this to draw a single-key popup.
+    #[test]
+    fn line_front_end_dead_end_choice_defers_to_the_inline_path() {
+        let mut fe = LineFrontEnd::new(Cursor::new(Vec::new()), Vec::new()).unwrap();
+        assert_eq!(
+            fe.dead_end_choice("[G/P/A/S/Q]").unwrap(),
+            None,
+            "headless defers to the inline render + read_line path"
         );
     }
 
