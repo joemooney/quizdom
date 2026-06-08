@@ -46,12 +46,12 @@ description: |
   - The engine is front-end-agnostic; the two front-ends share it.
   - Graceful: non-TTY auto-selects headless; the TUI restores the terminal cleanly
     on exit/panic.
-status: Approved
+status: Completed
 priority: High
 owner: ''
 feature: Uncategorized
 created_at: 2026-06-07T05:10:44.220751890Z
-modified_at: 2026-06-08T04:02:43.527005458Z
+modified_at: 2026-06-08T04:16:44.337090189Z
 req_type: Epic
 tags:
 - architecture
