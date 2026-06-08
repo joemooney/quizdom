@@ -8,7 +8,7 @@ priority: High
 owner: ''
 feature: Uncategorized
 created_at: 2026-06-07T05:11:30.649708860Z
-modified_at: 2026-06-08T03:57:46.586570091Z
+modified_at: 2026-06-08T03:57:52.705285074Z
 req_type: Story
 tags:
 - components
@@ -26,3 +26,8 @@ comments:
   content: 'Implemented the highest-value parity gaps as TUI components (front-end seam, no LLM-logic change): (1) META-CHANNEL modal popups for /observe /tutor /help /synopsis via new FrontEnd::begin_meta/end_meta scope methods — engine wraps each render, LineFrontEnd no-ops (byte-exact piped tests untouched), TUI captures the scoped out() into a scrollable centered overlay in the META voice and returns non-destructively to the same question, retaining the reading in transcript scrollback; (2) CLOSING-RITUAL final verdict now renders in a distinct META popup (finish_with_verdict scopes it); (3) DEAD-END menu [G/P/A/S/Q] via new FrontEnd::dead_end_choice — TUI draws a single-key modal popup, LineFrontEnd returns None so the inline render+read_line path is byte-exact. STATUS BAR confirmed: goal (in breadcrumb segment) / breadcrumb topic.depth.branch / roundedness (score) / mode all surfaced. Tests: 530 lib (+9) green, 7 llm green, no new clippy warnings. DEFERRED to follow-up: fully-interactive in-TUI quick-add (/add) — the STORY-87 authoring core reads many sequential prompts off a BufRead via author_io(); feeding it live TUI keystrokes (vs the current empty author_input) is a substantial standalone piece. /goal <text> and /mode <token> already use TUI input since the text arrives with the command.'
   created_at: 2026-06-08T03:55:41.927279405Z
   modified_at: 2026-06-08T03:55:41.927279405Z
+- id: 019ea561-38c1-7d32-a730-199f109cd2c8
+  author: joe
+  content: 'PR #77 merged to main (squash, merge commit 9e8917f). CI green (fmt+clippy+test). Highest-value parity gaps landed: META-channel popups, closing verdict popup, dead-end menu popup. Follow-up for fully-interactive in-TUI quick-add (/add author_io live feed).'
+  created_at: 2026-06-08T03:57:52.705285074Z
+  modified_at: 2026-06-08T03:57:52.705285074Z
