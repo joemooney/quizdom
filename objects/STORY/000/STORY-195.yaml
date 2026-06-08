@@ -1,0 +1,35 @@
+id: 019ea564-4ca4-7842-8bc4-1b053b921c06
+spec_id: STORY-195
+agreed_id: STORY-195
+title: 'Bound interrogator prompt context: verbatim recent window + ID-anchored standing-commitments ledger (linear token growth)'
+description: |-
+  Even after ADR-187 collapsed the per-turn meta probes into one interrogator call, that one call still re-sends the ENTIRE recent_path every turn (strategy.rs strategy_prompt, the `for item in &context.recent_path` loop ~600-605), so a ~150-turn session costs ~O(turns^2) tokens. Bound the per-turn context so cost grows ~linearly WITHOUT breaking the Socratic through-line that cites early commitments by id (the Q-46/Q-74 positions the interrogator keeps quoting). From SPIKE-189.
+
+  Presentation-layer transform at the prompt boundary ONLY (do NOT change StrategyContext, the log, resume/replay, or the synopsis path):
+  - Add a pure `bounded_path_view(recent_path, window)` in strategy.rs splitting the path into a VERBATIM RECENT WINDOW (last `window` answered turns, rendered exactly as today) and a STANDING COMMITMENTS LEDGER for everything older (one ID-anchored line per kept position: `Q-46: <first sentence of question> => <answer>`).
+  - In the ledger, drop empty-answer / navigation-only turns and de-duplicate near-identical positions keeping the FIRST occurrence (so the original introducing Q-id is the cited one). NEVER paraphrase or drop the question_ref id — it is the load-bearing citation handle.
+  - strategy_prompt emits zone 2 under "Standing commitments (earlier positions, cite by id):" and zone 1 under "Recent exchange (verbatim):". The goal/objection/mode preamble already leads the prompt and stays untouched.
+  - `window` is a named constant (default ~10), trivially tunable; short sessions (path len <= window) render byte-for-byte identically to today.
+  - Do NOT reuse synopsize() (whole-arc LLM call, no Q-* anchors, conclude-time) — it would ADD an O(turns) call. Keep the turn loop free of any new LLM call.
+
+  ## Acceptance
+  - Linear-growth test: synthetic recent_path of T turns, render via strategy_prompt for T in {5,20,80,150}; assert the path-section size (lines AND chars) grows ~linearly, not quadratically — the window zone is exactly min(T, window) lines and the ledger is one short line per older retained position; for T=150 the char count is below an explicit ceiling far under T*avg_full_line.
+  - Citation preservation: with Q-46 and Q-74 OUTSIDE the verbatim window, the rendered prompt still contains `Q-46`/`Q-74` with their answers; no retained commitment's id is altered/paraphrased (ledger lines start with the verbatim question_ref).
+  - Goal / open objection / mode preamble still appear regardless of elision (extend STORY-159/161/175 prompt tests).
+  - Short-session parity: when recent_path.len() <= window the path section is byte-identical to pre-change (golden-string test).
+  - De-dup/empty: a repeated near-identical position keeps only the first (original id); empty-answer turns never appear in the ledger.
+  - Phase 2 (only if measurement shows the ledger itself grows uncomfortably on 150+ turns): cap the ledger at M entries, roll the oldest into ONE deterministic id-keyed digest line. Land Phase 1 first and re-measure.
+status: Approved
+priority: High
+owner: ''
+feature: Uncategorized
+created_at: 2026-06-08T04:01:14.404629715Z
+modified_at: 2026-06-08T04:01:14.404629715Z
+req_type: Story
+tags:
+- context
+- cost
+- llm
+- performance
+- story
+- strategy
