@@ -86,6 +86,33 @@ pub(crate) trait FrontEnd {
     /// TUI front-end implements this by feeding the core from its own input source.
     fn author_io(&mut self) -> (&mut dyn BufRead, &mut dyn Write);
 
+    // trace:STORY-196 | ai:claude
+    /// Drive the STORY-87 authoring core for an
+    /// in-session quick-add. The DEFAULT runs the shared
+    /// [`crate::question_add::author_question`] core against the front-end's raw
+    /// [`author_io`](FrontEnd::author_io) line channels — IDENTICAL to the
+    /// pre-STORY-196 inline call in `quick_add_from_current`, so the headless line
+    /// path (and its ~336 piped byte-tests) is byte-for-byte unchanged. The ratatui
+    /// TUI overrides this to feed the SAME core a LIVE keystroke→line stream sourced
+    /// from its input box (the line front-end's `author_io` is empty in the TUI, so
+    /// without an override interactive `/add` reads immediate EOF). The core itself
+    /// is unchanged either way — only the input/output channels differ.
+    #[allow(clippy::too_many_arguments)]
+    fn author_question(
+        &mut self,
+        existing: &[crate::model::Question],
+        strategy: &dyn crate::strategy::NextQuestionStrategy,
+        persister: &dyn crate::persist::UserAuthoredQuestionPersister,
+        topic: &str,
+        link: &crate::persist::QuestionLink,
+    ) -> Result<()> {
+        let (input, output) = self.author_io();
+        crate::question_add::author_question(
+            existing, strategy, persister, topic, link, input, output,
+        )?;
+        Ok(())
+    }
+
     // trace:STORY-194 | ai:claude
     /// Switch the free-text EDITOR MODEL at runtime (`/editor <emacs|vim|auto>`).
     /// `token` is the raw editor token (empty = SHOW the current model). The

@@ -76,7 +76,7 @@ use ratatui::widgets::{
     Block, Borders, Clear, Paragraph, Scrollbar, ScrollbarOrientation, ScrollbarState, Wrap,
 };
 use ratatui::Terminal;
-use std::io::{self, BufRead, Stdout, Write};
+use std::io::{self, BufRead, Read, Stdout, Write};
 
 // trace:BUG-184 | ai:claude — the TUI is now GENERIC over the ratatui [`Backend`]
 // (so a `TestBackend` can drive the model in unit tests). Backend draw/clear
@@ -892,6 +892,13 @@ pub(crate) struct TuiFrontEnd<R: BufRead, B: Backend = CrosstermBackend<Stdout>>
     // trace:STORY-170 | ai:claude — the scroll offset of the META modal popup, so a
     // long reading (a synopsis / verdict) can be paged with ↑/↓/PgUp/PgDn.
     meta_scroll: usize,
+    // trace:STORY-196 | ai:claude — a TEST-ONLY scripted event queue. Production
+    // always leaves this empty and reads live keystrokes from the terminal via
+    // `event::read()`; tests pre-load it so the line-gathering loop (`read_text_line`)
+    // can be driven WITHOUT a real terminal, letting the interactive `/add` flow be
+    // exercised end to end against the unchanged authoring core.
+    #[cfg(test)]
+    scripted_events: std::collections::VecDeque<Event>,
 }
 
 impl<R: BufRead> TuiFrontEnd<R, CrosstermBackend<Stdout>> {
@@ -933,6 +940,10 @@ impl<R: BufRead> TuiFrontEnd<R, CrosstermBackend<Stdout>> {
             // trace:STORY-170 | ai:claude — no META scope open at startup.
             meta_scope: None,
             meta_scroll: 0,
+            // trace:STORY-196 | ai:claude — production reads live keystrokes; the
+            // scripted queue starts empty (and only exists under cfg(test)).
+            #[cfg(test)]
+            scripted_events: std::collections::VecDeque::new(),
         };
         // trace:STORY-194 | ai:claude — reflect the saved mouse preference into the
         // guard + status bar so a persisted "mouse off" applies from the first draw.
@@ -982,6 +993,8 @@ impl<R: BufRead> TuiFrontEnd<R, ratatui::backend::TestBackend> {
             // trace:STORY-170 | ai:claude
             meta_scope: None,
             meta_scroll: 0,
+            // trace:STORY-196 | ai:claude — tests push scripted keystrokes here.
+            scripted_events: std::collections::VecDeque::new(),
         }
     }
 
@@ -1606,6 +1619,21 @@ impl<R: BufRead, B: Backend> TuiFrontEnd<R, B> {
         }
     }
 
+    // trace:STORY-196 | ai:claude — the single event source for `read_text_line`.
+    /// In production this is just `event::read()` (live terminal keystrokes). Under
+    /// test it drains the pre-loaded `scripted_events` queue first, so the
+    /// line-gathering loop — and therefore the interactive `/add` flow that drives the
+    /// authoring core through it — can be exercised without a real terminal. A drained
+    /// queue falls back to `event::read()`, but a well-formed test script terminates
+    /// with an EOF (Ctrl-D) event so the loop never blocks on the live terminal.
+    fn next_text_event(&mut self) -> Result<Event> {
+        #[cfg(test)]
+        if let Some(event) = self.scripted_events.pop_front() {
+            return Ok(event);
+        }
+        event::read().map_err(QuizdomError::Io)
+    }
+
     /// The shared input loop: flush pending output, draw, then gather one line of
     /// text from the keyboard. Handles editing (chars / Backspace), transcript
     /// scrolling (↑/↓ / PageUp / PageDown), the live `/` palette (on a bare `/`
@@ -1621,7 +1649,7 @@ impl<R: BufRead, B: Backend> TuiFrontEnd<R, B> {
         loop {
             self.draw(&editing, None)?;
             let viewport = self.viewport_height();
-            let event = event::read().map_err(QuizdomError::Io)?;
+            let event = self.next_text_event()?;
             // trace:STORY-193 | ai:claude — mouse first: wheel scrolls, click focuses,
             // scrollbar drag jumps. A consumed mouse event re-loops (redraws).
             if let Event::Mouse(mouse) = event {
@@ -2288,6 +2316,65 @@ impl<R: BufRead, B: Backend> FrontEnd for TuiFrontEnd<R, B> {
         (&mut self.author_input, &mut self.author_output)
     }
 
+    // trace:STORY-196 | ai:claude — interactive `/add` as a first-class TUI flow.
+    /// Drive the SHARED STORY-87 authoring core ([`crate::question_add::author_question`])
+    /// against a LIVE keystroke→line stream sourced from the TUI input box instead
+    /// of the empty `author_io` line stream (which yields immediate EOF in the TUI).
+    ///
+    /// The core is UNCHANGED: it writes each prompt (`Question text:`, `Answer
+    /// shape:`, the choice / refinement prompts) to a `Write` and reads the reply
+    /// from a `BufRead`. [`TuiAuthorChannel`] bridges those to the TUI — every prompt
+    /// the core writes lands in the transcript (via the engine's `pending` buffer,
+    /// flushed exactly as the question text is), and every line the core reads is
+    /// gathered from the same in-pane editor as a normal answer (`read_text_line`),
+    /// so the user walks the SAME prompts as the headless line front-end. EOF
+    /// (Ctrl-C/Ctrl-D) on any prompt unwinds the core gracefully, and control
+    /// returns to the question afterward (the caller re-presents it).
+    #[allow(clippy::too_many_arguments)]
+    fn author_question(
+        &mut self,
+        existing: &[crate::model::Question],
+        strategy: &dyn crate::strategy::NextQuestionStrategy,
+        persister: &dyn crate::persist::UserAuthoredQuestionPersister,
+        topic: &str,
+        link: &crate::persist::QuestionLink,
+    ) -> Result<()> {
+        // Flush the quick-add banner the engine already wrote so it lands before the
+        // first authoring prompt, then drive the core through the live bridge.
+        self.flush_pending();
+        let prompt_buf = std::rc::Rc::new(std::cell::RefCell::new(Vec::<u8>::new()));
+        let mut writer = TuiAuthorWriter {
+            buf: std::rc::Rc::clone(&prompt_buf),
+        };
+        let mut reader = TuiAuthorReader {
+            fe: self,
+            prompt_buf,
+            line: Vec::new(),
+            pos: 0,
+        };
+        let result = crate::question_add::author_question(
+            existing,
+            strategy,
+            persister,
+            topic,
+            link,
+            &mut reader,
+            &mut writer,
+        );
+        // The core's FINAL writes (the `Added Q-…` confirmation / the
+        // reuse-instead note) land after the last line was read, so the bridge never
+        // drained them on a subsequent read. Flush the trailing prompt bytes into the
+        // transcript now so the user sees the outcome before the question re-presents.
+        drop(reader);
+        let trailing = std::mem::take(&mut *writer.buf.borrow_mut());
+        if !trailing.is_empty() {
+            self.out().write_all(&trailing)?;
+            self.flush_pending();
+        }
+        result?;
+        Ok(())
+    }
+
     // trace:STORY-191 | ai:claude
     fn hydrate_resume(&mut self, turns: &[(String, String)]) {
         self.hydrate_transcript(turns);
@@ -2387,6 +2474,97 @@ impl<R: BufRead, B: Backend> FrontEnd for TuiFrontEnd<R, B> {
         // Record the choice in the transcript so the history shows the branch taken.
         self.transcript.push_block(&format!("> dead-end: {choice}"));
         Ok(Some(choice))
+    }
+}
+
+// trace:STORY-196 | ai:claude — the LIVE bridge that lets the unchanged STORY-87
+// authoring core run interactively in the TUI. The core writes prompts to a `Write`
+// and reads replies from a `BufRead`; these two halves wire those to the TUI panes.
+//
+// `TuiAuthorWriter` buffers the prompt bytes the core emits into a shared cell; the
+// reader drains them into the transcript (through the engine's `pending` flush path)
+// right before it gathers the matching reply, so the prompt always renders before the
+// input box opens — exactly the write-then-read order the headless line front-end
+// produces. They share the buffer via `Rc<RefCell<…>>` because the core borrows both
+// channels simultaneously and only the reader may borrow the `TuiFrontEnd`.
+struct TuiAuthorWriter {
+    buf: std::rc::Rc<std::cell::RefCell<Vec<u8>>>,
+}
+
+impl Write for TuiAuthorWriter {
+    fn write(&mut self, data: &[u8]) -> io::Result<usize> {
+        self.buf.borrow_mut().extend_from_slice(data);
+        Ok(data.len())
+    }
+
+    fn flush(&mut self) -> io::Result<()> {
+        Ok(())
+    }
+}
+
+// trace:STORY-196 | ai:claude — the `BufRead` half of the live authoring bridge.
+// Each line the core requests triggers: (1) drain any buffered prompt bytes into the
+// transcript via `out()` + `flush_pending` (so `Question text:` etc. render), then
+// (2) gather ONE line from the same in-pane editor as a normal answer
+// (`read_text_line`). The gathered line is buffered with a trailing `\n` so the core's
+// `BufRead::read_line` sees standard line semantics; EOF (Ctrl-C/Ctrl-D) reports 0
+// bytes, which the core treats as a closed stream and unwinds gracefully.
+struct TuiAuthorReader<'a, R: BufRead, B: Backend> {
+    fe: &'a mut TuiFrontEnd<R, B>,
+    prompt_buf: std::rc::Rc<std::cell::RefCell<Vec<u8>>>,
+    /// The current gathered line (`text\n`), refilled on demand from the input box.
+    line: Vec<u8>,
+    /// Read cursor into `line`.
+    pos: usize,
+}
+
+impl<R: BufRead, B: Backend> TuiAuthorReader<'_, R, B> {
+    /// Flush any pending prompt bytes the core wrote, then gather one line from the
+    /// input box. Returns `false` at EOF (no line buffered).
+    fn refill(&mut self) -> io::Result<bool> {
+        // Drain the prompt the core just wrote into the engine's render buffer so it
+        // flushes to the transcript exactly like the question text does.
+        let prompt = std::mem::take(&mut *self.prompt_buf.borrow_mut());
+        if !prompt.is_empty() {
+            self.fe.out().write_all(&prompt)?;
+        }
+        match self
+            .fe
+            .read_text_line(None)
+            .map_err(|e| io::Error::other(e.to_string()))?
+        {
+            Some(text) => {
+                self.line.clear();
+                self.line.extend_from_slice(text.as_bytes());
+                self.line.push(b'\n');
+                self.pos = 0;
+                Ok(true)
+            }
+            None => Ok(false),
+        }
+    }
+}
+
+impl<R: BufRead, B: Backend> Read for TuiAuthorReader<'_, R, B> {
+    fn read(&mut self, out: &mut [u8]) -> io::Result<usize> {
+        let available = self.fill_buf()?;
+        let n = available.len().min(out.len());
+        out[..n].copy_from_slice(&available[..n]);
+        self.consume(n);
+        Ok(n)
+    }
+}
+
+impl<R: BufRead, B: Backend> BufRead for TuiAuthorReader<'_, R, B> {
+    fn fill_buf(&mut self) -> io::Result<&[u8]> {
+        if self.pos >= self.line.len() && !self.refill()? {
+            return Ok(&[]);
+        }
+        Ok(&self.line[self.pos..])
+    }
+
+    fn consume(&mut self, amt: usize) {
+        self.pos = (self.pos + amt).min(self.line.len());
     }
 }
 
@@ -4227,5 +4405,158 @@ mod tests {
         // menu-text round-trip the engine hands in.
         let menu = crate::session::dead_end_menu_text();
         assert!(menu.contains("[G]") && menu.contains("[Q]"));
+    }
+
+    // ---- STORY-196: interactive /add as a first-class TUI flow --------------
+
+    // trace:STORY-196 | ai:claude — a recording persister local to the TUI tests:
+    // captures every (question, topic, link) the authoring core drives, and stamps a
+    // deterministic id so the flow's confirmation is assertable.
+    #[derive(Default)]
+    struct RecordingPersister {
+        calls:
+            std::cell::RefCell<Vec<(crate::model::Question, String, crate::persist::QuestionLink)>>,
+    }
+
+    impl crate::persist::UserAuthoredQuestionPersister for RecordingPersister {
+        fn persist_user_authored_question(
+            &self,
+            question: &crate::model::Question,
+            topic: &str,
+            link: &crate::persist::QuestionLink,
+        ) -> Result<crate::model::Question> {
+            self.calls
+                .borrow_mut()
+                .push((question.clone(), topic.to_string(), link.clone()));
+            let mut persisted = question.clone();
+            persisted.id = "Q-196".to_string();
+            Ok(persisted)
+        }
+    }
+
+    // trace:STORY-196 | ai:claude — push a line of text followed by Enter onto the
+    // scripted-event queue, mirroring a user typing the reply to one authoring prompt.
+    fn script_line(
+        tui: &mut TuiFrontEnd<BufReader<std::io::Empty>, ratatui::backend::TestBackend>,
+        text: &str,
+    ) {
+        for ch in text.chars() {
+            tui.scripted_events
+                .push_back(Event::Key(crossterm::event::KeyEvent::new(
+                    KeyCode::Char(ch),
+                    KeyModifiers::NONE,
+                )));
+        }
+        tui.scripted_events
+            .push_back(Event::Key(crossterm::event::KeyEvent::new(
+                KeyCode::Enter,
+                KeyModifiers::NONE,
+            )));
+    }
+
+    // trace:STORY-196 | ai:claude — the interactive `/add` flow drives the UNCHANGED
+    // STORY-87 authoring core through the live keystroke→line bridge: scripted replies
+    // to the SAME prompts (question text, then answer shape) the headless line
+    // front-end walks produce the expected Q-* object via the persister, the prompts
+    // render in the transcript, and the persisted confirmation lands — after which the
+    // engine re-presents the question (the override returns `Ok(())`).
+    #[test]
+    fn tui_interactive_add_walks_the_prompts_and_persists_the_question() {
+        let mut tui = test_tui(80, 24);
+        // Reply to the two authoring prompts the core emits with an empty bank +
+        // deterministic strategy (no dedup, no refinement → verbatim): the question
+        // text, then answer-shape choice `1` (Yes/No).
+        script_line(&mut tui, "Is the self an illusion?");
+        script_line(&mut tui, "1");
+
+        let strategy = crate::strategy::DeterministicNextQuestionStrategy;
+        let persister = RecordingPersister::default();
+        let link = crate::persist::QuestionLink::Begets {
+            origin_id: "Q-1".to_string(),
+        };
+
+        tui.author_question(&[], &strategy, &persister, "free-will", &link)
+            .expect("interactive add should drive the core to completion");
+
+        // The persister was driven with the authored title + the begets link + topic.
+        let calls = persister.calls.borrow();
+        assert_eq!(calls.len(), 1, "exactly one question persisted");
+        let (question, topic, persisted_link) = &calls[0];
+        assert_eq!(question.title, "Is the self an illusion?");
+        assert_eq!(question.answer_kind, AnswerKind::YesNo);
+        assert_eq!(topic, "free-will");
+        assert_eq!(persisted_link, &link);
+
+        // The SAME prompts the line front-end walks rendered in the transcript, and
+        // the persisted confirmation (Q-196, from the recording persister) landed —
+        // so the user saw the flow and control returned to the question afterward.
+        tui.flush_pending();
+        let transcript = tui.transcript.lines().join("\n");
+        assert!(transcript.contains("Question text:"), "{transcript}");
+        assert!(transcript.contains("Answer shape:"), "{transcript}");
+        assert!(transcript.contains("Q-196"), "{transcript}");
+    }
+
+    // trace:STORY-196 | ai:claude — the bridge feeds the core a MULTI-STEP reply
+    // (a multiple-choice question walks extra option prompts), proving the
+    // refill-per-line loop drives the whole back-and-forth, not just two prompts.
+    #[test]
+    fn tui_interactive_add_walks_multiple_choice_option_prompts() {
+        let mut tui = test_tui(80, 24);
+        script_line(&mut tui, "Which ethic guides you?"); // question text
+        script_line(&mut tui, "3"); // answer shape: multiple choice
+        script_line(&mut tui, "Duty"); // option 1
+        script_line(&mut tui, "Consequences"); // option 2
+        script_line(&mut tui, ""); // blank line ends the option list
+
+        let strategy = crate::strategy::DeterministicNextQuestionStrategy;
+        let persister = RecordingPersister::default();
+        let link = crate::persist::QuestionLink::Standalone;
+
+        tui.author_question(&[], &strategy, &persister, "ethics", &link)
+            .expect("multi-step add should complete");
+
+        let calls = persister.calls.borrow();
+        assert_eq!(calls.len(), 1);
+        let (question, _topic, _link) = &calls[0];
+        assert_eq!(
+            question.answer_kind,
+            AnswerKind::Choice(vec!["Duty".to_string(), "Consequences".to_string()])
+        );
+    }
+
+    // trace:STORY-196 | ai:claude — EOF (Ctrl-D) on the first authoring prompt
+    // unwinds the core GRACEFULLY (a usage error, not a hang): the bridge reports 0
+    // bytes, the core's `prompt_question_text` returns a "stdin closed" usage error,
+    // and the override propagates it so the session re-presents the question.
+    #[test]
+    fn tui_interactive_add_eof_unwinds_gracefully() {
+        let mut tui = test_tui(80, 24);
+        // A bare Ctrl-D before any text → the line bridge reports EOF.
+        tui.scripted_events
+            .push_back(Event::Key(crossterm::event::KeyEvent::new(
+                KeyCode::Char('d'),
+                KeyModifiers::CONTROL,
+            )));
+
+        let strategy = crate::strategy::DeterministicNextQuestionStrategy;
+        let persister = RecordingPersister::default();
+        let err = tui
+            .author_question(
+                &[],
+                &strategy,
+                &persister,
+                "free-will",
+                &crate::persist::QuestionLink::Standalone,
+            )
+            .expect_err("EOF on the first prompt is a usage error");
+        assert!(
+            matches!(err, QuizdomError::Usage(_)),
+            "expected a graceful usage error, got {err:?}"
+        );
+        assert!(
+            persister.calls.borrow().is_empty(),
+            "nothing persisted on EOF"
+        );
     }
 }
