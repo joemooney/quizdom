@@ -2391,5 +2391,31 @@ operations:
     req_type: Task
     status: Draft
     priority: Medium
-clock: 221
+- id: 019f7c34-2b97-7842-badc-facd78d60357
+  target_id: 019f7c34-276b-77b2-9b1b-a24a358952dd
+  author: aida
+  node_id: ''
+  lamport: 222
+  timestamp: 2026-07-19T21:07:01.655386866Z
+  kind: !Create
+    title: 'Review PR-87: [AI:claude] fix(db): db-migrate parity check reads edges independently via per-node ''aida rel list --type'' (BUG-231)'
+    description: |
+      Auto-filed by `aida pr auto-queue-review` (typically from /aida-pr) (session `019f7c26`) for branch `epic-202-2`.
+
+      - PR: <https://github.com/joemooney/quizdom/pull/87>
+      - Branch: `epic-202-2` → `main`
+
+      ## Covers
+
+      - BUG-231
+
+      ## Acceptance
+
+      - Generate a structured review prompt with `aida review prompt --pr 87` and verify each spec's acceptance criteria.
+      - Approve and merge, or request changes by spec id.
+      - Mark this story `completed` once the PR is merged.
+    req_type: Story
+    status: Approved
+    priority: Medium
+clock: 222
 node_id: ''

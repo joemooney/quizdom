@@ -1,0 +1,26 @@
+id: 019f7c34-276b-77b2-9b1b-a24a358952dd
+spec_id: STORY-234
+agreed_id: STORY-234
+title: 'Review PR-87: [AI:claude] fix(db): db-migrate parity check reads edges independently via per-node ''aida rel list --type'' (BUG-231)'
+description: |
+  Auto-filed by `aida pr auto-queue-review` (typically from /aida-pr) (session `019f7c26`) for branch `epic-202-2`.
+
+  - PR: <https://github.com/joemooney/quizdom/pull/87>
+  - Branch: `epic-202-2` → `main`
+
+  ## Covers
+
+  - BUG-231
+
+  ## Acceptance
+
+  - Generate a structured review prompt with `aida review prompt --pr 87` and verify each spec's acceptance criteria.
+  - Approve and merge, or request changes by spec id.
+  - Mark this story `completed` once the PR is merged.
+status: Approved
+priority: Medium
+owner: ''
+feature: Uncategorized
+created_at: 2026-07-19T21:07:00.587917324Z
+modified_at: 2026-07-19T21:07:00.587917324Z
+req_type: Story
