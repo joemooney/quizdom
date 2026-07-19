@@ -1,0 +1,14 @@
+id: 019f7bca-6afd-7502-8bf9-e978983d2818
+spec_id: TASK-JM-011
+title: 'queue work --auto-complete phase-1 orchestrator lost its own session: implement…'
+description: 'queue work --auto-complete phase-1 orchestrator lost its own session: implementer completed both specs and signalled via sentinel, but orchestrator could not match claude session id to a lease, parked EPIC-202, and the suggested recovery (queue work EPIC-202 --resume) then errored ''no recorded claude session for scope EPIC-202'' - both legs of its own recovery hint broken. Work was fine (PR 83, CI green); pipeline abandoned at phase 2. Observed 2026-07-19.'
+status: Draft
+priority: Medium
+owner: joe
+feature: Uncategorized
+created_at: 2026-07-19T19:11:31.069479767Z
+modified_at: 2026-07-19T19:11:31.069479767Z
+req_type: Task
+tags:
+- from-advisor:general
+- kind:observation
