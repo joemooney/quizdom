@@ -1,0 +1,24 @@
+id: 019f7c21-4104-77b3-9f73-93508c37e30c
+spec_id: TASK-230
+agreed_id: TASK-230
+title: 'Reviewer corrected stale PR-86 title (copied from PR #85) before merge'
+description: |
+  Reviewer fix-forwarded a metadata-only correction during review of PR-86.
+
+  Commit: none — no branch commit; `gh pr edit 86 --title ...` only (CI untouched, mergeStateStatus stayed CLEAN).
+  Files:  PR-86 metadata (title)
+  Change: title had been copied verbatim from PR #85 ("...recursive-CTE traversal (STORY-207) (#85)") while the PR's sole commit is the STORY-208 cutover; left uncorrected it could mislabel the squash-merge commit on main. Retitled to match the commit subject: "[AI:claude] feat(store): cutover to Dolt-only domain backend, retire ADR-31 BFS and ADR-22 weight tags (STORY-208)". Body deliberately left as-is — its `Aida-Store:` trailer also came from #85 but may be load-bearing, and the correct pin for this PR is not derivable by the reviewer.
+
+  Verdict: Approved (mergeStateStatus CLEAN confirmed after the edit).
+  PR: https://github.com/joemooney/quizdom/pull/86
+status: Draft
+priority: Medium
+owner: ''
+feature: Uncategorized
+created_at: 2026-07-19T20:46:21.956286565Z
+modified_at: 2026-07-19T20:46:21.956286565Z
+req_type: Task
+tags:
+- from-review:PR-86
+- kind:reviewer-fix-forward
+- severity:cosmetic
