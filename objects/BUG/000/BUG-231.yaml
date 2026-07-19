@@ -1,0 +1,12 @@
+id: 019f7c25-c5c8-7471-93e8-f9eed47f37ea
+spec_id: BUG-231
+agreed_id: BUG-231
+title: 'db-migrate exports 0 edges: edge read misses custom edges in the store, and the parity check shares the blind read so it self-passes'
+description: 'Repro (2026-07-19, main @ 14d2021): ''aida rel list Q-23 --type begets'' shows Q-26 and Q-27; ''aida rel list Q-23 --type probes'' shows TERM-24, TERM-25; Q-115 begets Q-116; Q-186 begets Q-192. Yet ''quizdom db-migrate'' reports ''Loaded 75 nodes and 0 edges'' and the parity report claims ''edges: none'' for BOTH aida-side and dolt-side - so the aida-side edge count in the parity check uses the same broken read as the exporter and cannot catch the loss. The spot-check ''begets lineage of Q-23 reaches 1 nodes'' matching on both sides is vacuous for the same reason. Likely cause: the edge leg reads via a path that cannot see custom edge types (the FR-282 limitation ADR-31 worked around) instead of ''aida rel list <node> --type <edge>'' per node. Severity: data-loss blocker - STORY-209 (delete domain objects from the AIDA store) MUST NOT run until this is fixed and a real migration shows edge parity. Acceptance: db-migrate loads every custom edge (begets/probes/refines/contradicts/agrees/disagrees) for all 75 nodes; the parity aida-side count is computed via per-node ''aida rel list --type'' (independent of the exporter read path); spot-check shows the Q-23 begets lineage reaching its real multi-hop depth; rerun stays idempotent.'
+status: Approved
+priority: Medium
+owner: ''
+feature: Uncategorized
+created_at: 2026-07-19T20:51:18.088009278Z
+modified_at: 2026-07-19T20:51:18.088009278Z
+req_type: Bug
