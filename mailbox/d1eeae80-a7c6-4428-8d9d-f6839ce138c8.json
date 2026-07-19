@@ -1,0 +1,15 @@
+{
+  "id": "d1eeae80-a7c6-4428-8d9d-f6839ce138c8",
+  "thread_id": "d1eeae80-a7c6-4428-8d9d-f6839ce138c8",
+  "from": "joe",
+  "to": {
+    "kind": "agent",
+    "agent": "advisor"
+  },
+  "timestamp": 1784486202278,
+  "body": "Burn-down complete (--status approved).\n\nCompleted: TASK-199 (top-level --help fix) https://github.com/joemooney/quizdom/pull/81 · STORY-198 (root README quickstart) https://github.com/joemooney/quizdom/pull/82\nCaveats / verifications worth noting: Both specs carried batch:onboarding, so they were drained in two successive single-spec waves (help fix first so the README documents the corrected CLI) rather than co-fanned. Merge-driven Done→Completed auto-bump did not fire on pull for either spec; both required the 'aida db reconcile-status --spec' fallback — may be worth a look. Integrated-main verification after each wave was cargo build (compile check) plus each PR's own green CI.\nLeft for manual merge: none\nParked (with reason): none (gate parked nothing; no punts)",
+  "urgent": false,
+  "intent": "handoff",
+  "retracted": false,
+  "deleted": false
+}
