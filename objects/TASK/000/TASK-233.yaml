@@ -1,0 +1,25 @@
+id: 019f7c2f-fffd-78e1-8168-7f30b74d3ee9
+spec_id: TASK-233
+agreed_id: TASK-233
+title: Six pre-existing clippy 1.92 lints in input.rs / session.rs (CI does not gate on -D warnings)
+description: |
+  'cargo clippy --all-targets -- -D warnings' fails on six pre-existing lints
+  untouched by BUG-231: io::Error::other x3 (crates/quizdom/src/input.rs:368,
+  398, 610), write! ending in newline (input.rs:657), and too-many-arguments
+  8/7 x2 (crates/quizdom/src/session.rs:5045, 5124). CI runs clippy WITHOUT
+  -D warnings so these do not gate merges, but they will bite anyone running
+  the stricter local invocation or if CI is ever tightened.
+
+  Raised by the implementer while working BUG-231.
+  Branch: epic-202-2  ·  Commit: c68d412  (PR link added on merge)
+status: Draft
+priority: Medium
+owner: ''
+feature: Uncategorized
+created_at: 2026-07-19T21:02:28.349062227Z
+modified_at: 2026-07-19T21:02:28.349062227Z
+req_type: Task
+tags:
+- from-implementer:BUG-231
+- kind:bug-spotted
+- severity:cosmetic
