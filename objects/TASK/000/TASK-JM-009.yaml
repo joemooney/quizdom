@@ -1,0 +1,14 @@
+id: 019f7b89-89ad-7401-ac58-51e5594bc3ad
+spec_id: TASK-JM-009
+title: backlog/burndown surfaces count domain-graph objects as blessable candidates
+description: 'Observed in the 2026-07-19 /aida-backlog-groom pass: ''aida burndown plan --candidates'' and ''aida backlog list'' surfaced 60 candidates that are ALL domain data or records (Q-*/TERM-*/BELIEF-* seed objects, ADR-* decisions, VIS-* visions) — zero real work items. The surfaces filter on status (approved + pickable) only, with no ''is a work item'' notion, so on a project that dogfoods AIDA as a data substrate (VIS-2) the grooming view is pure noise. Candidate: exclude non-work types (term/decision/vision) by default from backlog/burndown surfaces, or add a work-item type-class filter. Advisor mitigation meanwhile: ''aida backlog list --type task,story,bug''.'
+status: Draft
+priority: Medium
+owner: joe
+feature: Uncategorized
+created_at: 2026-07-19T18:00:39.085164486Z
+modified_at: 2026-07-19T18:00:39.085164486Z
+req_type: Task
+tags:
+- from-advisor:general
+- kind:observation
