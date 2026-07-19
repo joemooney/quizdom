@@ -1579,5 +1579,17 @@ operations:
     req_type: Task
     status: Draft
     priority: Medium
-clock: 163
+- id: 019f7b8c-3566-7951-975b-d712954424d9
+  target_id: 019f7b8c-33a0-7182-89d8-13191d4a3bd3
+  author: aida
+  node_id: ''
+  lamport: 164
+  timestamp: 2026-07-19T18:03:34.118138664Z
+  kind: !Create
+    title: 'Add root README.md: human-facing quickstart (prereqs, build/run, subcommands, env vars)'
+    description: 'Repo has OVERVIEW.md (vision) and CLAUDE.md (agent guidance) but no README.md — a human landing on the repo can''t tell how to run it (surfaced 2026-07-19). Content: one-paragraph what-it-is (link OVERVIEW.md), prereqs (aida CLI + store on the aida-store branch; claude CLI as default LLM backend per ADR-39), quickstart (cargo run -p quizdom; session start --seed Q-23 --mode socratic; session resume; contradictions/curate/question add), env vars (QUIZDOM_BACKEND, QUIZDOM_MODEL, QUIZDOM_CLAUDE_COMMAND, QUIZDOM_STRATEGY, ANTHROPIC_API_KEY, NO_COLOR), and pointer to docs/architecture/graph-schema.md. Decision noted: NO run.sh wrapper — cargo run is one line and the flags are the interface. Acceptance: README.md at root covering the above; commands verified against the current CLI; CLAUDE.md dev section stays the agent-facing source (no duplication drift — README links it).'
+    req_type: Story
+    status: Draft
+    priority: Medium
+clock: 164
 node_id: ''
