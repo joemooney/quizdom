@@ -1567,5 +1567,17 @@ operations:
   timestamp: 2026-07-19T17:59:41.571922361Z
   kind: !SetStatus
     status: Completed
-clock: 162
+- id: 019f7b89-6d67-7442-95bc-c3bb8a5af4cb
+  target_id: 019f7b89-6953-78d0-953e-5c0be7ecf100
+  author: aida
+  node_id: ''
+  lamport: 163
+  timestamp: 2026-07-19T18:00:31.847326760Z
+  kind: !Create
+    title: Adopt 'aida graph --follow' for domain traversal; revisit ADR-31 app-side one-hop BFS
+    description: 'Upstream FR-282 shipped: ''aida graph <id> --follow probes --follow begets'' now does transitive traversal over custom edge types, which is exactly the gap ADR-31 worked around with app-side one-hop ''aida rel list'' BFS (see TASK-30). Evaluate replacing (or backing) the app-side walker with the native traversal: check depth limiting, output format parseability, and whether query_graph''s MCP mirror also supports follow mode. If adopted, amend ADR-31 with the reversal note. Acceptance: a decision comment on ADR-31 (adopt / keep app-side / hybrid) plus, if adopting, the session engine walking Q -> TERM -> follow-ups via --follow with tests.'
+    req_type: Task
+    status: Draft
+    priority: Medium
+clock: 163
 node_id: ''
