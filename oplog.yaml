@@ -2337,5 +2337,38 @@ operations:
   timestamp: 2026-07-19T20:52:15.694231393Z
   kind: !SetStatus
     status: In Progress
-clock: 219
+- id: 019f7c2f-f102-7262-b328-e9275cdd9aa8
+  target_id: 019f7c2f-eed1-7a53-9d25-a6347fe576fa
+  author: aida
+  node_id: ''
+  lamport: 220
+  timestamp: 2026-07-19T21:02:24.514999804Z
+  kind: !Create
+    title: BUG-231 0-edge repro not reproducible; exporter kept on show-parse, parity hardened instead
+    description: |
+      The filed repro ('Loaded 75 nodes and 0 edges' on main @ 14d2021) did not
+      reproduce: with the current aida binary the exporter's Relations:-section
+      parse (pinned AIDA_OUTPUT_FORMAT=human, BUG-200) sees all 75 custom edges,
+      so the 0-edge state most likely came from an earlier aida version whose
+      show output did not render custom edge kinds (the FR-282 limitation).
+
+      Design call within spec scope: rather than switching the exporter's edge
+      read to 'aida rel list' (which would have re-collapsed the two reads into
+      one path), the exporter stays on the show-parse and the parity check gained
+      an independent per-node 'aida rel list <id> --type <kind>' read - exactly
+      what the acceptance asked for - plus an edge-by-edge cross-check between
+      the two reads (crates/quizdom/src/db_migrate.rs, cross_check_edge_reads).
+      Either leg going blind is now a hard parity error.
+
+      Advisor note: the STORY-209 gate ("MUST NOT run until a real migration
+      shows edge parity") is satisfied - a real migration now reports 75/75 edges,
+      cross-check green, Q-23 begets lineage at its true 71-node depth, rerun
+      idempotent.
+
+      Raised by the implementer while working BUG-231.
+      Branch: epic-202-2  ·  Commit: c68d412  (PR link added on merge)
+    req_type: Task
+    status: Draft
+    priority: Medium
+clock: 220
 node_id: ''
