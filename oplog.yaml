@@ -1673,5 +1673,17 @@ operations:
     req_type: Decision
     status: Approved
     priority: Medium
-clock: 172
+- id: 019f7baf-7b61-7533-84cc-07a7dda65ff2
+  target_id: 019f7baf-7934-7863-a787-0001f14c0af1
+  author: aida
+  node_id: ''
+  lamport: 173
+  timestamp: 2026-07-19T18:42:05.793771412Z
+  kind: !Create
+    title: Migrate quizdom domain graph from AIDA store to Dolt (ADR-201)
+    description: 'Move the domain payload (Q-*, BELIEF-*, TERM-* domain objects and their custom edges) from .aida-store into a Dolt database. Scope: (1) design SQL schema mirroring docs/architecture/graph-schema.md - nodes table with typed kind + numeric weight column, edges table with typed edge kinds; (2) harden the existing aida-spawn choke point into a storage trait so backends are swappable; (3) exporter: read domain objects from the AIDA store and load into Dolt; (4) swap quizdom reads/writes to the Dolt backend (dolt sql-server or dolt sql -r json CLI - decide and register any port in ~/.ports); (5) retire ADR-31 one-hop BFS in favor of recursive CTE traversal and ADR-22 weight:N tags in favor of the weight column; (6) remove domain objects from the AIDA store once parity is verified; (7) update CLAUDE.md, OVERVIEW.md, and graph-schema.md. Acceptance: cargo run -p quizdom sessions work end-to-end against Dolt with no aida spawns for domain reads/writes; AIDA backlog/burndown surfaces show zero domain objects.'
+    req_type: Epic
+    status: Approved
+    priority: Medium
+clock: 173
 node_id: ''
