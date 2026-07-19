@@ -1,6 +1,16 @@
 // trace:EPIC-9 | ai:claude
 fn main() {
     let args: Vec<String> = std::env::args().skip(1).collect();
+    // trace:TASK-199 | ai:claude — top-level `--help`/`-h` (and bare `help`)
+    // prints the full command list on stdout and exits 0; each subcommand
+    // keeps its own `-h`.
+    if matches!(
+        args.first().map(String::as_str),
+        Some("--help" | "-h" | "help")
+    ) {
+        println!("{}", quizdom::top_level_usage());
+        return;
+    }
     let result = match args.first().map(String::as_str) {
         Some("contradictions") => quizdom::run_contradictions(args, &mut std::io::stdout()),
         // trace:STORY-72 | ai:claude

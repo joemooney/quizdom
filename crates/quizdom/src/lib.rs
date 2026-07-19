@@ -91,5 +91,33 @@ pub use synopsis::{
 // trace:STORY-77 | ai:claude
 pub use transcript::{render_transcript, run_session_show};
 
+/// Top-level usage text listing every subcommand the binary dispatches.
+///
+/// `quizdom --help` prints this and exits 0 (each subcommand keeps its own
+/// `-h`). Keep the command list in sync with the dispatch in `main.rs`.
+// trace:TASK-199 | ai:claude
+pub fn top_level_usage() -> String {
+    [
+        "usage: quizdom [command] [options]",
+        "",
+        "Running with no command starts a new session (same as `session start`).",
+        "",
+        "Commands:",
+        "  session start            Start a new session (interactive TUI on a TTY)",
+        "  session resume [id]      Resume a session; omit id to resume latest",
+        "  session list             List saved sessions for a user",
+        "  session fork             Fork a proposition into agree/disagree branches",
+        "  session show <id>        Pretty-print a saved session's full transcript",
+        "  session synopsis <id>    Summarize a saved session's arc",
+        "  contradictions           Detect contradictions among adopted beliefs",
+        "  curate                   Re-weight the question bank from session signals",
+        "  question add             Author a new question into the bank",
+        "  -h, --help               Show this help",
+        "",
+        "Run `quizdom <command> --help` for command-specific options.",
+    ]
+    .join("\n")
+}
+
 #[cfg(test)]
 mod tests;

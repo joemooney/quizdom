@@ -2753,6 +2753,25 @@ fn session_help_lists_commands_flags_and_resume_examples() {
     assert_eq!(resume_help, help);
 }
 
+// trace:TASK-199 | ai:claude
+#[test]
+fn top_level_usage_lists_every_dispatched_subcommand() {
+    let help = crate::top_level_usage();
+
+    assert!(help.starts_with("usage: quizdom"));
+    assert!(help.contains("Commands:"));
+    assert!(help.contains("session start"));
+    assert!(help.contains("session resume"));
+    assert!(help.contains("session list"));
+    assert!(help.contains("session fork"));
+    assert!(help.contains("session show"));
+    assert!(help.contains("session synopsis"));
+    assert!(help.contains("contradictions"));
+    assert!(help.contains("curate"));
+    assert!(help.contains("question add"));
+    assert!(help.contains("quizdom <command> --help"));
+}
+
 // trace:BUG-71 | ai:codex
 #[test]
 fn session_start_records_strategy_and_llm_backend() {
