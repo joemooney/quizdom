@@ -1,9 +1,14 @@
-use crate::aida_cmd::aida_command;
 use crate::bank::rewrite_weight_and_quality_tags;
-use crate::error::{QuizdomError, Result};
+#[cfg(test)]
+use crate::error::QuizdomError;
+use crate::error::Result;
 use crate::model::{AnswerKind, Question, TermDefinition};
+use crate::store::{AidaDomainStore, DomainStore, EdgeKind, NewNode, NodeKind};
 use crate::strategy::{reweight, QualitySignal};
-use std::process::Output;
+
+// trace:STORY-204 | ai:claude — the runner seam lives in the store module now;
+// re-exported so existing test doubles keep their import path.
+pub(crate) use crate::store::CommandRunner;
 
 pub trait GeneratedQuestionPersister {
     /// Persist a generated follow-on linked to `origin` via a `begets` edge.
@@ -117,66 +122,45 @@ impl GeneratedQuestionPersister for NoopGeneratedQuestionPersister {
     }
 }
 
-pub(crate) trait CommandRunner {
-    fn run(&self, program: &str, args: &[String]) -> Result<Output>;
+pub(crate) struct AidaCliGeneratedQuestionPersister<S = AidaDomainStore> {
+    store: S,
 }
 
-pub(crate) struct SystemCommandRunner;
-
-impl CommandRunner for SystemCommandRunner {
-    // trace:BUG-200 | ai:claude — spawn via the pinned-format choke point.
-    fn run(&self, program: &str, args: &[String]) -> Result<Output> {
-        aida_command(program)
-            .args(args)
-            .output()
-            .map_err(Into::into)
-    }
-}
-
-pub(crate) struct AidaCliGeneratedQuestionPersister<R = SystemCommandRunner> {
-    command: String,
-    runner: R,
-}
-
-impl Default for AidaCliGeneratedQuestionPersister<SystemCommandRunner> {
+impl Default for AidaCliGeneratedQuestionPersister {
     fn default() -> Self {
         Self {
-            command: "aida".to_string(),
-            runner: SystemCommandRunner,
+            store: AidaDomainStore::default(),
         }
     }
 }
 
-pub(crate) struct AidaCliUserSpecificTermPersister<R = SystemCommandRunner> {
-    command: String,
-    runner: R,
+pub(crate) struct AidaCliUserSpecificTermPersister<S = AidaDomainStore> {
+    store: S,
 }
 
-impl Default for AidaCliUserSpecificTermPersister<SystemCommandRunner> {
+impl Default for AidaCliUserSpecificTermPersister {
     fn default() -> Self {
         Self {
-            command: "aida".to_string(),
-            runner: SystemCommandRunner,
+            store: AidaDomainStore::default(),
         }
     }
 }
 
-impl<R> AidaCliUserSpecificTermPersister<R>
+impl<R> AidaCliUserSpecificTermPersister<AidaDomainStore<R>>
 where
     R: CommandRunner,
 {
     #[cfg(test)]
     pub(crate) fn new(command: impl Into<String>, runner: R) -> Self {
         Self {
-            command: command.into(),
-            runner,
+            store: AidaDomainStore::new(command, runner),
         }
     }
 }
 
-impl<R> UserSpecificTermPersister for AidaCliUserSpecificTermPersister<R>
+impl<S> UserSpecificTermPersister for AidaCliUserSpecificTermPersister<S>
 where
-    R: CommandRunner,
+    S: DomainStore,
 {
     fn persist_user_specific_term(
         &self,
@@ -203,28 +187,12 @@ where
         let description = format!(
             "source: user-specific quizdom steering fallback.\n\ndefinition: {meaning}\n\nscope: user-specific definition captured only after shared bank definitions did not fit."
         );
-        let args = vec![
-            "add".to_string(),
-            "--type".to_string(),
-            "term".to_string(),
-            "--status".to_string(),
-            "approved".to_string(),
-            "--priority".to_string(),
-            "medium".to_string(),
-            "--title".to_string(),
-            title.clone(),
-            "--description".to_string(),
-            description.clone(),
-            "--tags".to_string(),
-            tags.join(","),
-        ];
-        let output = self.runner.run(&self.command, &args)?;
-        if !output.status.success() {
-            return Err(QuizdomError::Aida(
-                String::from_utf8_lossy(&output.stderr).to_string(),
-            ));
-        }
-        let id = parse_added_term_id(&String::from_utf8_lossy(&output.stdout))?;
+        let id = self.store.create_node(&NewNode {
+            kind: NodeKind::Term,
+            title: title.clone(),
+            description,
+            tags: tags.clone(),
+        })?;
         Ok(TermDefinition {
             id,
             title,
@@ -234,22 +202,21 @@ where
     }
 }
 
-impl<R> AidaCliGeneratedQuestionPersister<R>
+impl<R> AidaCliGeneratedQuestionPersister<AidaDomainStore<R>>
 where
     R: CommandRunner,
 {
     #[cfg(test)]
     pub(crate) fn new(command: impl Into<String>, runner: R) -> Self {
         Self {
-            command: command.into(),
-            runner,
+            store: AidaDomainStore::new(command, runner),
         }
     }
 }
 
-impl<R> GeneratedQuestionPersister for AidaCliGeneratedQuestionPersister<R>
+impl<S> GeneratedQuestionPersister for AidaCliGeneratedQuestionPersister<S>
 where
-    R: CommandRunner,
+    S: DomainStore,
 {
     fn persist_generated_question(
         &self,
@@ -261,46 +228,13 @@ where
         let topic = question_topic(origin);
         let tags = generated_question_tags(&topic, &question.answer_kind, from_answer);
         let description = generated_question_description(question, origin);
-        let add_args = vec![
-            "add".to_string(),
-            "--prefix".to_string(),
-            "Q".to_string(),
-            "--type".to_string(),
-            "functional".to_string(),
-            "--status".to_string(),
-            "approved".to_string(),
-            "--priority".to_string(),
-            "medium".to_string(),
-            "--title".to_string(),
-            question.title.clone(),
-            "--description".to_string(),
+        let id = self.store.create_node(&NewNode {
+            kind: NodeKind::Question,
+            title: question.title.clone(),
             description,
-            "--tags".to_string(),
-            tags.join(","),
-        ];
-        let add_output = self.runner.run(&self.command, &add_args)?;
-        if !add_output.status.success() {
-            return Err(QuizdomError::Aida(
-                String::from_utf8_lossy(&add_output.stderr).to_string(),
-            ));
-        }
-        let id = parse_added_question_id(&String::from_utf8_lossy(&add_output.stdout))?;
-        let rel_args = vec![
-            "rel".to_string(),
-            "add".to_string(),
-            "--from".to_string(),
-            origin.id.clone(),
-            "--to".to_string(),
-            id.clone(),
-            "--type".to_string(),
-            "begets".to_string(),
-        ];
-        let rel_output = self.runner.run(&self.command, &rel_args)?;
-        if !rel_output.status.success() {
-            return Err(QuizdomError::Aida(
-                String::from_utf8_lossy(&rel_output.stderr).to_string(),
-            ));
-        }
+            tags: tags.clone(),
+        })?;
+        self.store.create_edge(&origin.id, &id, EdgeKind::Begets)?;
 
         let mut persisted = question.clone();
         persisted.id = id;
@@ -323,36 +257,33 @@ const USER_AUTHORED_NEUTRAL_WEIGHT: u32 = 50;
 // Foundational persister (per the spec): the type + edge wiring land here. The
 // standalone `quizdom question add` command (STORY-87) and the in-session
 // quick-add control (STORY-88) both drive it via the shared authoring core.
-pub(crate) struct AidaCliUserAuthoredQuestionPersister<R = SystemCommandRunner> {
-    command: String,
-    runner: R,
+pub(crate) struct AidaCliUserAuthoredQuestionPersister<S = AidaDomainStore> {
+    store: S,
 }
 
-impl Default for AidaCliUserAuthoredQuestionPersister<SystemCommandRunner> {
+impl Default for AidaCliUserAuthoredQuestionPersister {
     fn default() -> Self {
         Self {
-            command: "aida".to_string(),
-            runner: SystemCommandRunner,
+            store: AidaDomainStore::default(),
         }
     }
 }
 
-impl<R> AidaCliUserAuthoredQuestionPersister<R>
+impl<R> AidaCliUserAuthoredQuestionPersister<AidaDomainStore<R>>
 where
     R: CommandRunner,
 {
     #[cfg(test)]
     pub(crate) fn new(command: impl Into<String>, runner: R) -> Self {
         Self {
-            command: command.into(),
-            runner,
+            store: AidaDomainStore::new(command, runner),
         }
     }
 }
 
-impl<R> UserAuthoredQuestionPersister for AidaCliUserAuthoredQuestionPersister<R>
+impl<S> UserAuthoredQuestionPersister for AidaCliUserAuthoredQuestionPersister<S>
 where
-    R: CommandRunner,
+    S: DomainStore,
 {
     fn persist_user_authored_question(
         &self,
@@ -363,51 +294,18 @@ where
         // trace:STORY-85 | ai:claude
         let tags = user_authored_question_tags(topic, &question.answer_kind);
         let description = user_authored_question_description(question, topic, link);
-        let add_args = vec![
-            "add".to_string(),
-            "--prefix".to_string(),
-            "Q".to_string(),
-            "--type".to_string(),
-            "functional".to_string(),
-            "--status".to_string(),
-            "approved".to_string(),
-            "--priority".to_string(),
-            "medium".to_string(),
-            "--title".to_string(),
-            question.title.clone(),
-            "--description".to_string(),
+        let id = self.store.create_node(&NewNode {
+            kind: NodeKind::Question,
+            title: question.title.clone(),
             description,
-            "--tags".to_string(),
-            tags.join(","),
-        ];
-        let add_output = self.runner.run(&self.command, &add_args)?;
-        if !add_output.status.success() {
-            return Err(QuizdomError::Aida(
-                String::from_utf8_lossy(&add_output.stderr).to_string(),
-            ));
-        }
-        let id = parse_added_question_id(&String::from_utf8_lossy(&add_output.stdout))?;
+            tags: tags.clone(),
+        })?;
 
         // Wire the requested edge. The edge direction follows the graph schema:
         // `begets` is `origin -> new`, `probes` is `new -> term`. A standalone
         // seed gets no edge.
         if let Some((from, to, edge)) = link.rel_endpoints(&id) {
-            let rel_args = vec![
-                "rel".to_string(),
-                "add".to_string(),
-                "--from".to_string(),
-                from,
-                "--to".to_string(),
-                to,
-                "--type".to_string(),
-                edge.to_string(),
-            ];
-            let rel_output = self.runner.run(&self.command, &rel_args)?;
-            if !rel_output.status.success() {
-                return Err(QuizdomError::Aida(
-                    String::from_utf8_lossy(&rel_output.stderr).to_string(),
-                ));
-            }
+            self.store.create_edge(&from, &to, edge)?;
         }
 
         let mut persisted = question.clone();
@@ -420,16 +318,17 @@ where
 
 // trace:STORY-85 | ai:claude
 impl QuestionLink {
-    /// Resolve the `(from, to, edge)` triple for `aida rel add`, or `None` for
-    /// a standalone seed. `new_id` is the id of the freshly created Q-object.
+    /// Resolve the `(from, to, edge)` triple for the edge to create, or `None`
+    /// for a standalone seed. `new_id` is the id of the freshly created
+    /// Q-object.
     #[allow(dead_code)]
-    fn rel_endpoints(&self, new_id: &str) -> Option<(String, String, &'static str)> {
+    fn rel_endpoints(&self, new_id: &str) -> Option<(String, String, EdgeKind)> {
         match self {
             QuestionLink::Begets { origin_id } => {
-                Some((origin_id.clone(), new_id.to_string(), "begets"))
+                Some((origin_id.clone(), new_id.to_string(), EdgeKind::Begets))
             }
             QuestionLink::Probes { term_id } => {
-                Some((new_id.to_string(), term_id.clone(), "probes"))
+                Some((new_id.to_string(), term_id.clone(), EdgeKind::Probes))
             }
             QuestionLink::Standalone => None,
         }
@@ -509,54 +408,40 @@ fn apply_reweight(question: &Question, signal: QualitySignal) -> Question {
 }
 
 #[allow(dead_code)]
-pub(crate) struct AidaCliQuestionReweighter<R = SystemCommandRunner> {
-    command: String,
-    runner: R,
+pub(crate) struct AidaCliQuestionReweighter<S = AidaDomainStore> {
+    store: S,
 }
 
 #[allow(dead_code)]
-impl Default for AidaCliQuestionReweighter<SystemCommandRunner> {
+impl Default for AidaCliQuestionReweighter {
     fn default() -> Self {
         Self {
-            command: "aida".to_string(),
-            runner: SystemCommandRunner,
+            store: AidaDomainStore::default(),
         }
     }
 }
 
-impl<R> AidaCliQuestionReweighter<R>
+impl<R> AidaCliQuestionReweighter<AidaDomainStore<R>>
 where
     R: CommandRunner,
 {
     #[cfg(test)]
     pub(crate) fn new(command: impl Into<String>, runner: R) -> Self {
         Self {
-            command: command.into(),
-            runner,
+            store: AidaDomainStore::new(command, runner),
         }
     }
 }
 
-impl<R> QuestionReweighter for AidaCliQuestionReweighter<R>
+impl<S> QuestionReweighter for AidaCliQuestionReweighter<S>
 where
-    R: CommandRunner,
+    S: DomainStore,
 {
     fn reweight_question(&self, question: &Question, signal: QualitySignal) -> Result<Question> {
         let updated = apply_reweight(question, signal);
-        // `weight:N` and `quality:*` are single-valued tags, so we set the full
-        // recomputed tag list back with `aida edit --tags` (replace semantics).
-        let args = vec![
-            "edit".to_string(),
-            question.id.clone(),
-            "--tags".to_string(),
-            updated.tags.join(","),
-        ];
-        let output = self.runner.run(&self.command, &args)?;
-        if !output.status.success() {
-            return Err(QuizdomError::Aida(
-                String::from_utf8_lossy(&output.stderr).to_string(),
-            ));
-        }
+        // `weight:N` and `quality:*` are single-valued tags, so the full
+        // recomputed tag list is written back with replace semantics.
+        self.store.replace_tags(&question.id, &updated.tags)?;
         Ok(updated)
     }
 }
@@ -596,22 +481,6 @@ fn generated_question_description(question: &Question, origin: &Question) -> Str
         origin.id,
         origin.title
     )
-}
-
-fn parse_added_question_id(output: &str) -> Result<String> {
-    output
-        .split(|character: char| character.is_whitespace() || character == ':')
-        .find(|token| token.starts_with("Q-"))
-        .map(str::to_string)
-        .ok_or_else(|| QuizdomError::Parse("aida add output did not include Q id".to_string()))
-}
-
-fn parse_added_term_id(output: &str) -> Result<String> {
-    output
-        .split(|character: char| character.is_whitespace() || character == ':')
-        .find(|token| token.starts_with("TERM-"))
-        .map(str::to_string)
-        .ok_or_else(|| QuizdomError::Parse("aida add output did not include TERM id".to_string()))
 }
 
 // trace:STORY-66 | ai:claude
@@ -695,7 +564,7 @@ mod reweight_tests {
             ]
         );
 
-        let calls = reweighter.runner.calls.borrow();
+        let calls = reweighter.store.runner.calls.borrow();
         assert_eq!(calls.len(), 1);
         assert_eq!(calls[0].0, "aida");
         assert_eq!(
@@ -718,7 +587,7 @@ mod reweight_tests {
             .expect("reweight should succeed");
 
         assert_eq!(updated.weight, 38);
-        let calls = reweighter.runner.calls.borrow();
+        let calls = reweighter.store.runner.calls.borrow();
         assert_eq!(
             calls[0].1[3],
             "topic:meaning,weight:38,quality:unhelpful".to_string()
@@ -737,7 +606,7 @@ mod reweight_tests {
             .expect("reweight should succeed");
 
         assert_eq!(updated.weight, 0);
-        let calls = reweighter.runner.calls.borrow();
+        let calls = reweighter.store.runner.calls.borrow();
         assert_eq!(
             calls[0].1[3],
             "topic:meaning,weight:0,quality:punted".to_string()
@@ -868,7 +737,7 @@ mod user_authored_tests {
             ]
         );
 
-        let calls = persister.runner.calls.borrow();
+        let calls = persister.store.runner.calls.borrow();
         // Standalone -> exactly one call (the add), no rel edge.
         assert_eq!(calls.len(), 1);
         let add = &calls[0].1;
@@ -897,7 +766,7 @@ mod user_authored_tests {
             .expect("begets create should succeed");
 
         assert_eq!(persisted.id, "Q-30");
-        let calls = persister.runner.calls.borrow();
+        let calls = persister.store.runner.calls.borrow();
         assert_eq!(calls.len(), 2);
         let rel = &calls[1].1;
         assert_eq!(rel[0], "rel");
@@ -926,7 +795,7 @@ mod user_authored_tests {
 
         assert_eq!(persisted.id, "Q-31");
         assert!(persisted.tags.contains(&"answer:free-text".to_string()));
-        let calls = persister.runner.calls.borrow();
+        let calls = persister.store.runner.calls.borrow();
         assert_eq!(calls.len(), 2);
         let rel = &calls[1].1;
         // probes is new -> term.
@@ -961,7 +830,7 @@ mod user_authored_tests {
             other => panic!("expected Aida error, got {other:?}"),
         }
         // The failed add must not be followed by a rel add.
-        assert_eq!(persister.runner.calls.borrow().len(), 1);
+        assert_eq!(persister.store.runner.calls.borrow().len(), 1);
     }
 
     #[test]

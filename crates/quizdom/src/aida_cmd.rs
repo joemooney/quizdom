@@ -44,9 +44,10 @@ mod tests {
 
     #[test]
     fn no_raw_command_spawns_outside_the_choke_point() {
-        // `editor.rs` spawns `$EDITOR`, not `aida`, so it may build its own
-        // Command; everything else must go through `aida_command`.
-        const ALLOWED: &[&str] = &["aida_cmd.rs", "editor.rs"];
+        // `editor.rs` spawns `$EDITOR` and `db_init.rs` spawns `dolt` — not
+        // `aida` — so they may build their own Command; everything else must
+        // go through `aida_command`.
+        const ALLOWED: &[&str] = &["aida_cmd.rs", "db_init.rs", "editor.rs"];
         let src_dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
         let mut offenders = Vec::new();
         for entry in std::fs::read_dir(&src_dir).expect("read src dir") {
