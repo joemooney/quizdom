@@ -1996,5 +1996,32 @@ operations:
   timestamp: 2026-07-19T19:35:10.390721466Z
   kind: !SetStatus
     status: In Progress
-clock: 195
+- id: 019f7be4-e010-7692-93a2-2523f48a7a7b
+  target_id: 019f7be4-de86-7bb1-8514-34a4e158ecbe
+  author: aida
+  node_id: ''
+  lamport: 196
+  timestamp: 2026-07-19T19:40:24.976034673Z
+  kind: !Create
+    title: 'db-migrate: parse_show_relations scans whole show output, not just the Relations: section'
+    description: |
+      `parse_show_relations` (crates/quizdom/src/db_migrate.rs:343-357) filters every
+      line of the `aida show <id> --full` output for the shape `↳ <kind> <target>` and
+      keeps any line whose kind is one of the six custom edge kinds. The `Relations:`
+      section is not bounded — so a node *description* that happens to contain such a
+      line (e.g. pasted show output, or authored text like `↳ begets Q-5 (…)`) would
+      fabricate a phantom edge. If the target is a migrated domain node the edge is
+      silently inserted into Dolt; parity still passes because both sides count it.
+
+      Fix: bound the scan to the lines between `Relations:` and `Centrality:` (the
+      same landmarks extract_description already uses).
+
+      Non-blocking: real-store migration parity was clean during review; this is a
+      contrived-input hardening, not an observed bug.
+
+      Raised in review of PR-84: https://github.com/joemooney/quizdom/pull/84#issuecomment-5017116687
+    req_type: Task
+    status: Draft
+    priority: Medium
+clock: 196
 node_id: ''
