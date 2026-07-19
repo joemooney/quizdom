@@ -6,18 +6,23 @@
 //!
 //! Reads through the `aida` CLI exactly like the [`crate::store`] backend
 //! does (two `aida list` calls for the id inventory, one `aida show <id>
-//! --full` per node — the `Relations:` section carries every outgoing edge,
-//! so no per-edge `rel list` calls are needed), converts the ADR-22
-//! `weight:N` tag into the numeric `weight` column, and writes via `dolt
-//! sql`. Re-running is safe: nodes upsert (`INSERT … ON DUPLICATE KEY
-//! UPDATE`) and edges insert-ignore against their duplicate-proof primary
-//! key.
+//! --full` per node — the `Relations:` section carries every outgoing edge),
+//! converts the ADR-22 `weight:N` tag into the numeric `weight` column, and
+//! writes via `dolt sql`. Re-running is safe: nodes upsert (`INSERT … ON
+//! DUPLICATE KEY UPDATE`) and edges insert-ignore against their
+//! duplicate-proof primary key.
 //!
 //! Every run ends with a parity report — node count per kind and edge count
 //! per kind, aida-side vs Dolt-side — plus a spot-check that walks a `begets`
 //! lineage (default root `Q-23`, the free-will seed) with a recursive CTE in
-//! Dolt and compares the reached set against an app-side BFS over the edges
-//! just read from aida. Any mismatch is an error.
+//! Dolt and compares the reached set against an app-side BFS. Any mismatch is
+//! an error.
+//!
+//! The aida-side edge truth in that report is NOT the exporter's own read
+//! (BUG-231: a blind spot shared by both sides self-passes). It is a second,
+//! independent read — per-node `aida rel list <id> --type <kind>` — that is
+//! cross-checked edge-by-edge against what the exporter parsed out of the
+//! `Relations:` sections, and that also feeds the spot-check BFS.
 
 use crate::db_init::{DoltRunner, SystemDoltRunner, DEFAULT_DOLT_DB_PATH};
 use crate::error::{QuizdomError, Result};
@@ -56,7 +61,8 @@ struct DomainNode {
     body: String,
 }
 
-/// A custom edge as read from a node's `Relations:` section.
+/// A custom edge as read from the AIDA store — by the exporter (a node's
+/// `Relations:` section) or by the independent `rel list` verification read.
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct DomainEdge {
     from: String,
@@ -176,7 +182,6 @@ fn db_migrate(
     let (kept, skipped): (Vec<DomainEdge>, Vec<DomainEdge>) = edges
         .into_iter()
         .partition(|edge| known.contains(edge.from.as_str()) && known.contains(edge.to.as_str()));
-    let edge_counts = count_by(kept.iter().map(|edge| edge.kind.clone()));
     for edge in &skipped {
         writeln!(
             output,
@@ -202,7 +207,17 @@ fn db_migrate(
         config.path.display()
     )?;
 
-    // Parity: what Dolt now holds must match what aida handed us.
+    // Independent aida-side edge read (BUG-231): per-node `rel list --type`
+    // sees custom edge kinds through a different aida surface than the
+    // exporter's show parse, so a blind spot in either read cannot self-pass.
+    // trace:BUG-231 | ai:claude
+    let verified: Vec<DomainEdge> = read_edges_via_rel_list(aida, &config.aida_command, &ids)?
+        .into_iter()
+        .filter(|edge| known.contains(edge.from.as_str()) && known.contains(edge.to.as_str()))
+        .collect();
+    let verified_counts = count_by(verified.iter().map(|edge| edge.kind.clone()));
+
+    // Parity: what Dolt now holds must match the independent aida-side read.
     let dolt_nodes = parse_count_table(&run_dolt_sql(
         dolt,
         &config.path,
@@ -224,11 +239,20 @@ fn db_migrate(
     writeln!(
         output,
         "  edges: {}",
-        render_parity(&edge_counts, &dolt_edges, &mut mismatches)
+        render_parity(&verified_counts, &dolt_edges, &mut mismatches)
     )?;
+    let before_cross_check = mismatches.len();
+    cross_check_edge_reads(&kept, &verified, &mut mismatches);
+    if mismatches.len() == before_cross_check {
+        writeln!(
+            output,
+            "  edge cross-check: exporter read matches per-node `aida rel list --type` ({} edges) ✓",
+            verified.len()
+        )?;
+    }
 
     if let Some(root) = &config.spot_check_root {
-        let expected = begets_reachable(root, &kept);
+        let expected = begets_reachable(root, &verified);
         if expected.len() <= 1 && !known.contains(root.as_str()) {
             mismatches.push(format!(
                 "spot-check root {root} is not a migrated node (use --spot-check <id>|none)"
@@ -377,6 +401,73 @@ fn extract_description(show: &str) -> String {
     match (trimmed_start, trimmed_end) {
         (Some(first), Some(last)) => body[first..=last].join("\n"),
         _ => String::new(),
+    }
+}
+
+/// The independent aida-side edge read (BUG-231): one `aida rel list <id>
+/// --type <kind>` per node per custom kind. This goes through aida's
+/// relationship surface directly — a different code path than the show
+/// output the exporter parses — so the parity check it feeds cannot share a
+/// blind spot with the exporter.
+// trace:BUG-231 | ai:claude
+fn read_edges_via_rel_list(
+    aida: &dyn CommandRunner,
+    command: &str,
+    ids: &[String],
+) -> Result<Vec<DomainEdge>> {
+    let mut edges = Vec::new();
+    for id in ids {
+        for kind in CUSTOM_EDGE_KINDS {
+            let listing = run_aida(aida, command, &["rel", "list", id, "--type", kind])?;
+            edges.extend(parse_rel_list(&listing, id, kind));
+        }
+    }
+    Ok(edges)
+}
+
+/// Data rows of an `aida rel list` human table (`FROM TYPE TO TITLE`): keep
+/// rows whose FROM is the queried node and TYPE the queried kind. The header,
+/// the `N edges` footer, and the empty-filter message all fail that shape, so
+/// no explicit skipping is needed; a leading `·` (rel list's built-in-edge
+/// marker) is tolerated.
+fn parse_rel_list(output: &str, from: &str, kind: &str) -> Vec<DomainEdge> {
+    output
+        .lines()
+        .filter_map(|line| {
+            let mut tokens = line.split_whitespace().peekable();
+            if tokens.peek() == Some(&"·") {
+                tokens.next();
+            }
+            let (row_from, row_kind, to) = (tokens.next()?, tokens.next()?, tokens.next()?);
+            (row_from == from && row_kind == kind).then(|| DomainEdge {
+                from: from.to_string(),
+                to: to.to_string(),
+                kind: kind.to_string(),
+            })
+        })
+        .collect()
+}
+
+/// Edge-by-edge comparison of the two reads. Counts alone could coincide
+/// while the sets differ, so any edge visible to one read and not the other
+/// is a parity mismatch in its own right.
+fn cross_check_edge_reads(
+    exporter: &[DomainEdge],
+    verified: &[DomainEdge],
+    mismatches: &mut Vec<String>,
+) {
+    let key = |edge: &DomainEdge| (edge.from.clone(), edge.kind.clone(), edge.to.clone());
+    let exporter_set: BTreeSet<_> = exporter.iter().map(key).collect();
+    let verified_set: BTreeSet<_> = verified.iter().map(key).collect();
+    for (from, kind, to) in verified_set.difference(&exporter_set) {
+        mismatches.push(format!(
+            "edge {from} -{kind}-> {to} visible to `aida rel list --type` but missed by the exporter read"
+        ));
+    }
+    for (from, kind, to) in exporter_set.difference(&verified_set) {
+        mismatches.push(format!(
+            "edge {from} -{kind}-> {to} read by the exporter but absent from `aida rel list --type`"
+        ));
     }
 }
 
@@ -621,6 +712,38 @@ mod tests {
                     .collect(),
             }
         }
+
+        /// Script one `rel list <id> --type <kind>` response per node × custom
+        /// kind, rendered from `edges` the way the real CLI prints them.
+        fn with_rel_lists(mut self, nodes: &[&str], edges: &[(&str, &str, &str)]) -> Self {
+            for id in nodes {
+                for kind in CUSTOM_EDGE_KINDS {
+                    let rows: Vec<&(&str, &str, &str)> = edges
+                        .iter()
+                        .filter(|(from, edge_kind, _)| from == id && edge_kind == kind)
+                        .collect();
+                    let stdout = if rows.is_empty() {
+                        "(no outgoing relationships match the filter)\n".to_string()
+                    } else {
+                        let mut table = "FROM  TYPE  TO  TITLE\n".to_string();
+                        for (from, edge_kind, to) in &rows {
+                            table
+                                .push_str(&format!("  {from}  {edge_kind}  {to}  Title of {to}\n"));
+                        }
+                        table.push_str(&format!("\n{} edges\n", rows.len()));
+                        table
+                    };
+                    self.responses.push((
+                        ["rel", "list", id, "--type", kind]
+                            .iter()
+                            .map(|arg| arg.to_string())
+                            .collect(),
+                        stdout,
+                    ));
+                }
+            }
+            self
+        }
     }
 
     impl CommandRunner for ScriptedAida {
@@ -700,6 +823,17 @@ mod tests {
         )
     }
 
+    /// The scripted store's node inventory and its true custom-edge set —
+    /// what both the show `Relations:` sections and the `rel list` responses
+    /// render (`Q-2 -begets-> Q-404` dangles on purpose).
+    const SCRIPTED_NODES: &[&str] = &["Q-1", "Q-2", "BELIEF-9", "TERM-5"];
+    const SCRIPTED_EDGES: &[(&str, &str, &str)] = &[
+        ("Q-1", "begets", "Q-2"),
+        ("Q-1", "probes", "TERM-5"),
+        ("Q-2", "probes", "BELIEF-9"),
+        ("Q-2", "begets", "Q-404"),
+    ];
+
     fn scripted_store() -> ScriptedAida {
         let q1 = show_output(
             "Q-1",
@@ -724,6 +858,29 @@ mod tests {
             (&["show", "BELIEF-9", "--full"], &belief),
             (&["show", "TERM-5", "--full"], &term),
         ])
+        .with_rel_lists(SCRIPTED_NODES, SCRIPTED_EDGES)
+    }
+
+    /// The BUG-231 shape: every show output renders an empty `Relations:`
+    /// section (the exporter's read is blind), while `rel list` still sees
+    /// the real edges. The parity check must fail, not self-pass.
+    fn blind_exporter_store() -> ScriptedAida {
+        let q1 = show_output("Q-1", "", "answer: yes-no");
+        let q2 = show_output("Q-2", "", "answer: free-text");
+        let belief = show_output("BELIEF-9", "", "A proposition.");
+        let term = show_output("TERM-5", "", "definition: the libertarian sense");
+        ScriptedAida::new(&[
+            (
+                &["list", "--type", "functional", "--no-scope"],
+                FUNCTIONAL_LIST,
+            ),
+            (&["list", "--type", "term", "--no-scope"], TERM_LIST),
+            (&["show", "Q-1", "--full"], &q1),
+            (&["show", "Q-2", "--full"], &q2),
+            (&["show", "BELIEF-9", "--full"], &belief),
+            (&["show", "TERM-5", "--full"], &term),
+        ])
+        .with_rel_lists(SCRIPTED_NODES, SCRIPTED_EDGES)
     }
 
     fn dolt_repo_dir(label: &str) -> PathBuf {
@@ -806,10 +963,84 @@ mod tests {
         assert!(rendered.contains("skipping Q-2 -begets-> Q-404"));
         assert!(rendered.contains("question 2/2 ✓"));
         assert!(rendered.contains("begets 1/1 ✓"));
+        assert!(rendered.contains(
+            "edge cross-check: exporter read matches per-node `aida rel list --type` (3 edges) ✓"
+        ));
         assert!(rendered.contains("begets lineage of Q-1 reaches 2 nodes"));
         assert!(rendered.contains("Parity OK."));
 
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// BUG-231 regression: an exporter edge read that comes back empty must
+    /// fail parity against the independent `rel list --type` read — the
+    /// original bug was both sides sharing the blind read and self-passing.
+    #[test]
+    fn blind_exporter_edge_read_fails_parity_instead_of_self_passing() {
+        let dir = dolt_repo_dir("blind");
+        // Nodes write, then the two parity queries — no edges were read, so
+        // no edge batch fires and Dolt reports an empty edges table.
+        let dolt = RecordingDolt::new(&["", NODES_PARITY, ""]);
+        let mut output = Vec::new();
+
+        let result = db_migrate(
+            &config(&dir, None),
+            &blind_exporter_store(),
+            &dolt,
+            &mut output,
+        );
+        match result {
+            Err(QuizdomError::Dolt(message)) => {
+                assert!(message.contains("parity mismatch"));
+                assert!(message.contains("begets: aida-side 1, dolt-side 0"));
+                assert!(message.contains("probes: aida-side 2, dolt-side 0"));
+                assert!(message
+                    .contains("Q-1 -begets-> Q-2 visible to `aida rel list --type` but missed by the exporter read"));
+            }
+            other => panic!("expected parity error, got {other:?}"),
+        }
+        let rendered = String::from_utf8(output).unwrap();
+        assert!(rendered.contains("begets 1/0 ✗"));
+        assert!(
+            !rendered.contains("edge cross-check: exporter read matches"),
+            "the ✓ line must not render when the reads disagree"
+        );
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn parse_rel_list_keeps_matching_data_rows_only() {
+        let listing = "FROM  TYPE    TO    TITLE\n\
+            \x20 Q-23  begets  Q-26  Do you mean the ability…\n\
+            · Q-23  begets  Q-27  a built-in-marked row is still a row\n\
+            \n2 edges\n";
+        let edges = parse_rel_list(listing, "Q-23", "begets");
+        assert_eq!(
+            edges,
+            vec![
+                DomainEdge {
+                    from: "Q-23".to_string(),
+                    to: "Q-26".to_string(),
+                    kind: "begets".to_string(),
+                },
+                DomainEdge {
+                    from: "Q-23".to_string(),
+                    to: "Q-27".to_string(),
+                    kind: "begets".to_string(),
+                },
+            ]
+        );
+        // The empty-filter message parses to no edges.
+        assert!(parse_rel_list(
+            "(no outgoing relationships match the filter)\n",
+            "Q-23",
+            "begets"
+        )
+        .is_empty());
+        // A row for a different kind or node never leaks through.
+        assert!(parse_rel_list(listing, "Q-23", "probes").is_empty());
+        assert!(parse_rel_list(listing, "Q-26", "begets").is_empty());
     }
 
     #[test]
