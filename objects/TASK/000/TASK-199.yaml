@@ -3,10 +3,10 @@ spec_id: TASK-199
 agreed_id: TASK-199
 title: Top-level 'quizdom --help' errors with session-only usage instead of listing all subcommands
 description: 'quizdom --help (and any unknown arg) exits nonzero and prints only the ''usage: quizdom session ...'' block; contradictions, curate, question add, session show/synopsis are undiscoverable from the CLI itself (main.rs falls through to run_cli for unmatched args). Acceptance: ''quizdom --help'' exits 0 with a top-level command list; each subcommand keeps its own -h. Surfaced 2026-07-19 alongside the README gap.'
-status: Draft
+status: Approved
 priority: Low
 owner: ''
 feature: Uncategorized
 created_at: 2026-07-19T18:03:36.132146571Z
-modified_at: 2026-07-19T18:03:36.132146571Z
+modified_at: 2026-07-19T18:22:03.783702597Z
 req_type: Task
