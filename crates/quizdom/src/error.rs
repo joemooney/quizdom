@@ -5,6 +5,8 @@ use std::io;
 pub enum QuizdomError {
     Io(io::Error),
     Aida(String),
+    // trace:STORY-205 | ai:claude — dolt CLI failures during db bootstrap.
+    Dolt(String),
     Parse(String),
     Usage(String),
 }
@@ -13,7 +15,10 @@ impl fmt::Display for QuizdomError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::Io(error) => write!(f, "{error}"),
-            Self::Aida(message) | Self::Parse(message) | Self::Usage(message) => {
+            Self::Aida(message)
+            | Self::Dolt(message)
+            | Self::Parse(message)
+            | Self::Usage(message) => {
                 write!(f, "{message}")
             }
         }

@@ -175,3 +175,48 @@ same term definitions with `agrees`, `disagrees`, or `contradicts` edges.
 - `STORY-15`: Per-user session log and promotion path, which depends on this
   schema.
 - `STORY-16`: Free-will seed cluster, which should instantiate this schema.
+
+## Dolt Schema (ADR-201 / EPIC-202)
+
+<!-- trace:STORY-205 | ai:claude -->
+
+ADR-201 moves the domain graph out of the AIDA store into
+[Dolt](https://www.dolthub.com/), a versioned MySQL-compatible database;
+AIDA remains canonical for project intent. The SQL schema below mirrors the
+object model above and lives in `db/schema.sql`, applied by
+`quizdom db-init` (idempotent — `CREATE TABLE IF NOT EXISTS` only, safe to
+re-run). The default repo location is `data/dolt` (`--path` overrides).
+
+### Tables
+
+- **`nodes`** — one row per graph object: `id` (the `Q-*` / `TERM-*` /
+  `BELIEF-*` identifier), `kind` (`question` | `term` | `belief`), `title`,
+  `body` (the descriptive text that held answer-mode / definition / scope
+  notes in AIDA), `tags` (comma-joined, same vocabulary as the tag table
+  above, minus `weight:N`), `weight` (integer `0`–`100` — the ADR-22
+  `weight:N` tag becomes a real column), and created/updated timestamps.
+- **`edges`** — one row per typed edge: `from_id`, `to_id`, and `kind`
+  constrained to the six custom edges of the vocabulary table
+  (`begets`, `probes`, `refines`, `contradicts`, `agrees`, `disagrees`).
+  The primary key `(from_id, to_id, kind)` makes duplicate edges
+  unrepresentable; both endpoints are foreign keys into `nodes`.
+
+### Mapping from the AIDA representation
+
+| AIDA construct | Dolt equivalent |
+|---|---|
+| `Q-*` / `TERM-*` / `BELIEF-*` object | `nodes` row with the matching `kind` |
+| Object description | `nodes.body` |
+| Tags (`topic:*`, `answer:*`, `quality:*`, …) | `nodes.tags` (comma-joined) |
+| `weight:N` tag (ADR-22) | `nodes.weight` integer column |
+| Custom relationship (`aida rel add --type begets` …) | `edges` row |
+| One-hop walk via `aida rel list` (ADR-31) | recursive CTE over `edges` |
+
+### Traversal
+
+ADR-31's one-hop-at-a-time BFS existed because `aida graph` cannot follow
+custom edges. SQL removes that constraint: `db/fixtures/traversal_check.sql`
+is the canonical recursive-CTE walk (the `begets` chain from a seed
+question), verified against the hand-inserted fixture in
+`db/fixtures/traversal_fixture.sql`. The Dolt backend (STORY-207) adopts
+this traversal; the cutover story (STORY-208) retires the BFS.
