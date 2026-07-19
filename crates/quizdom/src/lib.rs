@@ -49,13 +49,12 @@ mod synopsis;
 mod transcript;
 
 pub use bank::{
-    find_near_duplicate, parse_begets_rel_list, parse_probes_rel_list, parse_question_show,
-    parse_term_show, rewrite_weight_and_quality_tags, AidaCliQuestionBank, NearDuplicate,
-    QuestionBank, DEDUP_SIMILARITY_THRESHOLD,
+    find_near_duplicate, rewrite_quality_tags, AidaCliQuestionBank, NearDuplicate, QuestionBank,
+    DEDUP_SIMILARITY_THRESHOLD,
 };
 pub use contradiction::{
     beliefs_from_session_log, detect_graph_contradictions, detect_semantic_contradictions,
-    merge_contradictions, parse_contradicts_rel_list, run_contradictions, AdoptedBelief,
+    merge_contradictions, run_contradictions, AdoptedBelief,
     AidaCliContradictionResolutionPersister, AidaCliContradictsEdges, Contradiction,
     ContradictionKind, ContradictionResolution, ContradictionResolutionPersister, ContradictsEdges,
     NoopContradictionResolutionPersister,
@@ -64,7 +63,8 @@ pub use contradiction::{
 pub use db_init::{run_db_init, DEFAULT_DOLT_DB_PATH, DOLT_SCHEMA_SQL};
 pub use db_migrate::{run_db_migrate, DEFAULT_SPOT_CHECK_ROOT};
 // trace:STORY-207 | ai:claude
-pub use dolt_store::{domain_store_from_config, DoltDomainStore, SelectedDomainStore};
+// trace:STORY-208 | ai:claude — the Dolt store is the only domain backend.
+pub use dolt_store::{domain_store_from_config, DoltDomainStore};
 pub use error::{QuizdomError, Result};
 pub use model::{
     Answer, AnswerKind, Question, QuestionRef, RefinementProposal, TermDefinition,
@@ -81,7 +81,9 @@ pub use persist::{
 pub use question_add::run_question_add;
 // trace:STORY-204 | ai:claude
 pub use session::run_cli;
-pub use store::{AidaDomainStore, DomainStore, EdgeKind, NewNode, NodeKind, NodeRecord};
+pub use store::{
+    AidaIntentStore, DomainStore, EdgeKind, IntentStore, NewNode, NodeKind, NodeRecord,
+};
 // trace:STORY-68 | ai:claude
 pub use signals::{
     analyze_session_log, apply_log_signals, run_curate, signals_from_log, QuestionSignalStats,

@@ -22,34 +22,34 @@ data substrate.
 - **Stack: Rust** (`ADR-32`). Cargo workspace; the app is `crates/quizdom`
   (binary). A provider-agnostic `llm` crate is coming in EPIC-7 (`ADR-34`) —
   built fresh here, not extracted from `~/ai/aida-chat`.
-- **Domain data is migrating to Dolt** (`ADR-201`, EPIC-202, supersedes
-  `ADR-3`): the domain graph — `Q-*` questions, `TERM-*` definitions
-  (`--type term`), `BELIEF-*` propositions, joined by custom edges
-  (`begets`/`probes`/`refines`/`contradicts`/`agrees`/`disagrees`) — moves
-  into a Dolt repo (`quizdom db-init` / `db-migrate`; default path
-  `data/dolt`). AIDA remains canonical for project intent, including
-  contradiction-resolution decision nodes and `references` edges. Canonical
-  schema: `docs/architecture/graph-schema.md` + `db/schema.sql`.
-- **One storage seam, two backends** (`STORY-204`/`STORY-207`): all
-  domain reads/writes go through the `DomainStore` trait. The aida backend
-  shells out to the `aida` CLI; the Dolt backend spawns `dolt sql -r json`
-  per query (`ADR-203`, no daemon). Select with `QUIZDOM_STORE=dolt` (+
-  `QUIZDOM_DOLT_PATH`), or `store = dolt` / `dolt_path = ...` in
-  `~/.config/quizdom/settings.toml`; default is aida.
-- **Graph traversal** (`ADR-31`): the aida backend walks one hop at a time
-  via `aida rel list <node> --type <edge>` (`aida graph`/`query_graph`
-  cannot follow custom edges — upstream `~/ai/aida` FR-282); the Dolt
-  backend runs multi-hop reads as a single recursive CTE
-  (`DomainStore::reachable`).
-- **Interface: CLI/TUI** (`ADR-4`); web deferred. **Weighting** uses `weight:N`
-  tags computed in-app (`ADR-22`).
+- **Domain data lives in Dolt** (`ADR-201`, EPIC-202, supersedes `ADR-3`;
+  cutover: `STORY-208`): the domain graph — `Q-*` questions, `TERM-*`
+  definitions, `BELIEF-*` propositions, joined by custom edges
+  (`begets`/`probes`/`refines`/`contradicts`/`agrees`/`disagrees`) — lives
+  in a local Dolt repo (`quizdom db-init` bootstraps it, `quizdom
+  db-migrate` re-imports from a legacy AIDA store; default path
+  `data/dolt`, override with `QUIZDOM_DOLT_PATH` or `dolt_path = ...` in
+  `~/.config/quizdom/settings.toml`). AIDA remains canonical for project
+  intent, including contradiction-resolution decision nodes and
+  `references` edges (`AidaIntentStore` — the only runtime aida writes).
+  Canonical schema: `docs/architecture/graph-schema.md` + `db/schema.sql`.
+- **One storage seam** (`STORY-204`/`STORY-207`/`STORY-208`): all domain
+  reads/writes go through the `DomainStore` trait; the Dolt backend — the
+  only backend since the STORY-208 cutover — spawns `dolt sql -r json` per
+  query (`ADR-203`, no daemon). Multi-hop traversal is a single recursive
+  CTE (`DomainStore::reachable`; retired ADR-31's app-side per-hop walk),
+  and the selection weight is the numeric `weight` column (retired ADR-22's
+  in-app `weight:N` tags).
+- **Interface: CLI/TUI** (`ADR-4`); web deferred.
 
 ## Development
 
 ```bash
 cargo test                 # workspace tests
-cargo run -p quizdom       # run the CLI session loop (reads seed data via aida)
+cargo run -p quizdom       # run the CLI session loop (reads the Dolt domain graph)
 cargo build                # build
+cargo run -p quizdom -- db-init     # bootstrap the Dolt repo (data/dolt)
+cargo run -p quizdom -- db-migrate  # import a legacy AIDA-store domain graph
 ```
 
 Layout: `Cargo.toml` (workspace) · `crates/quizdom/{src/main.rs,src/lib.rs}`.
@@ -88,8 +88,12 @@ of `--spec` (which errors "already owned").
 
 - Ship via branch + PR to `main` (`ADR-21`). CI (`.github/workflows/ci.yml`)
   runs fmt + clippy + test, so `aida pr ship` self-completes (no `gh` fallback).
-  A spec is `Completed` only when its PR **merges**. Pure AIDA-store data (e.g.
-  seed clusters) lands via `aida push --store-only`, not a code PR.
+  A spec is `Completed` only when its PR **merges**. Domain seed data (e.g.
+  seed clusters) lands in the local Dolt repo (`data/dolt`, gitignored) via
+  `quizdom question add` / `quizdom db-migrate` — the Dolt backend commits
+  every write into Dolt's own history (STORY-208; `aida push --store-only`
+  no longer carries domain data). AIDA-store pushes remain for project
+  intent only.
 - Reap a finished worktree from the MAIN repo (not from inside it): exit the
   agent, then `aida session end <lease-id> --skip-ci -y` (`--skip-ci` avoids the
   BUG-422 hang; lease ids from `aida session leases`).

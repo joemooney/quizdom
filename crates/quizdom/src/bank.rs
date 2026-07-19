@@ -1,12 +1,11 @@
 // trace:STORY-204 | ai:claude — domain reads go through the DomainStore
-// abstraction; the aida backend keeps the human-layout parsing these
-// wrappers expose.
+// abstraction.
+// trace:STORY-208 | ai:claude — the Dolt backend is the only domain store
+// since the cutover; the bank reads it directly.
+use crate::dolt_store::{domain_store_from_config, DoltDomainStore};
 use crate::error::{QuizdomError, Result};
 use crate::model::{answer_kind_from_tags, Question, QuestionRef, TermDefinition, TermRef};
-// trace:STORY-207 | ai:claude — the default store is now the config/env-selected
-// backend, so the aida and Dolt implementations coexist behind one seam.
-use crate::dolt_store::SelectedDomainStore;
-use crate::store::{parse_node_show, DomainStore, EdgeKind, NodeKind, NodeRecord};
+use crate::store::{DomainStore, EdgeKind, NodeKind, NodeRecord};
 use crate::strategy::QualitySignal;
 use std::collections::BTreeSet;
 
@@ -24,14 +23,14 @@ pub trait QuestionBank {
     }
 }
 
-pub struct AidaCliQuestionBank<S = SelectedDomainStore> {
+pub struct AidaCliQuestionBank<S = DoltDomainStore> {
     store: S,
 }
 
 impl Default for AidaCliQuestionBank {
     fn default() -> Self {
         Self {
-            store: SelectedDomainStore::default(),
+            store: domain_store_from_config(),
         }
     }
 }
@@ -105,14 +104,6 @@ fn term_from_node(record: NodeRecord) -> Result<TermDefinition> {
     })
 }
 
-pub fn parse_question_show(output: &str) -> Result<Question> {
-    question_from_node(parse_node_show(output)?)
-}
-
-pub fn parse_term_show(output: &str) -> Result<TermDefinition> {
-    term_from_node(parse_node_show(output)?)
-}
-
 fn parse_definition_text(output: &str) -> Option<String> {
     let mut definition = Vec::new();
     let mut in_definition = false;
@@ -134,20 +125,6 @@ fn parse_definition_text(output: &str) -> Option<String> {
         }
     }
     (!definition.is_empty()).then(|| definition.join(" "))
-}
-
-pub fn parse_begets_rel_list(output: &str) -> Vec<QuestionRef> {
-    crate::store::parse_rel_list(output, "begets")
-        .into_iter()
-        .map(|id| QuestionRef { id })
-        .collect()
-}
-
-pub fn parse_probes_rel_list(output: &str) -> Vec<TermRef> {
-    crate::store::parse_rel_list(output, "probes")
-        .into_iter()
-        .map(|id| TermRef { id })
-        .collect()
 }
 
 // trace:STORY-86 | ai:claude
@@ -247,23 +224,20 @@ fn significant_tokens(title: &str) -> BTreeSet<String> {
 }
 
 // trace:STORY-66 | ai:claude
+// trace:STORY-208 | ai:claude — the weight moved to the store's numeric
+// column, so a re-weighting pass only rewrites the quality tag.
 /// Rewrite a question's tag list for a re-weighting pass.
 ///
-/// `weight:N` and `quality:*` are single-valued tags, so every existing
-/// occurrence is dropped and exactly one fresh `weight:<new_weight>` and one
-/// `quality:*` (from `signal`) are appended. All other tags keep their original
-/// relative order. Pure — does not touch AIDA.
-pub fn rewrite_weight_and_quality_tags(
-    tags: &[String],
-    new_weight: u32,
-    signal: QualitySignal,
-) -> Vec<String> {
+/// `quality:*` is a single-valued tag, so every existing occurrence is
+/// dropped and exactly one fresh `quality:*` (from `signal`) is appended. All
+/// other tags keep their original relative order. Pure — does not touch the
+/// store.
+pub fn rewrite_quality_tags(tags: &[String], signal: QualitySignal) -> Vec<String> {
     let mut rewritten: Vec<String> = tags
         .iter()
-        .filter(|tag| !tag.starts_with("weight:") && !tag.starts_with("quality:"))
+        .filter(|tag| !tag.starts_with("quality:"))
         .cloned()
         .collect();
-    rewritten.push(format!("weight:{new_weight}"));
     rewritten.push(signal.quality_tag().to_string());
     rewritten
 }
@@ -363,59 +337,50 @@ mod dedup_tests {
 }
 
 // trace:STORY-66 | ai:claude
+// trace:STORY-208 | ai:claude — the rewrite is quality-only now: the weight
+// travels as a numeric field, never as a tag.
 #[cfg(test)]
 mod reweight_tag_tests {
-    use super::rewrite_weight_and_quality_tags;
+    use super::rewrite_quality_tags;
     use crate::strategy::QualitySignal;
 
     #[test]
-    fn replaces_weight_and_quality_preserving_order() {
+    fn replaces_quality_preserving_order() {
         let tags = vec![
             "topic:meaning".to_string(),
-            "weight:50".to_string(),
             "answer:yes-no".to_string(),
             "quality:neutral".to_string(),
             "seed".to_string(),
         ];
-        let result = rewrite_weight_and_quality_tags(&tags, 62, QualitySignal::Insightful);
+        let result = rewrite_quality_tags(&tags, QualitySignal::Insightful);
         assert_eq!(
             result,
             vec![
                 "topic:meaning".to_string(),
                 "answer:yes-no".to_string(),
                 "seed".to_string(),
-                "weight:62".to_string(),
                 "quality:insightful".to_string(),
             ]
         );
     }
 
     #[test]
-    fn adds_tags_when_absent() {
+    fn adds_quality_tag_when_absent() {
         let tags = vec!["topic:free-will".to_string()];
-        let result = rewrite_weight_and_quality_tags(&tags, 30, QualitySignal::Punted);
+        let result = rewrite_quality_tags(&tags, QualitySignal::Punted);
         assert_eq!(
             result,
-            vec![
-                "topic:free-will".to_string(),
-                "weight:30".to_string(),
-                "quality:punted".to_string(),
-            ]
+            vec!["topic:free-will".to_string(), "quality:punted".to_string()]
         );
     }
 
     #[test]
-    fn collapses_duplicate_single_valued_tags() {
+    fn collapses_duplicate_quality_tags() {
         let tags = vec![
-            "weight:10".to_string(),
-            "weight:20".to_string(),
             "quality:unhelpful".to_string(),
             "quality:insightful".to_string(),
         ];
-        let result = rewrite_weight_and_quality_tags(&tags, 0, QualitySignal::Unhelpful);
-        assert_eq!(
-            result,
-            vec!["weight:0".to_string(), "quality:unhelpful".to_string()]
-        );
+        let result = rewrite_quality_tags(&tags, QualitySignal::Unhelpful);
+        assert_eq!(result, vec!["quality:unhelpful".to_string()]);
     }
 }
