@@ -2114,5 +2114,20 @@ operations:
     req_type: Task
     status: Draft
     priority: Medium
-clock: 202
+- id: 019f7bfa-8d1b-78e3-b883-5e8ccd8f054f
+  target_id: 019f7bfa-8a1c-7e72-a6e6-13761a462b1a
+  author: aida
+  node_id: ''
+  lamport: 203
+  timestamp: 2026-07-19T20:04:05.531853840Z
+  kind: !Create
+    title: config_value key matching diverges from settings.rs from_toml (case-sensitivity, quote stripping)
+    description: |
+      dolt_store.rs:444 config_value compares keys exactly, while settings.rs::from_toml lowercases keys — `Store = dolt` in settings.toml is honored by the settings loader's convention but silently selects the aida backend. Also config_value uses trim_matches('"') (strips unmatched/repeated quotes) where settings.rs unquote requires a matched pair. Two parsers over the same file with different tolerance. Suggest reusing one parse helper.
+
+      Raised in review of PR-85: https://github.com/joemooney/quizdom/pull/85#issuecomment-5017187770
+    req_type: Task
+    status: Draft
+    priority: Medium
+clock: 203
 node_id: ''
