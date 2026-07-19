@@ -1661,5 +1661,17 @@ operations:
   timestamp: 2026-07-19T18:33:01.553883335Z
   kind: !SetStatus
     status: In Progress
-clock: 171
+- id: 019f7baf-4a52-7642-b6e8-71c82985c50e
+  target_id: 019f7baf-4893-7853-af5b-323de26a9682
+  author: aida
+  node_id: ''
+  lamport: 172
+  timestamp: 2026-07-19T18:41:53.234328351Z
+  kind: !Create
+    title: Quizdom domain data moves to Dolt; AIDA store remains for project intent (supersedes ADR-3)
+    description: 'Decision (2026-07-19): the quizdom domain graph (Q-* questions, BELIEF-*, TERM-* domain definitions, custom edges begets/probes/refines/contradicts/agrees/disagrees) moves out of the AIDA store into Dolt, a versioned branchable MySQL-compatible database. AIDA remains canonical for project intent only (specs, ADRs, project glossary). Rationale: the VIS-2 dogfood found AIDA engine and application are not yet layered - domain objects flood work surfaces (TASK-9), custom edges are untraversable (TASK-30, worked around by ADR-31 one-hop BFS), and no numeric fields exist (TASK-2, worked around by ADR-22 weight:N tags). Dolt preserves what ADR-3 valued (git-like history, diffs, branches, remotes) while fixing all three gaps: real numeric weight columns, recursive CTE traversal over an edges table, own namespace. Branch-per-exploration becomes native, giving ADR-12 promote-only split a cleaner mechanism. Consequences: ADR-31 and ADR-22 retire post-migration; TASK-197 moot for quizdom; seed data flow and sync move to dolt remotes; access via dolt sql-server or dolt sql CLI behind the existing storage choke point.'
+    req_type: Decision
+    status: Approved
+    priority: Medium
+clock: 172
 node_id: ''
