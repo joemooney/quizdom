@@ -8,8 +8,10 @@ priority: Medium
 owner: ''
 feature: Uncategorized
 created_at: 2026-07-19T18:45:19.754493526Z
-modified_at: 2026-07-19T18:45:19.754493526Z
+modified_at: 2026-07-19T18:46:54.523199818Z
 req_type: Story
+tags:
+- batch:dolt-phase-1
 relationships:
 - rel_type: Child
   target_id: 019f7baf-7934-7863-a787-0001f14c0af1
