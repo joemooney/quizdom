@@ -3,12 +3,12 @@ spec_id: BUG-231
 agreed_id: BUG-231
 title: 'db-migrate exports 0 edges: edge read misses custom edges in the store, and the parity check shares the blind read so it self-passes'
 description: 'Repro (2026-07-19, main @ 14d2021): ''aida rel list Q-23 --type begets'' shows Q-26 and Q-27; ''aida rel list Q-23 --type probes'' shows TERM-24, TERM-25; Q-115 begets Q-116; Q-186 begets Q-192. Yet ''quizdom db-migrate'' reports ''Loaded 75 nodes and 0 edges'' and the parity report claims ''edges: none'' for BOTH aida-side and dolt-side - so the aida-side edge count in the parity check uses the same broken read as the exporter and cannot catch the loss. The spot-check ''begets lineage of Q-23 reaches 1 nodes'' matching on both sides is vacuous for the same reason. Likely cause: the edge leg reads via a path that cannot see custom edge types (the FR-282 limitation ADR-31 worked around) instead of ''aida rel list <node> --type <edge>'' per node. Severity: data-loss blocker - STORY-209 (delete domain objects from the AIDA store) MUST NOT run until this is fixed and a real migration shows edge parity. Acceptance: db-migrate loads every custom edge (begets/probes/refines/contradicts/agrees/disagrees) for all 75 nodes; the parity aida-side count is computed via per-node ''aida rel list --type'' (independent of the exporter read path); spot-check shows the Q-23 begets lineage reaching its real multi-hop depth; rerun stays idempotent.'
-status: Done
+status: Completed
 priority: Medium
 owner: ''
 feature: Uncategorized
 created_at: 2026-07-19T20:51:18.088009278Z
-modified_at: 2026-07-19T21:07:04.017151567Z
+modified_at: 2026-07-19T21:14:28.207247313Z
 req_type: Bug
 relationships:
 - rel_type: References
@@ -41,7 +41,23 @@ comments:
   created_at: 2026-07-19T21:03:07.509005209Z
   modified_at: 2026-07-19T21:03:07.509005209Z
   session_id: 019f7c26-29b5-7f33-af97-7cc75f390f0d
+history:
+- id: 019f7c3a-fbee-7560-a4c1-da14cbc35182
+  author: aida-auto-bump
+  timestamp: 2026-07-19T21:14:28.206907922Z
+  changes:
+  - field_name: status
+    old_value: Done
+    new_value: Completed
+processing_record:
+- id: 019f7c3a-fbef-7753-9e5b-74b83e543655
+  timestamp: 2026-07-19T21:14:28.207246830Z
+  agent: aida
+  commit_sha: 39f2001ad1814d358bd59e8006cca309645f0ccb
+  summary: Completed via merge 39f2001a
 implementation_info:
   implemented: true
   implemented_at: 2026-07-19T21:06:58.665774023Z
   implemented_by: joe
+  completed_at: 2026-07-19T21:14:28.206781756Z
+  completion_sha: 39f2001ad1814d358bd59e8006cca309645f0ccb
