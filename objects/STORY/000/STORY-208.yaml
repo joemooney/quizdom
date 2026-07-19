@@ -3,12 +3,12 @@ spec_id: STORY-208
 agreed_id: STORY-208
 title: 'Cutover: default to Dolt backend, retire ADR-31 BFS and ADR-22 weight-tag code, migrate seed flow'
 description: 'Flip the default DomainStore backend to Dolt. Delete the app-side one-hop BFS traversal (ADR-31) and weight:N tag computation (ADR-22) now handled by the backend, and point the seed-data flow at Dolt instead of aida push --store-only. Depends on the exporter and Dolt backend slices; run the exporter for real as part of cutover. Acceptance: cargo run -p quizdom completes a session end-to-end with zero aida spawns for domain reads/writes; removed code paths are gone, not feature-flagged off.'
-status: InProgress
+status: Completed
 priority: Medium
 owner: ''
 feature: Uncategorized
 created_at: 2026-07-19T18:46:04.411087190Z
-modified_at: 2026-07-19T20:34:35.743320450Z
+modified_at: 2026-07-19T20:46:48.022490780Z
 req_type: Story
 relationships:
 - rel_type: Child
@@ -36,3 +36,21 @@ comments:
   created_at: 2026-07-19T20:31:29.616515751Z
   modified_at: 2026-07-19T20:31:29.616515751Z
   session_id: 019f7bfb-5729-7141-9552-e10b5681b968
+history:
+- id: 019f7c21-a6d6-78b1-9166-4a0354952e69
+  author: aida-auto-bump
+  timestamp: 2026-07-19T20:46:48.022178564Z
+  changes:
+  - field_name: status
+    old_value: InProgress
+    new_value: Completed
+processing_record:
+- id: 019f7c21-a6d6-78b1-9166-4a1d9e332450
+  timestamp: 2026-07-19T20:46:48.022490222Z
+  agent: aida
+  commit_sha: 14d2021b78ad0e37337f3eb03787b44169d7c7f1
+  summary: Completed via merge 14d2021b
+implementation_info:
+  implemented: false
+  completed_at: 2026-07-19T20:46:48.022072868Z
+  completion_sha: 14d2021b78ad0e37337f3eb03787b44169d7c7f1
