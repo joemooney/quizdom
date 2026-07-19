@@ -37,7 +37,7 @@ priority: High
 owner: ''
 feature: Uncategorized
 created_at: 2026-05-31T14:08:10.527017461Z
-modified_at: 2026-05-31T14:08:15.642327333Z
+modified_at: 2026-07-19T18:42:21.730425343Z
 req_type: Vision
 tags:
 - aida
@@ -49,3 +49,10 @@ relationships:
   target_id: 019e7e5d-0eb9-7fa1-be4e-c457b30f2289
   created_at: 2026-05-31T14:08:15.642308926Z
   created_by: joe
+comments:
+- id: 019f7baf-b9a2-74f2-8b1c-866f80b67406
+  author: joe
+  content: 'Experiment concluded 2026-07-19. Result: AIDA engine and application are not yet layered - domain payload in the intent store contaminates work surfaces (TASK-9), custom edges are untraversable (TASK-30), schema lacks numeric fields (TASK-2). Findings stand as upstream input; quizdom moves its domain graph to Dolt per ADR-201 rather than waiting on an engine/application split.'
+  created_at: 2026-07-19T18:42:21.730425343Z
+  modified_at: 2026-07-19T18:42:21.730425343Z
+  session_id: 789bafdb-f673-41c5-affc-d550f95e51e5
