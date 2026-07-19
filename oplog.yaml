@@ -2065,5 +2065,31 @@ operations:
     req_type: Task
     status: Draft
     priority: Medium
-clock: 199
+- id: 019f7bf6-1f24-79c2-ab00-af612e028f4f
+  target_id: 019f7bf6-1d6e-7292-b4e0-6a46b708227b
+  author: aida
+  node_id: ''
+  lamport: 200
+  timestamp: 2026-07-19T19:59:15.236478599Z
+  kind: !Create
+    title: 'Review PR-85: [AI:claude] feat(store): EPIC-202 batch 3 — Dolt-backed DomainStore with recursive-CTE traversal (STORY-207)'
+    description: |
+      Auto-filed by `aida session end` (backup trigger) (session `019f7be9`) for branch `epic-202-2`.
+
+      - PR: <https://github.com/joemooney/quizdom/pull/85>
+      - Branch: `epic-202-2` → `main`
+
+      ## Covers
+
+      - STORY-207
+
+      ## Acceptance
+
+      - Generate a structured review prompt with `aida review prompt --pr 85` and verify each spec's acceptance criteria.
+      - Approve and merge, or request changes by spec id.
+      - Mark this story `completed` once the PR is merged.
+    req_type: Story
+    status: Approved
+    priority: Medium
+clock: 200
 node_id: ''
