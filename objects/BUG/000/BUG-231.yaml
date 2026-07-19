@@ -8,7 +8,7 @@ priority: Medium
 owner: ''
 feature: Uncategorized
 created_at: 2026-07-19T20:51:18.088009278Z
-modified_at: 2026-07-19T21:14:28.207247313Z
+modified_at: 2026-07-19T21:16:58.663370436Z
 req_type: Bug
 relationships:
 - rel_type: References
@@ -41,6 +41,12 @@ comments:
   created_at: 2026-07-19T21:03:07.509005209Z
   modified_at: 2026-07-19T21:03:07.509005209Z
   session_id: 019f7c26-29b5-7f33-af97-7cc75f390f0d
+- id: 019f7c3d-47a7-7df2-9fa3-4b8dce39dad8
+  author: joe
+  content: 'REOPENED 2026-07-19: fix in PR 87 is incomplete - acceptance ''db-migrate loads every custom edge'' is NOT met on main @ 39f2001. Real run: 75 nodes, 0 edges loaded; the (now independent) parity check correctly lists ~70 missed edges and a 71-vs-1 node lineage mismatch. Root cause of the failed repro in TASK-232: the exporter reads edges by parsing ''aida show <id>'', and aida show FLATTENS custom edge kinds to ''Related'' (verify: aida show BUG-231 renders its References relationship as ''Related''), so show-parse cannot recover begets/probes/etc and drops them. Fix as originally specified: read edges via per-node ''aida rel list <id> --type <kind>'' for the six kinds. ALSO: db-migrate exits 0 even when its parity report fails - must exit nonzero on parity failure so cutover scripts cannot silently proceed. STORY-209 remains blocked.'
+  created_at: 2026-07-19T21:16:58.663370436Z
+  modified_at: 2026-07-19T21:16:58.663370436Z
+  session_id: 789bafdb-f673-41c5-affc-d550f95e51e5
 history:
 - id: 019f7c3a-fbee-7560-a4c1-da14cbc35182
   author: aida-auto-bump
