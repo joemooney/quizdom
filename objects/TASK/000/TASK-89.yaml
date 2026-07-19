@@ -25,9 +25,16 @@ priority: Medium
 owner: ''
 feature: Uncategorized
 created_at: 2026-06-01T05:23:30.649132230Z
-modified_at: 2026-06-01T05:23:30.649132230Z
+modified_at: 2026-07-19T17:58:54.742170401Z
 req_type: Task
 tags:
 - from-implementer:STORY-76
 - kind:deviation
 - severity:cosmetic
+comments:
+- id: 019f7b87-f216-7be3-83fe-8d26f13d5460
+  author: joe
+  content: 'Advisor ack (backlog-groom 2026-07-19): deviation record acknowledged; STORY-76 merged with the wider file set and file-disjointness held. Closing as a served record.'
+  created_at: 2026-07-19T17:58:54.742170401Z
+  modified_at: 2026-07-19T17:58:54.742170401Z
+  session_id: 1f19a7e1-42b8-4b94-876e-c15a446ba581
