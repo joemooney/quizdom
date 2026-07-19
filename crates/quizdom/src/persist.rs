@@ -1,8 +1,9 @@
+use crate::aida_cmd::aida_command;
 use crate::bank::rewrite_weight_and_quality_tags;
 use crate::error::{QuizdomError, Result};
 use crate::model::{AnswerKind, Question, TermDefinition};
 use crate::strategy::{reweight, QualitySignal};
-use std::process::{Command, Output};
+use std::process::Output;
 
 pub trait GeneratedQuestionPersister {
     /// Persist a generated follow-on linked to `origin` via a `begets` edge.
@@ -123,8 +124,9 @@ pub(crate) trait CommandRunner {
 pub(crate) struct SystemCommandRunner;
 
 impl CommandRunner for SystemCommandRunner {
+    // trace:BUG-200 | ai:claude — spawn via the pinned-format choke point.
     fn run(&self, program: &str, args: &[String]) -> Result<Output> {
-        Command::new(program)
+        aida_command(program)
             .args(args)
             .output()
             .map_err(Into::into)

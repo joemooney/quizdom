@@ -1,3 +1,5 @@
+// trace:BUG-200 | ai:claude — the pinned-format choke point for aida spawns.
+mod aida_cmd;
 // trace:TASK-56 | ai:codex
 mod bank;
 mod contradiction;

@@ -15,13 +15,14 @@
 //! lists what it finds without touching the live session loop.
 
 // trace:EPIC-9 | ai:claude
+use crate::aida_cmd::aida_command;
 use crate::error::{QuizdomError, Result};
 use llm::{LLMClient, Message};
 use serde_json::Value;
 use std::collections::{BTreeMap, BTreeSet};
 use std::io::{BufRead, BufReader, Read, Write};
 use std::path::PathBuf;
-use std::process::{Command, Output};
+use std::process::Output;
 
 const DEFAULT_USER: &str = "local-user";
 
@@ -116,8 +117,9 @@ impl Default for AidaCliContradictsEdges {
 }
 
 impl ContradictsEdges for AidaCliContradictsEdges {
+    // trace:BUG-200 | ai:claude — spawn via the pinned-format choke point.
     fn contradicts(&self, belief_id: &str) -> Result<Vec<String>> {
-        let output = Command::new(&self.command)
+        let output = aida_command(&self.command)
             .args(["rel", "list", belief_id, "--type", "contradicts"])
             .output()?;
         if !output.status.success() {
@@ -306,8 +308,9 @@ pub trait ResolutionCommandRunner {
 pub struct SystemResolutionCommandRunner;
 
 impl ResolutionCommandRunner for SystemResolutionCommandRunner {
+    // trace:BUG-200 | ai:claude — spawn via the pinned-format choke point.
     fn run(&self, program: &str, args: &[String]) -> Result<Output> {
-        Command::new(program)
+        aida_command(program)
             .args(args)
             .output()
             .map_err(Into::into)
