@@ -1,0 +1,24 @@
+id: 019f7c3a-8093-7282-af4e-e8924115271e
+spec_id: TASK-235
+agreed_id: TASK-235
+title: db-init/db-migrate ignore QUIZDOM_DOLT_PATH — only --path is honored, unlike runtime dolt_store
+description: |
+  Deep-pass observation from the review of PR-87 (pre-existing, not introduced by that PR).
+
+  The runtime Dolt backend resolves its path from QUIZDOM_DOLT_PATH (env, wins) then `dolt_path` in settings.toml (crates/quizdom/src/dolt_store.rs:288), and CLAUDE.md documents the env var as the override. But `quizdom db-init` and `quizdom db-migrate` resolve their target only from `--path` (default DEFAULT_DOLT_DB_PATH = "data/dolt", relative to cwd) — see DbMigrateConfig::parse in crates/quizdom/src/db_migrate.rs:82-95. Running either command with QUIZDOM_DOLT_PATH set silently ignores it and writes to ./data/dolt of the current directory.
+
+  Concrete repro: QUIZDOM_DOLT_PATH=/tmp/x/dolt cargo run -p quizdom -- db-init → "Initialised Dolt repo at data/dolt" (worktree-local), /tmp/x/dolt untouched. Confusing in worktree-heavy workflows where the canonical repo lives in the main checkout: a migration aimed at the shared repo via the env var lands in the worktree instead.
+
+  Fix direction: db-init/db-migrate should fall back through the same resolution chain as dolt_store (flag > env > settings.toml > default), or at least warn when QUIZDOM_DOLT_PATH is set but unused.
+
+  Raised in review of PR-87: https://github.com/joemooney/quizdom/pull/87#issuecomment-5017397227
+status: Draft
+priority: Medium
+owner: ''
+feature: Uncategorized
+created_at: 2026-07-19T21:13:56.627537451Z
+modified_at: 2026-07-19T21:13:56.627537451Z
+req_type: Task
+tags:
+- from-review:PR-87
+- severity:minor
