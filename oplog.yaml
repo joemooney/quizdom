@@ -2266,5 +2266,20 @@ operations:
     req_type: Task
     status: Draft
     priority: Medium
-clock: 213
+- id: 019f7c21-0767-7540-99ec-9707d1639f71
+  target_id: 019f7c21-0523-7b61-b816-cbb08db3f3aa
+  author: aida
+  node_id: ''
+  lamport: 214
+  timestamp: 2026-07-19T20:46:07.207730103Z
+  kind: !Create
+    title: Test fixtures still fabricate decorative weight:N tags no code parses
+    description: |
+      After the STORY-208 cutover retired ADR-22's weight-tag encoding, ~40 test fixtures in `crates/quizdom/src/tests.rs` still put `weight:N` strings in fixture tag lists (e.g. the `question()` helper at `tests.rs:3230` builds `[format!("weight:{weight}")]`). Nothing parses them anymore — the numeric `weight` field is passed separately — so they are dead decoration that contradicts the "tags no longer carry weight anywhere in the app" invariant and could mislead future readers. Cleanup: drop the tag literals, keep the numeric field.
+
+      Raised in review of PR-86: https://github.com/joemooney/quizdom/pull/86#issuecomment-5017315149
+    req_type: Task
+    status: Draft
+    priority: Medium
+clock: 214
 node_id: ''
