@@ -1,0 +1,11 @@
+scope = "PR-88"
+node_id = "JM"
+clone_path = "/home/joe/ai/quizdom"
+host = "imac"
+pid = 251327
+agent = "reviewer"
+started_at = "2026-07-19T21:36:57.442345736+00:00"
+heartbeat_at = "2026-07-19T21:36:57.442345736+00:00"
+ttl_secs = 1800
+process_backed = false
+review_verb = true
