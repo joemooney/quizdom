@@ -1,0 +1,27 @@
+id: 019f7bc8-db63-72e3-a8e7-374583448488
+spec_id: STORY-213
+agreed_id: STORY-213
+title: 'Review PR-83: [AI:claude] feat(store,db): EPIC-202 batch 1 — DomainStore trait + Dolt schema bootstrap (STORY-204, STORY-205)'
+description: |
+  Auto-filed by `aida pr auto-queue-review` (typically from /aida-pr) (session `019f7bb7`) for branch `epic-202`.
+
+  - PR: <https://github.com/joemooney/quizdom/pull/83>
+  - Branch: `epic-202` → `main`
+
+  ## Covers
+
+  - STORY-205
+  - STORY-204
+
+  ## Acceptance
+
+  - Generate a structured review prompt with `aida review prompt --pr 83` and verify each spec's acceptance criteria.
+  - Approve and merge, or request changes by spec id.
+  - Mark this story `completed` once the PR is merged.
+status: Approved
+priority: Medium
+owner: ''
+feature: Uncategorized
+created_at: 2026-07-19T19:09:48.771745046Z
+modified_at: 2026-07-19T19:09:48.771745046Z
+req_type: Story
