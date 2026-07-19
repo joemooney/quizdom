@@ -2199,5 +2199,21 @@ operations:
     req_type: Task
     status: Draft
     priority: Medium
-clock: 209
+- id: 019f7c12-baf9-7102-85c3-4f67f1fa035e
+  target_id: 019f7c12-b65b-7f20-b11a-ed141d4abf4d
+  author: aida
+  node_id: ''
+  lamport: 210
+  timestamp: 2026-07-19T20:30:30.137970671Z
+  kind: !Create
+    title: Rename AidaCli* types now backed by Dolt (AidaCliQuestionBank etc.)
+    description: |
+      After the STORY-208 cutover, AidaCliQuestionBank, AidaCliGeneratedQuestionPersister, AidaCliUserAuthoredQuestionPersister, AidaCliUserSpecificTermPersister, AidaCliQuestionReweighter, AidaCliContradictsEdges and AidaCliContradictionResolutionPersister all run against the Dolt domain store — the "AidaCli" prefix is now misleading. Renaming touched too many call sites to bundle into the cutover PR; suggest folding the rename into STORY-209 (post-cutover cleanup) or a small dedicated task.
+
+      Raised by the implementer while working STORY-208.
+      Branch: epic-202-2  ·  Commit: 1cf0b84  (PR link added on merge)
+    req_type: Task
+    status: Draft
+    priority: Medium
+clock: 210
 node_id: ''
