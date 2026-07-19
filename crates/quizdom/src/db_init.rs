@@ -35,6 +35,12 @@ pub(crate) struct SystemDoltRunner {
     command: String,
 }
 
+impl SystemDoltRunner {
+    pub(crate) fn new(command: String) -> Self {
+        Self { command }
+    }
+}
+
 impl DoltRunner for SystemDoltRunner {
     fn run(&self, cwd: &Path, args: &[String]) -> Result<Output> {
         std::process::Command::new(&self.command)

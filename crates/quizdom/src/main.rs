@@ -17,6 +17,8 @@ fn main() {
         Some("curate") => quizdom::run_curate(args, &mut std::io::stdout()),
         // trace:STORY-205 | ai:claude
         Some("db-init") => quizdom::run_db_init(args, &mut std::io::stdout()),
+        // trace:STORY-206 | ai:claude
+        Some("db-migrate") => quizdom::run_db_migrate(args, &mut std::io::stdout()),
         // trace:STORY-87 | ai:claude
         Some("question") if args.get(1).map(String::as_str) == Some("add") => {
             quizdom::run_question_add(args, std::io::stdin(), std::io::stdout())
