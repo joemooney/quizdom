@@ -3,12 +3,12 @@ spec_id: STORY-207
 agreed_id: STORY-207
 title: 'Dolt backend: implement DomainStore over dolt sql -r json with recursive-CTE traversal'
 description: 'Implement the DomainStore trait against Dolt using dolt sql -r json CLI spawns per ADR-203 (no daemon). Includes multi-hop traversal as a single recursive CTE (replacing per-hop calls at the trait boundary), weight column reads, and node/edge writes with dolt commit. Backend selected by config/env so aida and dolt impls coexist. Depends on the trait slice and the schema slice. Acceptance: integration tests run the full trait surface against a fixture Dolt repo; traversal of a 3+ hop chain returns the same result set the aida backend produces on equivalent data.'
-status: Done
+status: Completed
 priority: Medium
 owner: ''
 feature: Uncategorized
 created_at: 2026-07-19T18:45:54.821983113Z
-modified_at: 2026-07-19T19:59:17.780511829Z
+modified_at: 2026-07-19T20:04:28.096348693Z
 req_type: Story
 relationships:
 - rel_type: Child
@@ -18,7 +18,23 @@ relationships:
   target_id: 019f7bf6-1d6e-7292-b4e0-6a46b708227b
   created_at: 2026-07-19T19:59:17.780502507Z
   created_by: joe
+history:
+- id: 019f7bfa-e540-7f23-a689-31d47235e9ee
+  author: aida-auto-bump
+  timestamp: 2026-07-19T20:04:28.096042741Z
+  changes:
+  - field_name: status
+    old_value: Done
+    new_value: Completed
+processing_record:
+- id: 019f7bfa-e540-7f23-a689-31eb61bfbdbb
+  timestamp: 2026-07-19T20:04:28.096348246Z
+  agent: aida
+  commit_sha: 0c82a7e8ab9e396db8f2e21d994bdaaf5ad09fea
+  summary: Completed via merge 0c82a7e8
 implementation_info:
   implemented: true
   implemented_at: 2026-07-19T19:58:10.113509427Z
   implemented_by: joe
+  completed_at: 2026-07-19T20:04:28.095959476Z
+  completion_sha: 0c82a7e8ab9e396db8f2e21d994bdaaf5ad09fea
