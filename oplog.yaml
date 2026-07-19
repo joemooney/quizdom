@@ -1817,5 +1817,21 @@ operations:
     req_type: Task
     status: Draft
     priority: Medium
-clock: 185
+- id: 019f7bc7-601c-70c3-a503-e10566519792
+  target_id: 019f7bc7-5dfe-7a52-8c55-7f702e3987d9
+  author: aida
+  node_id: ''
+  lamport: 186
+  timestamp: 2026-07-19T19:08:11.676035120Z
+  kind: !Create
+    title: STORY-205 added a tags column to the Dolt nodes table beyond the spec's column list
+    description: |
+      The spec's nodes column list was (id, kind, title, body, weight, timestamps). I added `tags VARCHAR(2048) NOT NULL DEFAULT ''` (db/schema.sql) because questions cannot round-trip without their `topic:*` / `answer:*` / `quality:*` tags, and STORY-206's exporter parity check needs somewhere to put them. `weight:N` stays excluded from tags — it is the numeric column per the spec. If the advisor prefers first-class columns (e.g. answer_mode) over a comma-joined tags string, that is a STORY-206/207 design call; the column is cheap to change while the db is empty.
+
+      Raised by the implementer while working STORY-205.
+      Branch: epic-202  ·  Commit: bf768ae  (PR link added on merge)
+    req_type: Task
+    status: Draft
+    priority: Medium
+clock: 186
 node_id: ''
