@@ -1741,5 +1741,17 @@ operations:
     req_type: Story
     status: Approved
     priority: Medium
-clock: 178
+- id: 019f7bb2-fc6d-7713-b692-b009c1d6d0ab
+  target_id: 019f7bb2-fa05-7173-9f76-f9aad9348eb9
+  author: aida
+  node_id: ''
+  lamport: 179
+  timestamp: 2026-07-19T18:45:55.437666420Z
+  kind: !Create
+    title: 'Dolt backend: implement DomainStore over dolt sql -r json with recursive-CTE traversal'
+    description: 'Implement the DomainStore trait against Dolt using dolt sql -r json CLI spawns per ADR-203 (no daemon). Includes multi-hop traversal as a single recursive CTE (replacing per-hop calls at the trait boundary), weight column reads, and node/edge writes with dolt commit. Backend selected by config/env so aida and dolt impls coexist. Depends on the trait slice and the schema slice. Acceptance: integration tests run the full trait surface against a fixture Dolt repo; traversal of a 3+ hop chain returns the same result set the aida backend produces on equivalent data.'
+    req_type: Story
+    status: Approved
+    priority: Medium
+clock: 179
 node_id: ''
