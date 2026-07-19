@@ -8,7 +8,7 @@ priority: Medium
 owner: ''
 feature: Uncategorized
 created_at: 2026-07-19T18:45:19.754493526Z
-modified_at: 2026-07-19T19:03:22.031955634Z
+modified_at: 2026-07-19T19:09:14.595641483Z
 req_type: Story
 tags:
 - batch:dolt-phase-1
@@ -16,3 +16,18 @@ relationships:
 - rel_type: Child
   target_id: 019f7baf-7934-7863-a787-0001f14c0af1
   created_at: 2026-07-19T18:45:21.283266754Z
+comments:
+- id: 019f7bc8-55e3-7853-999b-19f82f26cea0
+  author: joe
+  content: |-
+    Implemented via branch epic-202 (commit bf768ae; PR link on open):
+
+    - db/schema.sql: idempotent DDL — nodes (typed kind, tags, numeric ADR-22 weight) + edges (six custom kinds, duplicate-proof PK, FKs)
+    - quizdom db-init subcommand (crates/quizdom/src/db_init.rs): creates the Dolt repo (default data/dolt) and applies the DDL; re-run safe
+    - Recursive-CTE traversal fixture + check under db/fixtures/, exercised by an ignored real-dolt integration test; schema documented in graph-schema.md
+
+    Test status: 549/549 quizdom + 7/7 llm tests green
+    Follow-up: TASK-210 (dolt not on PATH here — live acceptance deferred), TASK-211 (tags column beyond spec list), TASK-212 (Decision/references homeless in Dolt schema)
+  created_at: 2026-07-19T19:09:14.595641483Z
+  modified_at: 2026-07-19T19:09:14.595641483Z
+  session_id: 019f7bb7-dbf2-7d62-aa7c-3669e4532a25
