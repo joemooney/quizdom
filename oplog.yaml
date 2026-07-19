@@ -1685,5 +1685,13 @@ operations:
     req_type: Epic
     status: Approved
     priority: Medium
-clock: 173
+- id: 019f7baf-d581-7d61-927b-63355388d6cb
+  target_id: 019f7b89-6953-78d0-953e-5c0be7ecf100
+  author: aida
+  node_id: ''
+  lamport: 174
+  timestamp: 2026-07-19T18:42:28.865085145Z
+  kind: !SetStatus
+    status: Rejected
+clock: 174
 node_id: ''
