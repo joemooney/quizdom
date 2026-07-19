@@ -9,10 +9,10 @@ description: |-
   - cargo run -p quizdom starts a session with no AIDA_OUTPUT_FORMAT set in the parent env
   - every aida spawn goes through one shared constructor that pins the format (no unpinned Command::new(aida) remains)
   - a unit test covers parse_question_show against the pinned format, and a test (or debug assert) guards against unpinned spawns reappearing
-status: Draft
+status: Approved
 priority: High
 owner: ''
 feature: Uncategorized
 created_at: 2026-07-19T18:04:53.670347955Z
-modified_at: 2026-07-19T18:04:53.670347955Z
+modified_at: 2026-07-19T18:05:41.802032640Z
 req_type: Bug
