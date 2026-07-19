@@ -8,7 +8,14 @@ priority: Low
 owner: ''
 feature: Uncategorized
 created_at: 2026-07-19T18:03:36.132146571Z
-modified_at: 2026-07-19T18:26:38.031161307Z
+modified_at: 2026-07-19T18:31:03.208593383Z
 req_type: Task
 tags:
 - batch:onboarding
+comments:
+- id: 019f7ba5-5f28-7943-b359-ec85cd3d782d
+  author: joe
+  content: Commit 2cc5506 references this requirement
+  created_at: 2026-07-19T18:31:03.208593383Z
+  modified_at: 2026-07-19T18:31:03.208593383Z
+  session_id: e4967702-0134-422b-ba6a-cad540402334
