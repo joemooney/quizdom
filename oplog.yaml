@@ -2478,5 +2478,31 @@ operations:
   timestamp: 2026-07-19T21:20:18.348581290Z
   kind: !SetStatus
     status: In Progress
-clock: 228
+- id: 019f7c46-f738-7612-aedb-c2dbd4c1903f
+  target_id: 019f7c46-f5a5-79f3-88d4-1f38f711d009
+  author: aida
+  node_id: ''
+  lamport: 229
+  timestamp: 2026-07-19T21:27:33.432478103Z
+  kind: !Create
+    title: db-migrate edge-read independence is now global-scan vs per-node within one subcommand (rel list)
+    description: |
+      The BUG-231 fix gives the exporter its edge read via a single global
+      'aida rel list --limit 0 --all' scan (crates/quizdom/src/db_migrate.rs,
+      collect_domain_edges), while the parity verification keeps the per-node
+      'aida rel list <id> --type <kind>' probes. Both reads now go through the
+      same aida subcommand — independence rests on unfiltered-global vs
+      per-node-filtered query paths, not on two different subcommands as the
+      original show-vs-rel-list split intended. That split was impossible to
+      keep: show output collapses custom edge kinds to 'Related' (FR-282), so
+      no second edge-bearing surface exists today. If aida ever grows another
+      edge surface (e.g. a JSON export), consider moving one side onto it to
+      restore full surface-level independence.
+
+      Raised by the implementer while working BUG-231.
+      Branch: epic-202-2  ·  Commit: d617eb8  (PR link added on merge)
+    req_type: Task
+    status: Draft
+    priority: Medium
+clock: 229
 node_id: ''
