@@ -1717,5 +1717,17 @@ operations:
     req_type: Story
     status: Approved
     priority: Medium
-clock: 176
+- id: 019f7bb2-72ca-7511-b60b-8c42960ddd6c
+  target_id: 019f7bb2-710a-79d0-91c6-c2f8e1f98460
+  author: aida
+  node_id: ''
+  lamport: 177
+  timestamp: 2026-07-19T18:45:20.202593174Z
+  kind: !Create
+    title: 'Dolt schema and repo bootstrap: nodes/edges DDL with numeric weight, init command'
+    description: 'Define the Dolt SQL schema mirroring docs/architecture/graph-schema.md: nodes table (id, kind for question/term/belief, title, body, weight numeric, timestamps), edges table (from_id, to_id, kind constrained to begets/probes/refines/contradicts/agrees/disagrees). Add a quizdom db-init subcommand (or make target) that creates the dolt repo and applies the DDL, plus checked-in schema files. Document the schema in graph-schema.md alongside the AIDA mapping it replaces. Acceptance: db-init on a clean checkout produces a working empty Dolt db; DDL is idempotent; recursive CTE over edges works on a hand-inserted fixture.'
+    req_type: Story
+    status: Approved
+    priority: Medium
+clock: 177
 node_id: ''
