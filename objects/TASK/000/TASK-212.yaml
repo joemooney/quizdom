@@ -1,0 +1,20 @@
+id: 019f7bc7-7590-7ed2-a9ec-8388d76fda15
+spec_id: TASK-212
+agreed_id: TASK-212
+title: Dolt schema has no home for contradiction-resolution Decision nodes and references edges
+description: |
+  The STORY-204 DomainStore trait supports NodeKind::Decision and EdgeKind::References (used by the contradiction-resolution persister), but the STORY-205 Dolt schema — per its spec — constrains nodes to question/term/belief and edges to the six custom kinds. When STORY-207 implements DomainStore over Dolt, create_node(Decision) / ensure_edge(References) will have no table to land in. Someone must decide: (a) resolutions stay in the AIDA store (they read as project-intent-adjacent decisions, which ADR-201 keeps in AIDA), or (b) the Dolt schema grows a decision kind + references edge. Worth settling before STORY-207 starts.
+
+  Raised by the implementer while working STORY-205.
+  Branch: epic-202  ·  Commit: bf768ae  (PR link added on merge)
+status: Draft
+priority: Medium
+owner: ''
+feature: Uncategorized
+created_at: 2026-07-19T19:08:17.168739241Z
+modified_at: 2026-07-19T19:08:17.168739241Z
+req_type: Task
+tags:
+- from-implementer:STORY-205
+- kind:followup-suggestion
+- severity:minor
