@@ -8,5 +8,10 @@ priority: Medium
 owner: ''
 feature: Uncategorized
 created_at: 2026-07-19T18:41:52.787574135Z
-modified_at: 2026-07-19T18:41:52.787574135Z
+modified_at: 2026-07-19T18:42:16.891666254Z
 req_type: Decision
+relationships:
+- rel_type: References
+  target_id: 019e7e5e-6e6e-76e3-a004-1a89f431fc5d
+  created_at: 2026-07-19T18:42:16.891649904Z
+  created_by: joe
