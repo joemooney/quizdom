@@ -1962,5 +1962,31 @@ operations:
     req_type: Task
     status: Draft
     priority: Medium
-clock: 193
+- id: 019f7bde-97a3-7c51-9867-576f3a4b5faa
+  target_id: 019f7bde-95c3-7600-9998-f8368f4e6795
+  author: aida
+  node_id: ''
+  lamport: 194
+  timestamp: 2026-07-19T19:33:33.219792964Z
+  kind: !Create
+    title: 'Review PR-84: [AI:claude] feat(db): EPIC-202 batch 2 — AIDA-store → Dolt exporter with parity check (STORY-206)'
+    description: |
+      Auto-filed by `aida pr auto-queue-review` (typically from /aida-pr) (session `019f7bd2`) for branch `epic-202-2`.
+
+      - PR: <https://github.com/joemooney/quizdom/pull/84>
+      - Branch: `epic-202-2` → `main`
+
+      ## Covers
+
+      - STORY-206
+
+      ## Acceptance
+
+      - Generate a structured review prompt with `aida review prompt --pr 84` and verify each spec's acceptance criteria.
+      - Approve and merge, or request changes by spec id.
+      - Mark this story `completed` once the PR is merged.
+    req_type: Story
+    status: Approved
+    priority: Medium
+clock: 194
 node_id: ''
