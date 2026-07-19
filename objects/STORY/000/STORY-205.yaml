@@ -3,12 +3,12 @@ spec_id: STORY-205
 agreed_id: STORY-205
 title: 'Dolt schema and repo bootstrap: nodes/edges DDL with numeric weight, init command'
 description: 'Define the Dolt SQL schema mirroring docs/architecture/graph-schema.md: nodes table (id, kind for question/term/belief, title, body, weight numeric, timestamps), edges table (from_id, to_id, kind constrained to begets/probes/refines/contradicts/agrees/disagrees). Add a quizdom db-init subcommand (or make target) that creates the dolt repo and applies the DDL, plus checked-in schema files. Document the schema in graph-schema.md alongside the AIDA mapping it replaces. Acceptance: db-init on a clean checkout produces a working empty Dolt db; DDL is idempotent; recursive CTE over edges works on a hand-inserted fixture.'
-status: Approved
+status: InProgress
 priority: Medium
 owner: ''
 feature: Uncategorized
 created_at: 2026-07-19T18:45:19.754493526Z
-modified_at: 2026-07-19T18:46:54.523199818Z
+modified_at: 2026-07-19T19:03:22.031955634Z
 req_type: Story
 tags:
 - batch:dolt-phase-1
