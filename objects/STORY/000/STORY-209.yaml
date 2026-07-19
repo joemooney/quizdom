@@ -1,0 +1,12 @@
+id: 019f7bb3-50fc-7053-881b-8c4a33718393
+spec_id: STORY-209
+agreed_id: STORY-209
+title: 'Post-cutover cleanup: remove domain objects from the AIDA store and update docs'
+description: 'After cutover parity is verified: delete Q-*/BELIEF-*/TERM-* domain objects and their custom edges from .aida-store (store-only push), leaving intent objects untouched. Update CLAUDE.md, OVERVIEW.md, and docs/architecture/graph-schema.md to describe the Dolt substrate and mark ADR-3/ADR-31/ADR-22 as superseded/retired. Acceptance: aida backlog list and aida burndown plan --candidates show zero domain objects; docs contain no references to domain data living in the AIDA store except historical ADR notes.'
+status: Approved
+priority: Medium
+owner: ''
+feature: Uncategorized
+created_at: 2026-07-19T18:46:17.084320554Z
+modified_at: 2026-07-19T18:46:17.084320554Z
+req_type: Story
