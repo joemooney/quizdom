@@ -2129,5 +2129,20 @@ operations:
     req_type: Task
     status: Draft
     priority: Medium
-clock: 203
+- id: 019f7bfa-9ff2-7732-8289-4ac4d10db0b1
+  target_id: 019f7bfa-9e41-7452-b23e-bbd732dbc017
+  author: aida
+  node_id: ''
+  lamport: 204
+  timestamp: 2026-07-19T20:04:10.354675044Z
+  kind: !Create
+    title: 'weight:0 tag asymmetry: dolt fetch_node drops the tag that split_weight_tag consumed'
+    description: |
+      split_weight_tag (dolt_store.rs:145) moves weight:0 into the weight column on write, but fetch_node (dolt_store.rs:205) only synthesizes weight:N back into tags when weight > 0 — the aida backend preserves the literal weight:0 tag. Both read as unweighted semantically; shape parity only.
+
+      Raised in review of PR-85: https://github.com/joemooney/quizdom/pull/85#issuecomment-5017187770
+    req_type: Task
+    status: Draft
+    priority: Medium
+clock: 204
 node_id: ''
