@@ -1729,5 +1729,17 @@ operations:
     req_type: Story
     status: Approved
     priority: Medium
-clock: 177
+- id: 019f7bb2-a5e4-7380-8642-52d986d07b34
+  target_id: 019f7bb2-a3ba-76b1-bada-5cabc08d047f
+  author: aida
+  node_id: ''
+  lamport: 178
+  timestamp: 2026-07-19T18:45:33.284447851Z
+  kind: !Create
+    title: 'Exporter: migrate domain objects from .aida-store into Dolt with parity check'
+    description: 'One-shot migration tool (subcommand or script) that reads all Q-*/BELIEF-*/TERM-* domain objects and their custom edges from the AIDA store and inserts them into the Dolt nodes/edges tables, converting weight:N tags to the weight column. Includes a parity report: node count, edge count per kind, and spot-check of a known chain (e.g. Q-23 lineage). Depends on the schema slice. Acceptance: running against the real store loads all domain objects; parity report matches aida-side counts; re-running is safe (idempotent or clean-slate).'
+    req_type: Story
+    status: Approved
+    priority: Medium
+clock: 178
 node_id: ''
