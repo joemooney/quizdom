@@ -1705,5 +1705,17 @@ operations:
     req_type: Decision
     status: Approved
     priority: Medium
-clock: 175
+- id: 019f7bb2-0661-78d1-956c-ce6aa0ca78b3
+  target_id: 019f7bb2-02de-7241-bd59-d9702eddd649
+  author: aida
+  node_id: ''
+  lamport: 176
+  timestamp: 2026-07-19T18:44:52.449958405Z
+  kind: !Create
+    title: 'Extract DomainStore trait: route all domain graph reads/writes through one storage abstraction (aida backend first)'
+    description: 'Pure refactor, no behavior change. Introduce a DomainStore trait covering every domain-graph operation quizdom performs (node fetch, edge list per ADR-31 one-hop, node/edge create, weight read). Move the existing aida-spawn choke point behind it as the first backend implementation. No Dolt dependency in this slice. Acceptance: cargo test passes unchanged; no aida spawns for domain data outside the trait impl; session loop behaves identically.'
+    req_type: Story
+    status: Approved
+    priority: Medium
+clock: 176
 node_id: ''
