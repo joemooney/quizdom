@@ -1777,5 +1777,13 @@ operations:
     req_type: Story
     status: Approved
     priority: Medium
-clock: 181
+- id: 019f7bb6-acb1-7072-bfa6-e3099b2d65f6
+  target_id: 019f7bb4-8b5c-7573-8ecc-4276b81e1cb1
+  author: aida
+  node_id: ''
+  lamport: 182
+  timestamp: 2026-07-19T18:49:57.169773770Z
+  kind: !AddTag
+    tag: recurrence:2
+clock: 182
 node_id: ''
