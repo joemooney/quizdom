@@ -3,6 +3,9 @@ use crate::bank::rewrite_weight_and_quality_tags;
 use crate::error::QuizdomError;
 use crate::error::Result;
 use crate::model::{AnswerKind, Question, TermDefinition};
+// trace:STORY-207 | ai:claude — persisters default to the config/env-selected
+// backend; the aida-pinned test constructors keep the concrete type.
+use crate::dolt_store::SelectedDomainStore;
 use crate::store::{AidaDomainStore, DomainStore, EdgeKind, NewNode, NodeKind};
 use crate::strategy::{reweight, QualitySignal};
 
@@ -122,26 +125,26 @@ impl GeneratedQuestionPersister for NoopGeneratedQuestionPersister {
     }
 }
 
-pub(crate) struct AidaCliGeneratedQuestionPersister<S = AidaDomainStore> {
+pub(crate) struct AidaCliGeneratedQuestionPersister<S = SelectedDomainStore> {
     store: S,
 }
 
 impl Default for AidaCliGeneratedQuestionPersister {
     fn default() -> Self {
         Self {
-            store: AidaDomainStore::default(),
+            store: SelectedDomainStore::default(),
         }
     }
 }
 
-pub(crate) struct AidaCliUserSpecificTermPersister<S = AidaDomainStore> {
+pub(crate) struct AidaCliUserSpecificTermPersister<S = SelectedDomainStore> {
     store: S,
 }
 
 impl Default for AidaCliUserSpecificTermPersister {
     fn default() -> Self {
         Self {
-            store: AidaDomainStore::default(),
+            store: SelectedDomainStore::default(),
         }
     }
 }
@@ -257,14 +260,14 @@ const USER_AUTHORED_NEUTRAL_WEIGHT: u32 = 50;
 // Foundational persister (per the spec): the type + edge wiring land here. The
 // standalone `quizdom question add` command (STORY-87) and the in-session
 // quick-add control (STORY-88) both drive it via the shared authoring core.
-pub(crate) struct AidaCliUserAuthoredQuestionPersister<S = AidaDomainStore> {
+pub(crate) struct AidaCliUserAuthoredQuestionPersister<S = SelectedDomainStore> {
     store: S,
 }
 
 impl Default for AidaCliUserAuthoredQuestionPersister {
     fn default() -> Self {
         Self {
-            store: AidaDomainStore::default(),
+            store: SelectedDomainStore::default(),
         }
     }
 }
@@ -408,7 +411,7 @@ fn apply_reweight(question: &Question, signal: QualitySignal) -> Question {
 }
 
 #[allow(dead_code)]
-pub(crate) struct AidaCliQuestionReweighter<S = AidaDomainStore> {
+pub(crate) struct AidaCliQuestionReweighter<S = SelectedDomainStore> {
     store: S,
 }
 
@@ -416,7 +419,7 @@ pub(crate) struct AidaCliQuestionReweighter<S = AidaDomainStore> {
 impl Default for AidaCliQuestionReweighter {
     fn default() -> Self {
         Self {
-            store: AidaDomainStore::default(),
+            store: SelectedDomainStore::default(),
         }
     }
 }

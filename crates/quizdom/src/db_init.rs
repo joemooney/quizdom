@@ -23,15 +23,16 @@ pub const DOLT_SCHEMA_SQL: &str = include_str!("../../../db/schema.sql");
 pub const DEFAULT_DOLT_DB_PATH: &str = "data/dolt";
 
 /// Runs the `dolt` CLI in a working directory. Abstracted so the bootstrap
-/// flow can be unit-tested without a dolt binary on PATH.
-pub(crate) trait DoltRunner {
+/// flow can be unit-tested without a dolt binary on PATH. Public because the
+/// Dolt-backed [`crate::DoltDomainStore`] (STORY-207) shares this seam.
+pub trait DoltRunner {
     fn run(&self, cwd: &Path, args: &[String]) -> Result<Output>;
 }
 
 /// The real runner: spawns the `dolt` binary. `db_init.rs` is allowlisted in
 /// the BUG-200 guard test because this spawns dolt, not aida — the pinned
 /// aida output format does not apply.
-pub(crate) struct SystemDoltRunner {
+pub struct SystemDoltRunner {
     command: String,
 }
 

@@ -22,15 +22,25 @@ data substrate.
 - **Stack: Rust** (`ADR-32`). Cargo workspace; the app is `crates/quizdom`
   (binary). A provider-agnostic `llm` crate is coming in EPIC-7 (`ADR-34`) —
   built fresh here, not extracted from `~/ai/aida-chat`.
-- **Data lives in AIDA** (`ADR-3`): no separate DB. The domain graph is AIDA
-  objects — `Q-*` questions, `TERM-*` definitions (`--type term`), `BELIEF-*`
-  propositions — joined by custom edges (`begets`/`probes`/`refines`/
-  `contradicts`/`agrees`/`disagrees`). Canonical schema:
-  `docs/architecture/graph-schema.md`. The app reads/writes by shelling out to
-  the `aida` CLI.
-- **Graph traversal is app-side** (`ADR-31`): `aida graph`/`query_graph` cannot
-  follow custom edges (upstream `~/ai/aida` FR-282), so we walk one hop at a
-  time via `aida rel list <node> --type <edge>`.
+- **Domain data is migrating to Dolt** (`ADR-201`, EPIC-202, supersedes
+  `ADR-3`): the domain graph — `Q-*` questions, `TERM-*` definitions
+  (`--type term`), `BELIEF-*` propositions, joined by custom edges
+  (`begets`/`probes`/`refines`/`contradicts`/`agrees`/`disagrees`) — moves
+  into a Dolt repo (`quizdom db-init` / `db-migrate`; default path
+  `data/dolt`). AIDA remains canonical for project intent, including
+  contradiction-resolution decision nodes and `references` edges. Canonical
+  schema: `docs/architecture/graph-schema.md` + `db/schema.sql`.
+- **One storage seam, two backends** (`STORY-204`/`STORY-207`): all
+  domain reads/writes go through the `DomainStore` trait. The aida backend
+  shells out to the `aida` CLI; the Dolt backend spawns `dolt sql -r json`
+  per query (`ADR-203`, no daemon). Select with `QUIZDOM_STORE=dolt` (+
+  `QUIZDOM_DOLT_PATH`), or `store = dolt` / `dolt_path = ...` in
+  `~/.config/quizdom/settings.toml`; default is aida.
+- **Graph traversal** (`ADR-31`): the aida backend walks one hop at a time
+  via `aida rel list <node> --type <edge>` (`aida graph`/`query_graph`
+  cannot follow custom edges — upstream `~/ai/aida` FR-282); the Dolt
+  backend runs multi-hop reads as a single recursive CTE
+  (`DomainStore::reachable`).
 - **Interface: CLI/TUI** (`ADR-4`); web deferred. **Weighting** uses `weight:N`
   tags computed in-app (`ADR-22`).
 

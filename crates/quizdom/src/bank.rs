@@ -3,7 +3,10 @@
 // wrappers expose.
 use crate::error::{QuizdomError, Result};
 use crate::model::{answer_kind_from_tags, Question, QuestionRef, TermDefinition, TermRef};
-use crate::store::{parse_node_show, AidaDomainStore, DomainStore, EdgeKind, NodeKind, NodeRecord};
+// trace:STORY-207 | ai:claude — the default store is now the config/env-selected
+// backend, so the aida and Dolt implementations coexist behind one seam.
+use crate::dolt_store::SelectedDomainStore;
+use crate::store::{parse_node_show, DomainStore, EdgeKind, NodeKind, NodeRecord};
 use crate::strategy::QualitySignal;
 use std::collections::BTreeSet;
 
@@ -21,14 +24,14 @@ pub trait QuestionBank {
     }
 }
 
-pub struct AidaCliQuestionBank<S = AidaDomainStore> {
+pub struct AidaCliQuestionBank<S = SelectedDomainStore> {
     store: S,
 }
 
 impl Default for AidaCliQuestionBank {
     fn default() -> Self {
         Self {
-            store: AidaDomainStore::default(),
+            store: SelectedDomainStore::default(),
         }
     }
 }

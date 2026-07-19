@@ -124,6 +124,27 @@ pub trait DomainStore {
     /// Replace a node's full tag list (the ADR-22 weight-write path — the new
     /// list carries the recomputed `weight:N`).
     fn replace_tags(&self, id: &str, tags: &[String]) -> Result<()>;
+
+    // trace:STORY-207 | ai:claude
+    /// Every node reachable from `root` over `edge` edges — `root` included,
+    /// deduplicated, sorted. Cycle-safe.
+    ///
+    /// The default implementation walks one hop at a time via
+    /// [`DomainStore::neighbors`] (ADR-31: the aida backend cannot follow
+    /// custom edges server-side). Backends with real multi-hop support
+    /// override it — the Dolt backend runs a single recursive CTE.
+    fn reachable(&self, root: &str, edge: EdgeKind) -> Result<Vec<String>> {
+        let mut reached = std::collections::BTreeSet::from([root.to_string()]);
+        let mut frontier = vec![root.to_string()];
+        while let Some(current) = frontier.pop() {
+            for target in self.neighbors(&current, edge)? {
+                if reached.insert(target.clone()) {
+                    frontier.push(target);
+                }
+            }
+        }
+        Ok(reached.into_iter().collect())
+    }
 }
 
 /// The aida CLI backend: every operation shells out to `aida` and parses its
