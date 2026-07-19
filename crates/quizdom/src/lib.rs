@@ -7,6 +7,8 @@ mod contradiction;
 mod db_init;
 // trace:STORY-206 | ai:claude — AIDA-store → Dolt exporter with parity check (EPIC-202).
 mod db_migrate;
+// trace:STORY-207 | ai:claude — the Dolt-backed DomainStore + backend selection (EPIC-202).
+mod dolt_store;
 // trace:STORY-180 | ai:claude — the capable TUI free-text editor (tui-textarea).
 mod editor;
 mod error;
@@ -61,6 +63,8 @@ pub use contradiction::{
 // trace:STORY-205 | ai:claude
 pub use db_init::{run_db_init, DEFAULT_DOLT_DB_PATH, DOLT_SCHEMA_SQL};
 pub use db_migrate::{run_db_migrate, DEFAULT_SPOT_CHECK_ROOT};
+// trace:STORY-207 | ai:claude
+pub use dolt_store::{domain_store_from_config, DoltDomainStore, SelectedDomainStore};
 pub use error::{QuizdomError, Result};
 pub use model::{
     Answer, AnswerKind, Question, QuestionRef, RefinementProposal, TermDefinition,

@@ -17,6 +17,10 @@
 // trace:EPIC-9 | ai:claude
 // trace:STORY-204 | ai:claude — domain-graph access goes through DomainStore.
 use crate::error::{QuizdomError, Result};
+// trace:STORY-207 | ai:claude — contradicts-edge reads follow the selected
+// backend; the resolution persister stays pinned to the AIDA store (its
+// decision nodes and `references` edges are AIDA-canonical per ADR-201).
+use crate::dolt_store::SelectedDomainStore;
 use crate::store::{AidaDomainStore, DomainStore, EdgeKind, NewNode, NodeKind};
 use llm::{LLMClient, Message};
 use serde_json::Value;
@@ -104,14 +108,14 @@ pub trait ContradictsEdges {
 
 /// Resolves `contradicts` edges through the domain store, one hop at a time
 /// (ADR-31: traversal is app-side, walking single hops).
-pub struct AidaCliContradictsEdges<S = AidaDomainStore> {
+pub struct AidaCliContradictsEdges<S = SelectedDomainStore> {
     store: S,
 }
 
 impl Default for AidaCliContradictsEdges {
     fn default() -> Self {
         Self {
-            store: AidaDomainStore::default(),
+            store: SelectedDomainStore::default(),
         }
     }
 }

@@ -471,7 +471,7 @@ fn edges_insert_sql(edges: &[DomainEdge]) -> Vec<String> {
 }
 
 /// A MySQL single-quoted string literal (backslashes and quotes escaped).
-fn sql_quote(text: &str) -> String {
+pub(crate) fn sql_quote(text: &str) -> String {
     let mut quoted = String::with_capacity(text.len() + 2);
     quoted.push('\'');
     for character in text.chars() {
