@@ -1,0 +1,18 @@
+id: 019f7b8d-6c26-76c0-bfe2-bd5878047410
+spec_id: BUG-200
+agreed_id: BUG-200
+title: 'quizdom broken by upstream aida TOON auto-format: piped ''aida show'' no longer matches screen-scraped human format'
+description: |-
+  Repro (2026-07-19): 'cargo run -p quizdom' -> 'error: aida show output missing ID'. Cause: upstream aida now auto-switches to compact TOON output when stdout is not a TTY, so every quizdom shell-out gets 'id: Q-23' where the parsers (bank.rs parse_question_show/parse_term_show via prefixed_line, plus rel-list and transcript scrapers) expect the human 'ID:'/'Title:'/'Tags:' format. All ~9 Command::new(aida) sites in bank.rs / main.rs / transcript.rs are affected. Workaround: run with AIDA_OUTPUT_FORMAT=human. Fix: pin the format on every aida spawn — inject AIDA_OUTPUT_FORMAT=human (or --format human) at a single choke point (e.g. an AidaBank command constructor all callers share) so future spawn sites inherit the pin; optionally follow up by migrating parsers to --format json for real stability.
+
+  ## Acceptance
+  - cargo run -p quizdom starts a session with no AIDA_OUTPUT_FORMAT set in the parent env
+  - every aida spawn goes through one shared constructor that pins the format (no unpinned Command::new(aida) remains)
+  - a unit test covers parse_question_show against the pinned format, and a test (or debug assert) guards against unpinned spawns reappearing
+status: Draft
+priority: High
+owner: ''
+feature: Uncategorized
+created_at: 2026-07-19T18:04:53.670347955Z
+modified_at: 2026-07-19T18:04:53.670347955Z
+req_type: Bug
