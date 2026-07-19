@@ -2249,5 +2249,22 @@ operations:
   timestamp: 2026-07-19T20:35:39.427544720Z
   kind: !SetStatus
     status: In Progress
-clock: 212
+- id: 019f7c20-ee0b-7563-9d1c-8c53f3a104d7
+  target_id: 019f7c20-eb1d-7771-9b09-5721ba8295b1
+  author: aida
+  node_id: ''
+  lamport: 213
+  timestamp: 2026-07-19T20:46:00.715037725Z
+  kind: !Create
+    title: db-init/db-migrate ignore QUIZDOM_DOLT_PATH/dolt_path (runtime store honors them)
+    description: |
+      `quizdom db-init` and `quizdom db-migrate` resolve the Dolt repo path from `--path` / the compiled default only (`db_init.rs:67`, `db_migrate.rs:77`), silently ignoring the `QUIZDOM_DOLT_PATH` env var and the `dolt_path` settings key — while the runtime store honors both (`dolt_store.rs::dolt_path_from`). Repro: `QUIZDOM_DOLT_PATH=/tmp/x quizdom db-init` creates `data/dolt` anyway; a subsequent session then reads `/tmp/x` and finds nothing.
+
+      Pre-existing from STORY-205/206, but the STORY-208 cutover makes it user-facing (Dolt is now the only backend) and CLAUDE.md's new wording implies the override applies uniformly. Fix: route db-init/db-migrate default path through the same env/config resolution, keeping `--path` as the top-priority override.
+
+      Raised in review of PR-86: https://github.com/joemooney/quizdom/pull/86#issuecomment-5017315149
+    req_type: Task
+    status: Draft
+    priority: Medium
+clock: 213
 node_id: ''
