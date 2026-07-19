@@ -3,12 +3,12 @@ spec_id: STORY-204
 agreed_id: STORY-204
 title: 'Extract DomainStore trait: route all domain graph reads/writes through one storage abstraction (aida backend first)'
 description: 'Pure refactor, no behavior change. Introduce a DomainStore trait covering every domain-graph operation quizdom performs (node fetch, edge list per ADR-31 one-hop, node/edge create, weight read). Move the existing aida-spawn choke point behind it as the first backend implementation. No Dolt dependency in this slice. Acceptance: cargo test passes unchanged; no aida spawns for domain data outside the trait impl; session loop behaves identically.'
-status: Done
+status: Completed
 priority: Medium
 owner: ''
 feature: Uncategorized
 created_at: 2026-07-19T18:44:51.550094749Z
-modified_at: 2026-07-19T19:10:11.637105588Z
+modified_at: 2026-07-19T19:14:44.350743281Z
 req_type: Story
 tags:
 - batch:dolt-phase-1
@@ -34,7 +34,23 @@ comments:
   created_at: 2026-07-19T19:09:13.999999734Z
   modified_at: 2026-07-19T19:09:13.999999734Z
   session_id: 019f7bb7-dbf2-7d62-aa7c-3669e4532a25
+history:
+- id: 019f7bcd-5dfe-7ab1-9ca6-b76822e316e8
+  author: aida-auto-bump
+  timestamp: 2026-07-19T19:14:44.350296722Z
+  changes:
+  - field_name: status
+    old_value: Done
+    new_value: Completed
+processing_record:
+- id: 019f7bcd-5dfe-7ab1-9ca6-b7734d8d7100
+  timestamp: 2026-07-19T19:14:44.350742670Z
+  agent: aida
+  commit_sha: 013dd763b55cfad83bfbb3bbe4b9df7c319facbf
+  summary: Completed via merge 013dd763
 implementation_info:
   implemented: true
   implemented_at: 2026-07-19T19:10:11.637105588Z
   implemented_by: joe
+  completed_at: 2026-07-19T19:14:44.332355322Z
+  completion_sha: 013dd763b55cfad83bfbb3bbe4b9df7c319facbf

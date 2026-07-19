@@ -3,12 +3,12 @@ spec_id: STORY-205
 agreed_id: STORY-205
 title: 'Dolt schema and repo bootstrap: nodes/edges DDL with numeric weight, init command'
 description: 'Define the Dolt SQL schema mirroring docs/architecture/graph-schema.md: nodes table (id, kind for question/term/belief, title, body, weight numeric, timestamps), edges table (from_id, to_id, kind constrained to begets/probes/refines/contradicts/agrees/disagrees). Add a quizdom db-init subcommand (or make target) that creates the dolt repo and applies the DDL, plus checked-in schema files. Document the schema in graph-schema.md alongside the AIDA mapping it replaces. Acceptance: db-init on a clean checkout produces a working empty Dolt db; DDL is idempotent; recursive CTE over edges works on a hand-inserted fixture.'
-status: Done
+status: Completed
 priority: Medium
 owner: ''
 feature: Uncategorized
 created_at: 2026-07-19T18:45:19.754493526Z
-modified_at: 2026-07-19T19:10:14.280703597Z
+modified_at: 2026-07-19T19:14:44.351069003Z
 req_type: Story
 tags:
 - batch:dolt-phase-1
@@ -35,7 +35,23 @@ comments:
   created_at: 2026-07-19T19:09:14.595641483Z
   modified_at: 2026-07-19T19:09:14.595641483Z
   session_id: 019f7bb7-dbf2-7d62-aa7c-3669e4532a25
+history:
+- id: 019f7bcd-5dfe-7ab1-9ca6-b78d737caf6e
+  author: aida-auto-bump
+  timestamp: 2026-07-19T19:14:44.350746506Z
+  changes:
+  - field_name: status
+    old_value: Done
+    new_value: Completed
+processing_record:
+- id: 019f7bcd-5dff-7362-b86b-a0c19fc13376
+  timestamp: 2026-07-19T19:14:44.351068699Z
+  agent: aida
+  commit_sha: 013dd763b55cfad83bfbb3bbe4b9df7c319facbf
+  summary: Completed via merge 013dd763
 implementation_info:
   implemented: true
   implemented_at: 2026-07-19T19:10:14.280703597Z
   implemented_by: joe
+  completed_at: 2026-07-19T19:14:44.332355322Z
+  completion_sha: 013dd763b55cfad83bfbb3bbe4b9df7c319facbf
