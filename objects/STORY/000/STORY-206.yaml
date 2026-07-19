@@ -8,7 +8,7 @@ priority: Medium
 owner: ''
 feature: Uncategorized
 created_at: 2026-07-19T18:45:32.730354433Z
-modified_at: 2026-07-19T19:33:35.558638469Z
+modified_at: 2026-07-19T19:33:36.594589564Z
 req_type: Story
 relationships:
 - rel_type: Child
@@ -33,4 +33,10 @@ comments:
     Follow-up: TASK-215 (timestamps not preserved — load-time defaults)
   created_at: 2026-07-19T19:33:03.637465837Z
   modified_at: 2026-07-19T19:33:03.637465837Z
+  session_id: 019f7bd2-35d0-7282-a336-e11090d85c4c
+- id: 019f7bde-a4d2-7eb3-b525-736c402fe6f0
+  author: joe
+  content: 'PR opened: https://github.com/joemooney/quizdom/pull/84'
+  created_at: 2026-07-19T19:33:36.594589564Z
+  modified_at: 2026-07-19T19:33:36.594589564Z
   session_id: 019f7bd2-35d0-7282-a336-e11090d85c4c
