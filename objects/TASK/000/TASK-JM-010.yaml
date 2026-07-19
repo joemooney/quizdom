@@ -1,5 +1,6 @@
 id: 019f7bb4-8b5c-7573-8ecc-4276b81e1cb1
 spec_id: TASK-JM-010
+agreed_id: TASK-10
 title: 'aida queue list --batch NAME ignores the batch filter: with batch:onboarding fu…'
 description: 'aida queue list --batch NAME ignores the batch filter: with batch:onboarding fully drained, queue list --batch onboarding returned the two batch:dolt-phase-1 items instead of an empty set (observed 2026-07-19, aida CLI in quizdom)'
 status: Draft
