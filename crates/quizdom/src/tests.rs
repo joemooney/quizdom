@@ -1,15 +1,16 @@
 use crate::bank::*;
 use crate::contradiction::*;
+use crate::dolt_store::{DoltDomainStore, ScriptedDoltRunner};
 use crate::error::*;
 use crate::honing::*;
 use crate::input::*;
 use crate::model::*;
 use crate::persist::{
-    AidaCliGeneratedQuestionPersister, AidaCliUserSpecificTermPersister, CommandRunner,
-    QuestionLink, QuestionReweighter, UserAuthoredQuestionPersister, UserSpecificTermPersister,
+    AidaCliGeneratedQuestionPersister, AidaCliUserSpecificTermPersister, QuestionLink,
+    QuestionReweighter, UserAuthoredQuestionPersister, UserSpecificTermPersister,
 };
 use crate::session::*;
-use crate::store::parse_question_list_ids;
+use crate::store::CommandRunner;
 use crate::strategy::*;
 use llm::{AnthropicClient, LLMClient, LLMError, LLMFuture, Message, ToolDef};
 use rustyline::EditMode;
@@ -21,103 +22,39 @@ use std::path::Path;
 use std::process::{ExitStatus, Output};
 use std::rc::Rc;
 
+// trace:STORY-208 | ai:claude — the aida domain read path is gone; what
+// remains of `aida show` parsing is the exporter's legacy-store reader.
 #[test]
-fn parses_question_answer_kind_and_weight_from_aida_show() {
+fn exporter_node_parse_extracts_legacy_weight_tag_into_the_numeric_field() {
     let output = r#"ID: Q-99
 Title: Pick a definition
 Tags: topic:free-will, answer:choice[libertarian, compatibilist], weight:42
 "#;
 
-    let question = parse_question_show(output).unwrap();
+    let record = crate::store::parse_node_show(output).unwrap();
 
-    assert_eq!(question.id, "Q-99");
-    assert_eq!(question.title, "Pick a definition");
-    assert_eq!(
-        question.answer_kind,
-        AnswerKind::Choice(vec!["libertarian".to_string(), "compatibilist".to_string()])
-    );
-    assert_eq!(question.weight, 42);
+    assert_eq!(record.id, "Q-99");
+    assert_eq!(record.title, "Pick a definition");
+    assert_eq!(record.weight, 42);
+    // Bracketed tag groups survive the split.
+    assert!(record
+        .tags
+        .contains(&"answer:choice[libertarian, compatibilist]".to_string()));
 }
 
 // trace:BUG-200 | ai:claude
 #[test]
 fn compact_toon_show_output_is_rejected_not_misparsed() {
     // What upstream aida emits when stdout is piped and the format is NOT
-    // pinned to human — lowercase keys, no "ID:" prefix. The parser must
-    // fail loudly rather than fabricate a question.
+    // pinned to human — lowercase keys, no "ID:" prefix. The exporter's
+    // parser must fail loudly rather than fabricate a node.
     let output = "id: Q-23\ntitle: Do you believe in free will?\ntags: answer:yes-no,weight:42\n";
 
-    assert!(parse_question_show(output).is_err());
+    assert!(crate::store::parse_node_show(output).is_err());
 }
 
 #[test]
-fn parses_begets_relationships_from_aida_rel_list() {
-    let output = r#"FROM  TYPE    TO    TITLE
-  Q-23  begets  Q-26  Do you mean the ability…
-  Q-23  begets  Q-27  Can a choice be free?
-
-2 edges
-"#;
-
-    let refs = parse_begets_rel_list(output);
-
-    assert_eq!(
-        refs,
-        vec![
-            QuestionRef {
-                id: "Q-26".to_string()
-            },
-            QuestionRef {
-                id: "Q-27".to_string()
-            }
-        ]
-    );
-}
-
-#[test]
-fn parses_probes_relationships_from_aida_rel_list() {
-    let output = r#"FROM  TYPE    TO       TITLE
-  Q-23  probes  TERM-24  free will / libertarian
-  Q-23  probes  TERM-25  free will / compatibilist
-
-2 edges
-"#;
-
-    let refs = parse_probes_rel_list(output);
-
-    assert_eq!(
-        refs,
-        vec![
-            TermRef {
-                id: "TERM-24".to_string()
-            },
-            TermRef {
-                id: "TERM-25".to_string()
-            }
-        ]
-    );
-}
-
-// trace:STORY-53 | ai:codex
-#[test]
-fn parses_question_ids_from_aida_list() {
-    let output = r#"ID             Type         Status     Priority   Title
-──────────────────────────────────────────────────────────────────────────
-Q-23           Functional   Approved   High       Do you believe in free will?
-BELIEF-28      Functional   Approved   Medium     Free will requires genuine alternatives
-Q-27           Functional   Approved   High       Can a choice be free if caused?
-
-3 requirements
-"#;
-
-    assert_eq!(
-        parse_question_list_ids(output),
-        vec!["Q-23".to_string(), "Q-27".to_string()]
-    );
-}
-
-#[test]
-fn parses_term_definition_from_aida_show() {
+fn exporter_node_parse_keeps_the_definition_body() {
     let output = r#"ID: TERM-24
 Title: free will / libertarian
 Tags: seed, definition:academic, topic:free-will, weight:60
@@ -130,15 +67,14 @@ otherwise under the same conditions.
 scope: formal definition.
 "#;
 
-    let term = parse_term_show(output).unwrap();
+    let term = crate::store::parse_node_show(output).unwrap();
 
     assert_eq!(term.id, "TERM-24");
     assert_eq!(term.title, "free will / libertarian");
     assert!(term.tags.contains(&"definition:academic".to_string()));
-    assert_eq!(
-            term.definition,
-            "An agent has free will only if the agent could genuinely have chosen otherwise under the same conditions."
-        );
+    // The full show text rides along as the body, so the exporter carries
+    // the definition section into the Dolt `body` column verbatim.
+    assert!(term.body.contains("definition: An agent has free will"));
 }
 
 #[test]
@@ -684,17 +620,20 @@ fn llm_strategy_persists_generated_question_when_configured() {
         "Q-1",
         0,
         AnswerKind::YesNo,
-        ["topic:free-will", "answer:yes-no", "weight:70"],
+        ["topic:free-will", "answer:yes-no"],
     )]);
-    let runner = RecordingCommandRunner::new([
-        command_output(true, "Added: Q-42\n", ""),
-        command_output(true, "relationship added\n", ""),
-    ]);
+    // trace:STORY-208 | ai:claude — generated questions persist to Dolt: an
+    // id-mint scan, the nodes insert, then the begets edge insert.
+    let runner = ScriptedDoltRunner::new(vec![(0, r#"{"rows":[{"id":"Q-41"}]}"#, "")]);
+    let handle = runner.clone();
     let strategy = LlmNextQuestionStrategy::with_generated_question_persister(
         MockLlm::ok(
             r#"{"action":"generate","question":"What definition of responsibility are you using?","answer_mode":"free-text"}"#,
         ),
-        AidaCliGeneratedQuestionPersister::new("aida", runner.clone()),
+        AidaCliGeneratedQuestionPersister::with_store(DoltDomainStore::with_runner(
+            "/tmp/quizdom-dolt-tests",
+            runner,
+        )),
     );
 
     let next = strategy
@@ -712,37 +651,24 @@ fn llm_strategy_persists_generated_question_when_configured() {
         vec![
             "topic:free-will".to_string(),
             "answer:free-text".to_string(),
-            "weight:50".to_string(),
             "seed".to_string(),
             "from-answer:yes".to_string()
         ]
     );
-    assert_eq!(
-            runner.calls(),
-            vec![
-                strings([
-                    "aida",
-                    "add",
-                    "--prefix",
-                    "Q",
-                    "--type",
-                    "functional",
-                    "--status",
-                    "approved",
-                    "--priority",
-                    "medium",
-                    "--title",
-                    "What definition of responsibility are you using?",
-                    "--description",
-                    "LLM-generated quizdom question.\n\nanswer: free-text\norigin: Q-1\n\nGenerated from origin question: Q-1",
-                    "--tags",
-                    "topic:free-will,answer:free-text,weight:50,seed,from-answer:yes",
-                ]),
-                strings([
-                    "aida", "rel", "add", "--from", "Q-1", "--to", "Q-42", "--type", "begets",
-                ]),
-            ]
-        );
+    assert_eq!(next.weight, 50);
+    let calls = handle.calls.borrow();
+    // mint scan + insert + add + commit, then edge insert + add + commit.
+    assert_eq!(calls.len(), 7);
+    let insert = ScriptedDoltRunner::sql_of_call(&calls[1]);
+    assert!(insert.contains("'Q-42'"));
+    assert!(insert.contains("'What definition of responsibility are you using?'"));
+    assert!(
+        insert.contains("'topic:free-will,answer:free-text,seed,from-answer:yes'"),
+        "tags column carries no weight tag: {insert}"
+    );
+    assert!(insert.contains(", 50)"), "weight in the column: {insert}");
+    let edge = ScriptedDoltRunner::sql_of_call(&calls[4]);
+    assert!(edge.contains("'Q-1', 'Q-42', 'begets'"));
 }
 
 // trace:STORY-48 | ai:claude
@@ -752,17 +678,18 @@ fn llm_strategy_leaves_free_text_followon_unconditional() {
         "Q-1",
         0,
         AnswerKind::FreeText,
-        ["topic:free-will", "answer:free-text", "weight:70"],
+        ["topic:free-will", "answer:free-text"],
     )]);
-    let runner = RecordingCommandRunner::new([
-        command_output(true, "Added: Q-42\n", ""),
-        command_output(true, "relationship added\n", ""),
-    ]);
+    let runner = ScriptedDoltRunner::new(vec![(0, r#"{"rows":[{"id":"Q-41"}]}"#, "")]);
+    let handle = runner.clone();
     let strategy = LlmNextQuestionStrategy::with_generated_question_persister(
         MockLlm::ok(
             r#"{"action":"generate","question":"What definition of responsibility are you using?","answer_mode":"free-text"}"#,
         ),
-        AidaCliGeneratedQuestionPersister::new("aida", runner.clone()),
+        AidaCliGeneratedQuestionPersister::with_store(DoltDomainStore::with_runner(
+            "/tmp/quizdom-dolt-tests",
+            runner,
+        )),
     );
 
     let next = strategy
@@ -776,9 +703,8 @@ fn llm_strategy_leaves_free_text_followon_unconditional() {
 
     // An open-ended answer does not condition the follow-on, so no from-answer tag.
     assert!(!next.tags.iter().any(|tag| tag.starts_with("from-answer:")));
-    assert!(!runner.calls()[0]
-        .iter()
-        .any(|arg| arg.contains("from-answer:")));
+    let calls = handle.calls.borrow();
+    assert!(!ScriptedDoltRunner::sql_of_call(&calls[1]).contains("from-answer:"));
 }
 
 #[test]
@@ -788,18 +714,22 @@ fn llm_strategy_prefers_near_identical_existing_candidate_over_duplicate() {
         Question {
             id: "Q-2".to_string(),
             title: "What definition of responsibility are you using?".to_string(),
-            tags: vec!["topic:free-will".to_string(), "weight:50".to_string()],
+            tags: vec!["topic:free-will".to_string()],
             answer_kind: AnswerKind::FreeText,
             weight: 50,
         },
     ])
     .with_edges("Q-1", ["Q-2"]);
-    let runner = RecordingCommandRunner::new([]);
+    let runner = ScriptedDoltRunner::new(vec![]);
+    let handle = runner.clone();
     let strategy = LlmNextQuestionStrategy::with_generated_question_persister(
         MockLlm::ok(
             r#"{"action":"generate","question":"  What definition of responsibility are you using?  ","answer_mode":"free-text"}"#,
         ),
-        AidaCliGeneratedQuestionPersister::new("aida", runner.clone()),
+        AidaCliGeneratedQuestionPersister::with_store(DoltDomainStore::with_runner(
+            "/tmp/quizdom-dolt-tests",
+            runner,
+        )),
     );
 
     let next = strategy
@@ -812,7 +742,7 @@ fn llm_strategy_prefers_near_identical_existing_candidate_over_duplicate() {
         .unwrap();
 
     assert_eq!(next.id, "Q-2");
-    assert!(runner.calls().is_empty());
+    assert!(handle.calls.borrow().is_empty());
 }
 
 #[test]
@@ -1342,8 +1272,14 @@ fn rejected_mapping_mints_user_specific_term_after_steering() {
     let strategy = LlmNextQuestionStrategy::new(MockLlm::ok(
         r#"{"term_id":"TERM-25","rationale":"The user emphasized reasons without coercion."}"#,
     ));
-    let runner = RecordingCommandRunner::new([command_output(true, "Added: TERM-99\n", "")]);
-    let persister = AidaCliUserSpecificTermPersister::new("aida", runner.clone());
+    // trace:STORY-208 | ai:claude — the user-specific term lands in Dolt; the
+    // mint scan's highest TERM id makes the fresh one TERM-99.
+    let runner = ScriptedDoltRunner::new(vec![(0, r#"{"rows":[{"id":"TERM-98"}]}"#, "")]);
+    let handle = runner.clone();
+    let persister = AidaCliUserSpecificTermPersister::with_store(DoltDomainStore::with_runner(
+        "/tmp/quizdom-dolt-tests",
+        runner,
+    ));
     let config = test_config(&path, "Q-23");
     let mut output = Vec::new();
 
@@ -1365,33 +1301,29 @@ fn rejected_mapping_mints_user_specific_term_after_steering() {
     assert!(log.contains(r#""event_type":"term_interpreted""#));
     assert!(log.contains(r#""term_ref":"TERM-99""#));
     assert!(log.contains(r#""raw_definition":"It must originate outside the causal chain.""#));
-    assert_eq!(
-            runner.calls(),
-            vec![strings([
-                "aida",
-                "add",
-                "--type",
-                "term",
-                "--status",
-                "approved",
-                "--priority",
-                "medium",
-                "--title",
-                "free will / user-specific",
-                "--description",
-                "source: user-specific quizdom steering fallback.\n\ndefinition: It must originate outside the causal chain.\n\nscope: user-specific definition captured only after shared bank definitions did not fit.",
-                "--tags",
-                "topic:free-will,definition:user-specific,weight:40",
-            ])]
-        );
+    let calls = handle.calls.borrow();
+    let insert = ScriptedDoltRunner::sql_of_call(&calls[1]);
+    assert!(insert.contains("'TERM-99'"));
+    assert!(insert.contains("'term'"));
+    assert!(insert.contains("'free will / user-specific'"));
+    assert!(insert.contains("definition: It must originate outside the causal chain."));
+    assert!(
+        insert.contains("'topic:free-will,definition:user-specific'"),
+        "no weight tag in the tags column: {insert}"
+    );
+    assert!(insert.contains(", 40)"), "weight in the column: {insert}");
+    drop(calls);
 
     let _ = fs::remove_file(path);
 }
 
 #[test]
 fn user_specific_term_persister_maps_aida_add_output() {
-    let runner = RecordingCommandRunner::new([command_output(true, "Added: TERM-88\n", "")]);
-    let persister = AidaCliUserSpecificTermPersister::new("aida", runner);
+    let runner = ScriptedDoltRunner::new(vec![(0, r#"{"rows":[{"id":"TERM-87"}]}"#, "")]);
+    let persister = AidaCliUserSpecificTermPersister::with_store(DoltDomainStore::with_runner(
+        "/tmp/quizdom-dolt-tests",
+        runner,
+    ));
 
     let term = persister
         .persist_user_specific_term(
@@ -3034,13 +2966,20 @@ fn contradiction_follow_up_persists_resolution_to_graph_and_log() {
     ])
     .with_edges("Q-1", ["Q-2"]);
     let edges = FakeEdges::new().with("Q-1", ["Q-2"]);
-    let runner = RecordingCommandRunner::new([
-        command_output(true, "", ""),
+    // trace:STORY-208 | ai:claude — the resolution write splits: the
+    // contradicts edge is a domain write (Dolt), the decision node and its
+    // references edges stay AIDA-canonical intent writes.
+    let dolt_runner = ScriptedDoltRunner::new(vec![]);
+    let dolt_handle = dolt_runner.clone();
+    let aida_runner = RecordingCommandRunner::new([
         command_output(true, "Added: DECISION-9\n", ""),
         command_output(true, "", ""),
         command_output(true, "", ""),
     ]);
-    let persister = AidaCliContradictionResolutionPersister::new("aida", runner.clone());
+    let persister = AidaCliContradictionResolutionPersister::with_stores(
+        DoltDomainStore::with_runner("/tmp/quizdom-dolt-tests", dolt_runner),
+        crate::store::AidaIntentStore::new("aida", aida_runner.clone()),
+    );
     let strategy = DeterministicNextQuestionStrategy;
     let config = test_config(&path, "Q-1");
     let mut output = Vec::new();
@@ -3056,26 +2995,18 @@ fn contradiction_follow_up_persists_resolution_to_graph_and_log() {
     )
     .unwrap();
 
-    let calls = runner.calls();
+    let dolt_calls = dolt_handle.calls.borrow();
+    let contradicts = ScriptedDoltRunner::sql_of_call(&dolt_calls[0]);
+    assert!(contradicts.contains("INSERT IGNORE INTO edges"));
+    assert!(contradicts.contains("'Q-1', 'Q-2', 'contradicts'"));
+    drop(dolt_calls);
+
+    let calls = aida_runner.calls();
+    assert_eq!(&calls[0][0..3], ["aida", "add", "--type"]);
+    assert!(calls[0].contains(&"decision".to_string()));
+    assert!(calls[0].contains(&"contradiction-resolution,kept:left,left:Q-1,right:Q-2".to_string()));
     assert_eq!(
-        calls[0],
-        strings([
-            "aida",
-            "rel",
-            "add",
-            "--from",
-            "Q-1",
-            "--to",
-            "Q-2",
-            "--type",
-            "contradicts"
-        ])
-    );
-    assert_eq!(&calls[1][0..3], ["aida", "add", "--type"]);
-    assert!(calls[1].contains(&"decision".to_string()));
-    assert!(calls[1].contains(&"contradiction-resolution,kept:left,left:Q-1,right:Q-2".to_string()));
-    assert_eq!(
-        calls[2],
+        calls[1],
         strings([
             "aida",
             "rel",
@@ -3089,7 +3020,7 @@ fn contradiction_follow_up_persists_resolution_to_graph_and_log() {
         ])
     );
     assert_eq!(
-        calls[3],
+        calls[2],
         strings([
             "aida",
             "rel",
@@ -3847,14 +3778,13 @@ fn quick_add_issues_begets_edge_for_later_sessions() {
         ["topic:free-will", "answer:yes-no", "weight:70"],
     )]);
     let config = test_config(&path, "Q-23");
-    // The persister runs two aida commands: `add` (returns the new id) then
-    // `rel add` (the begets edge).
-    let runner = RecordingCommandRunner::new([
-        command_output(true, "Added Q-77", ""),
-        command_output(true, "", ""),
-    ]);
-    let persister =
-        crate::persist::AidaCliUserAuthoredQuestionPersister::new("aida", runner.clone());
+    // trace:STORY-208 | ai:claude — the quick-add persists to Dolt: mint scan
+    // (highest Q id → Q-77), nodes insert, then the begets edge insert.
+    let runner = ScriptedDoltRunner::new(vec![(0, r#"{"rows":[{"id":"Q-76"}]}"#, "")]);
+    let handle = runner.clone();
+    let persister = crate::persist::AidaCliUserAuthoredQuestionPersister::with_store(
+        DoltDomainStore::with_runner("/tmp/quizdom-dolt-tests", runner),
+    );
     let mut output = Vec::new();
 
     run_session_with_user_authored_persister(
@@ -3867,23 +3797,17 @@ fn quick_add_issues_begets_edge_for_later_sessions() {
     )
     .unwrap();
 
-    let calls = runner.calls();
-    assert_eq!(calls.len(), 2, "add then rel add");
-    let add = &calls[0];
-    assert_eq!(add[1], "add");
-    assert!(add
-        .iter()
-        .any(|arg| arg == "source:user-authored,topic:free-will,answer:yes-no,weight:50,seed"));
-    let rel = &calls[1];
-    assert_eq!(rel[1], "rel");
-    assert_eq!(rel[2], "add");
-    let from_index = rel.iter().position(|arg| arg == "--from").unwrap();
-    let to_index = rel.iter().position(|arg| arg == "--to").unwrap();
-    let type_index = rel.iter().position(|arg| arg == "--type").unwrap();
+    let calls = handle.calls.borrow();
+    // mint scan + insert + add + commit, then edge insert + add + commit.
+    assert_eq!(calls.len(), 7);
+    let insert = ScriptedDoltRunner::sql_of_call(&calls[1]);
+    assert!(insert.contains("'Q-77'"));
+    assert!(insert.contains("'source:user-authored,topic:free-will,answer:yes-no,seed'"));
+    assert!(insert.contains(", 50)"), "weight in the column: {insert}");
     // begets is current -> new.
-    assert_eq!(rel[from_index + 1], "Q-23");
-    assert_eq!(rel[to_index + 1], "Q-77");
-    assert_eq!(rel[type_index + 1], "begets");
+    let edge = ScriptedDoltRunner::sql_of_call(&calls[4]);
+    assert!(edge.contains("'Q-23', 'Q-77', 'begets'"));
+    drop(calls);
 
     let _ = fs::remove_file(path);
 }
@@ -3979,25 +3903,6 @@ fn adopted(id: Option<&str>, statement: &str) -> AdoptedBelief {
         statement: statement.to_string(),
         source: id.unwrap_or("session").to_string(),
     }
-}
-
-#[test]
-fn parses_contradicts_rel_list_to_targets() {
-    let output = r#"FROM       TYPE          TO         TITLE
-  BELIEF-1   contradicts   BELIEF-2   Free will is compatible with determinism
-  BELIEF-1   agrees        BELIEF-3   Some other belief
-
-2 edges
-"#;
-
-    let targets = parse_contradicts_rel_list(output);
-
-    assert_eq!(targets, vec!["BELIEF-2".to_string()]);
-}
-
-#[test]
-fn parses_empty_contradicts_rel_list() {
-    assert!(parse_contradicts_rel_list("(no outgoing edges)\n").is_empty());
 }
 
 #[test]

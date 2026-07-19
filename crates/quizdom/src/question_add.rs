@@ -533,7 +533,7 @@ mod tests {
         Question {
             id: id.to_string(),
             title: title.to_string(),
-            tags: vec!["answer:yes-no".to_string(), "weight:50".to_string()],
+            tags: vec!["answer:yes-no".to_string()],
             answer_kind: AnswerKind::YesNo,
             weight: 50,
         }

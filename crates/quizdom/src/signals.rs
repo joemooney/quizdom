@@ -398,7 +398,7 @@ pub fn run_curate(args: impl IntoIterator<Item = String>, output: &mut impl Writ
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::bank::rewrite_weight_and_quality_tags;
+    use crate::bank::rewrite_quality_tags;
     use crate::model::{AnswerKind, Question, QuestionRef, TermDefinition, TermRef};
     use crate::strategy::reweight;
     use std::cell::RefCell;
@@ -547,7 +547,7 @@ mod tests {
                 .push((question.id.clone(), signal));
             let new_weight = reweight(question.weight, signal);
             let mut updated = question.clone();
-            updated.tags = rewrite_weight_and_quality_tags(&question.tags, new_weight, signal);
+            updated.tags = rewrite_quality_tags(&question.tags, signal);
             updated.weight = new_weight;
             Ok(updated)
         }
@@ -557,7 +557,7 @@ mod tests {
         Question {
             id: id.to_string(),
             title: format!("question {id}"),
-            tags: vec![format!("weight:{weight}"), "answer:yes-no".to_string()],
+            tags: vec!["answer:yes-no".to_string()],
             answer_kind: AnswerKind::YesNo,
             weight,
         }

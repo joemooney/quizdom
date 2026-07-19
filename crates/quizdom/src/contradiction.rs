@@ -5,8 +5,8 @@
 //! per-user session logs — it surfaces inconsistencies two ways:
 //!
 //! 1. **Graph-based** — two adopted beliefs joined by a `contradicts` edge in
-//!    the AIDA bank are flagged directly (`aida rel list <node> --type
-//!    contradicts`, walked one hop at a time per ADR-31).
+//!    the domain graph are flagged directly (a one-hop `contradicts` read per
+//!    adopted belief through the Dolt-backed [`DomainStore`]).
 //! 2. **LLM-based** — the full set of adopted beliefs is handed to an
 //!    [`LLMClient`] which reports semantic inconsistencies the graph does not
 //!    pre-encode (default claude-cli backend).
@@ -17,11 +17,11 @@
 // trace:EPIC-9 | ai:claude
 // trace:STORY-204 | ai:claude — domain-graph access goes through DomainStore.
 use crate::error::{QuizdomError, Result};
-// trace:STORY-207 | ai:claude — contradicts-edge reads follow the selected
-// backend; the resolution persister stays pinned to the AIDA store (its
-// decision nodes and `references` edges are AIDA-canonical per ADR-201).
-use crate::dolt_store::SelectedDomainStore;
-use crate::store::{AidaDomainStore, DomainStore, EdgeKind, NewNode, NodeKind};
+// trace:STORY-208 | ai:claude — contradicts edges are domain data (Dolt); the
+// resolution's decision node and `references` edges are project intent and
+// stay AIDA-canonical per ADR-201, written through the IntentStore.
+use crate::dolt_store::{domain_store_from_config, DoltDomainStore};
+use crate::store::{AidaIntentStore, DomainStore, EdgeKind, IntentStore};
 use llm::{LLMClient, Message};
 use serde_json::Value;
 use std::collections::{BTreeMap, BTreeSet};
@@ -106,16 +106,16 @@ pub trait ContradictsEdges {
     fn contradicts(&self, belief_id: &str) -> Result<Vec<String>>;
 }
 
-/// Resolves `contradicts` edges through the domain store, one hop at a time
-/// (ADR-31: traversal is app-side, walking single hops).
-pub struct AidaCliContradictsEdges<S = SelectedDomainStore> {
+/// Resolves `contradicts` edges through the domain store — a one-hop read
+/// per adopted belief (contradiction pairs are direct edges by schema).
+pub struct AidaCliContradictsEdges<S = DoltDomainStore> {
     store: S,
 }
 
 impl Default for AidaCliContradictsEdges {
     fn default() -> Self {
         Self {
-            store: SelectedDomainStore::default(),
+            store: domain_store_from_config(),
         }
     }
 }
@@ -127,11 +127,6 @@ where
     fn contradicts(&self, belief_id: &str) -> Result<Vec<String>> {
         self.store.neighbors(belief_id, EdgeKind::Contradicts)
     }
-}
-
-/// Parses the `to` column of `aida rel list <node> --type contradicts` output.
-pub fn parse_contradicts_rel_list(output: &str) -> Vec<String> {
-    crate::store::parse_rel_list(output, "contradicts")
 }
 
 /// Flags pairs of adopted beliefs joined by a `contradicts` edge in the bank.
@@ -280,33 +275,38 @@ impl ContradictionResolutionPersister for NoopContradictionResolutionPersister {
     }
 }
 
-pub struct AidaCliContradictionResolutionPersister<S = AidaDomainStore> {
-    store: S,
+// trace:STORY-208 | ai:claude — the resolution write splits across the two
+// stores: confirming the `contradicts` edge is a domain write (Dolt), while
+// the decision node and its `references` edges are AIDA-canonical intent.
+pub struct AidaCliContradictionResolutionPersister<D = DoltDomainStore, I = AidaIntentStore> {
+    domain: D,
+    intent: I,
 }
 
 impl Default for AidaCliContradictionResolutionPersister {
     fn default() -> Self {
         Self {
-            store: AidaDomainStore::default(),
+            domain: domain_store_from_config(),
+            intent: AidaIntentStore::default(),
         }
     }
 }
 
 #[cfg(test)]
-impl<R> AidaCliContradictionResolutionPersister<AidaDomainStore<R>>
+impl<D, I> AidaCliContradictionResolutionPersister<D, I>
 where
-    R: crate::store::CommandRunner,
+    D: DomainStore,
+    I: IntentStore,
 {
-    pub fn new(command: impl Into<String>, runner: R) -> Self {
-        Self {
-            store: AidaDomainStore::new(command, runner),
-        }
+    pub fn with_stores(domain: D, intent: I) -> Self {
+        Self { domain, intent }
     }
 }
 
-impl<S> ContradictionResolutionPersister for AidaCliContradictionResolutionPersister<S>
+impl<D, I> ContradictionResolutionPersister for AidaCliContradictionResolutionPersister<D, I>
 where
-    S: DomainStore,
+    D: DomainStore,
+    I: IntentStore,
 {
     fn persist_resolution(
         &self,
@@ -335,12 +335,13 @@ where
     }
 }
 
-impl<S> AidaCliContradictionResolutionPersister<S>
+impl<D, I> AidaCliContradictionResolutionPersister<D, I>
 where
-    S: DomainStore,
+    D: DomainStore,
+    I: IntentStore,
 {
     fn confirm_contradicts_edge(&self, left_id: &str, right_id: &str) -> Result<()> {
-        self.store
+        self.domain
             .ensure_edge(left_id, right_id, EdgeKind::Contradicts)
     }
 
@@ -363,16 +364,13 @@ where
             format!("left:{left_id}"),
             format!("right:{right_id}"),
         ];
-        let resolution_id = self.store.create_node(&NewNode {
-            kind: NodeKind::Decision,
-            title,
-            description,
-            tags,
-        })?;
-        self.store
-            .ensure_edge(&resolution_id, left_id, EdgeKind::References)?;
-        self.store
-            .ensure_edge(&resolution_id, right_id, EdgeKind::References)?;
+        let resolution_id = self
+            .intent
+            .create_decision_node(&title, &description, &tags)?;
+        self.intent
+            .ensure_references_edge(&resolution_id, left_id)?;
+        self.intent
+            .ensure_references_edge(&resolution_id, right_id)?;
         Ok(resolution_id)
     }
 }

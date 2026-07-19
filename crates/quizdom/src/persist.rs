@@ -1,17 +1,13 @@
-use crate::bank::rewrite_weight_and_quality_tags;
+use crate::bank::rewrite_quality_tags;
 #[cfg(test)]
 use crate::error::QuizdomError;
 use crate::error::Result;
 use crate::model::{AnswerKind, Question, TermDefinition};
-// trace:STORY-207 | ai:claude — persisters default to the config/env-selected
-// backend; the aida-pinned test constructors keep the concrete type.
-use crate::dolt_store::SelectedDomainStore;
-use crate::store::{AidaDomainStore, DomainStore, EdgeKind, NewNode, NodeKind};
+// trace:STORY-208 | ai:claude — persisters write straight to the Dolt domain
+// store since the cutover; the selection weight is a first-class field.
+use crate::dolt_store::{domain_store_from_config, DoltDomainStore};
+use crate::store::{DomainStore, EdgeKind, NewNode, NodeKind};
 use crate::strategy::{reweight, QualitySignal};
-
-// trace:STORY-204 | ai:claude — the runner seam lives in the store module now;
-// re-exported so existing test doubles keep their import path.
-pub(crate) use crate::store::CommandRunner;
 
 pub trait GeneratedQuestionPersister {
     /// Persist a generated follow-on linked to `origin` via a `begets` edge.
@@ -125,39 +121,37 @@ impl GeneratedQuestionPersister for NoopGeneratedQuestionPersister {
     }
 }
 
-pub(crate) struct AidaCliGeneratedQuestionPersister<S = SelectedDomainStore> {
+pub(crate) struct AidaCliGeneratedQuestionPersister<S = DoltDomainStore> {
     store: S,
 }
 
 impl Default for AidaCliGeneratedQuestionPersister {
     fn default() -> Self {
         Self {
-            store: SelectedDomainStore::default(),
+            store: domain_store_from_config(),
         }
     }
 }
 
-pub(crate) struct AidaCliUserSpecificTermPersister<S = SelectedDomainStore> {
+pub(crate) struct AidaCliUserSpecificTermPersister<S = DoltDomainStore> {
     store: S,
 }
 
 impl Default for AidaCliUserSpecificTermPersister {
     fn default() -> Self {
         Self {
-            store: SelectedDomainStore::default(),
+            store: domain_store_from_config(),
         }
     }
 }
 
-impl<R> AidaCliUserSpecificTermPersister<AidaDomainStore<R>>
+#[cfg(test)]
+impl<S> AidaCliUserSpecificTermPersister<S>
 where
-    R: CommandRunner,
+    S: DomainStore,
 {
-    #[cfg(test)]
-    pub(crate) fn new(command: impl Into<String>, runner: R) -> Self {
-        Self {
-            store: AidaDomainStore::new(command, runner),
-        }
+    pub(crate) fn with_store(store: S) -> Self {
+        Self { store }
     }
 }
 
@@ -185,7 +179,6 @@ where
         let tags = vec![
             format!("topic:{topic}"),
             "definition:user-specific".to_string(),
-            "weight:40".to_string(),
         ];
         let description = format!(
             "source: user-specific quizdom steering fallback.\n\ndefinition: {meaning}\n\nscope: user-specific definition captured only after shared bank definitions did not fit."
@@ -195,6 +188,7 @@ where
             title: title.clone(),
             description,
             tags: tags.clone(),
+            weight: USER_SPECIFIC_TERM_WEIGHT,
         })?;
         Ok(TermDefinition {
             id,
@@ -205,15 +199,13 @@ where
     }
 }
 
-impl<R> AidaCliGeneratedQuestionPersister<AidaDomainStore<R>>
+#[cfg(test)]
+impl<S> AidaCliGeneratedQuestionPersister<S>
 where
-    R: CommandRunner,
+    S: DomainStore,
 {
-    #[cfg(test)]
-    pub(crate) fn new(command: impl Into<String>, runner: R) -> Self {
-        Self {
-            store: AidaDomainStore::new(command, runner),
-        }
+    pub(crate) fn with_store(store: S) -> Self {
+        Self { store }
     }
 }
 
@@ -236,13 +228,14 @@ where
             title: question.title.clone(),
             description,
             tags: tags.clone(),
+            weight: GENERATED_NEUTRAL_WEIGHT,
         })?;
         self.store.create_edge(&origin.id, &id, EdgeKind::Begets)?;
 
         let mut persisted = question.clone();
         persisted.id = id;
         persisted.tags = tags;
-        persisted.weight = 50;
+        persisted.weight = GENERATED_NEUTRAL_WEIGHT;
         Ok(persisted)
     }
 }
@@ -255,32 +248,39 @@ where
 /// compete on an even footing until curation (STORY-66) re-weights them.
 const USER_AUTHORED_NEUTRAL_WEIGHT: u32 = 50;
 
+// trace:STORY-38 | ai:claude
+/// Neutral selection weight for an LLM-generated follow-on question.
+const GENERATED_NEUTRAL_WEIGHT: u32 = 50;
+
+// trace:STORY-43 | ai:claude
+/// Selection weight for a user-specific term definition — below the shared
+/// bank definitions so it only steers when nothing shared fits.
+const USER_SPECIFIC_TERM_WEIGHT: u32 = 40;
+
 // trace:STORY-85 | ai:claude
 // trace:STORY-88 | ai:claude
 // Foundational persister (per the spec): the type + edge wiring land here. The
 // standalone `quizdom question add` command (STORY-87) and the in-session
 // quick-add control (STORY-88) both drive it via the shared authoring core.
-pub(crate) struct AidaCliUserAuthoredQuestionPersister<S = SelectedDomainStore> {
+pub(crate) struct AidaCliUserAuthoredQuestionPersister<S = DoltDomainStore> {
     store: S,
 }
 
 impl Default for AidaCliUserAuthoredQuestionPersister {
     fn default() -> Self {
         Self {
-            store: SelectedDomainStore::default(),
+            store: domain_store_from_config(),
         }
     }
 }
 
-impl<R> AidaCliUserAuthoredQuestionPersister<AidaDomainStore<R>>
+#[cfg(test)]
+impl<S> AidaCliUserAuthoredQuestionPersister<S>
 where
-    R: CommandRunner,
+    S: DomainStore,
 {
-    #[cfg(test)]
-    pub(crate) fn new(command: impl Into<String>, runner: R) -> Self {
-        Self {
-            store: AidaDomainStore::new(command, runner),
-        }
+    pub(crate) fn with_store(store: S) -> Self {
+        Self { store }
     }
 }
 
@@ -302,6 +302,7 @@ where
             title: question.title.clone(),
             description,
             tags: tags.clone(),
+            weight: USER_AUTHORED_NEUTRAL_WEIGHT,
         })?;
 
         // Wire the requested edge. The edge direction follows the graph schema:
@@ -340,8 +341,9 @@ impl QuestionLink {
 
 // trace:STORY-85 | ai:claude
 /// Canonical tag set for a user-authored question: `source:user-authored`,
-/// `topic:<t>`, `answer:<shape>`, and a neutral `weight:50`. A `seed` tag marks
-/// it hand-authored, mirroring the seed clusters in the graph schema.
+/// `topic:<t>`, and `answer:<shape>`. A `seed` tag marks it hand-authored,
+/// mirroring the seed clusters in the graph schema. The neutral weight is a
+/// first-class field, not a tag (STORY-208).
 fn user_authored_question_tags(topic: &str, answer_kind: &AnswerKind) -> Vec<String> {
     let topic = topic.trim();
     let topic = if topic.is_empty() {
@@ -353,7 +355,6 @@ fn user_authored_question_tags(topic: &str, answer_kind: &AnswerKind) -> Vec<Str
         "source:user-authored".to_string(),
         format!("topic:{topic}"),
         format!("answer:{}", answer_kind.mode()),
-        format!("weight:{USER_AUTHORED_NEUTRAL_WEIGHT}"),
         "seed".to_string(),
     ]
 }
@@ -379,11 +380,12 @@ fn user_authored_question_description(
 // trace:STORY-66 | ai:claude
 /// Apply a [`QualitySignal`] re-weighting to a question and persist it.
 ///
-/// Implementations adjust the question's `weight:N` (clamped to `[0,100]` by
-/// [`reweight`]) and its `quality:*` tag, then write the new tag set back. The
-/// returned [`Question`] carries the updated in-memory `weight`/`tags`. This is
-/// the curation engine for STORY-66 — deliberately disjoint from the session
-/// loop, so the caller decides when (or whether) to invoke it.
+/// Implementations adjust the question's numeric weight (clamped to `[0,100]`
+/// by [`reweight`]) and its `quality:*` tag, then write both back in one
+/// store update. The returned [`Question`] carries the updated in-memory
+/// `weight`/`tags`. This is the curation engine for STORY-66 — deliberately
+/// disjoint from the session loop, so the caller decides when (or whether) to
+/// invoke it.
 pub trait QuestionReweighter {
     fn reweight_question(&self, question: &Question, signal: QualitySignal) -> Result<Question>;
 }
@@ -403,7 +405,7 @@ impl QuestionReweighter for NoopQuestionReweighter {
 /// Build the re-weighted question (new `weight` + rewritten `tags`) in memory.
 fn apply_reweight(question: &Question, signal: QualitySignal) -> Question {
     let new_weight = reweight(question.weight, signal);
-    let new_tags = rewrite_weight_and_quality_tags(&question.tags, new_weight, signal);
+    let new_tags = rewrite_quality_tags(&question.tags, signal);
     let mut updated = question.clone();
     updated.weight = new_weight;
     updated.tags = new_tags;
@@ -411,7 +413,7 @@ fn apply_reweight(question: &Question, signal: QualitySignal) -> Question {
 }
 
 #[allow(dead_code)]
-pub(crate) struct AidaCliQuestionReweighter<S = SelectedDomainStore> {
+pub(crate) struct AidaCliQuestionReweighter<S = DoltDomainStore> {
     store: S,
 }
 
@@ -419,20 +421,18 @@ pub(crate) struct AidaCliQuestionReweighter<S = SelectedDomainStore> {
 impl Default for AidaCliQuestionReweighter {
     fn default() -> Self {
         Self {
-            store: SelectedDomainStore::default(),
+            store: domain_store_from_config(),
         }
     }
 }
 
-impl<R> AidaCliQuestionReweighter<AidaDomainStore<R>>
+#[cfg(test)]
+impl<S> AidaCliQuestionReweighter<S>
 where
-    R: CommandRunner,
+    S: DomainStore,
 {
-    #[cfg(test)]
-    pub(crate) fn new(command: impl Into<String>, runner: R) -> Self {
-        Self {
-            store: AidaDomainStore::new(command, runner),
-        }
+    pub(crate) fn with_store(store: S) -> Self {
+        Self { store }
     }
 }
 
@@ -442,9 +442,10 @@ where
 {
     fn reweight_question(&self, question: &Question, signal: QualitySignal) -> Result<Question> {
         let updated = apply_reweight(question, signal);
-        // `weight:N` and `quality:*` are single-valued tags, so the full
-        // recomputed tag list is written back with replace semantics.
-        self.store.replace_tags(&question.id, &updated.tags)?;
+        // trace:STORY-208 | ai:claude — one write: the recomputed weight goes
+        // to the numeric column, the rewritten quality tag to the tag list.
+        self.store
+            .update_weight_and_tags(&question.id, updated.weight, &updated.tags)?;
         Ok(updated)
     }
 }
@@ -468,7 +469,6 @@ fn generated_question_tags(
     let mut tags = vec![
         format!("topic:{topic}"),
         format!("answer:{}", answer_kind.mode()),
-        "weight:50".to_string(),
         "seed".to_string(),
     ];
     if let Some(answer) = from_answer.map(str::trim).filter(|value| !value.is_empty()) {
@@ -487,52 +487,27 @@ fn generated_question_description(question: &Question, origin: &Question) -> Str
 }
 
 // trace:STORY-66 | ai:claude
+// trace:STORY-208 | ai:claude — reweight persistence now goes to the Dolt
+// store: one UPDATE carrying the numeric weight and the rewritten tags.
 #[cfg(test)]
 mod reweight_tests {
     use super::*;
+    use crate::dolt_store::{DoltDomainStore, ScriptedDoltRunner};
     use crate::model::AnswerKind;
-    use std::cell::RefCell;
-    use std::os::unix::process::ExitStatusExt;
-    use std::process::{ExitStatus, Output};
 
-    /// A `CommandRunner` that records every invocation and returns a canned
-    /// exit status. `raw_status` is a unix wait-status: `0` succeeds, `1 << 8`
-    /// (exit code 1) fails.
-    struct RecordingRunner {
-        calls: RefCell<Vec<(String, Vec<String>)>>,
-        raw_status: i32,
-        stderr: String,
-    }
-
-    impl RecordingRunner {
-        fn ok() -> Self {
-            Self {
-                calls: RefCell::new(Vec::new()),
-                raw_status: 0,
-                stderr: String::new(),
-            }
-        }
-
-        fn failing(stderr: &str) -> Self {
-            Self {
-                calls: RefCell::new(Vec::new()),
-                raw_status: 1 << 8,
-                stderr: stderr.to_string(),
-            }
-        }
-    }
-
-    impl CommandRunner for RecordingRunner {
-        fn run(&self, program: &str, args: &[String]) -> Result<Output> {
-            self.calls
-                .borrow_mut()
-                .push((program.to_string(), args.to_vec()));
-            Ok(Output {
-                status: ExitStatus::from_raw(self.raw_status),
-                stdout: Vec::new(),
-                stderr: self.stderr.clone().into_bytes(),
-            })
-        }
+    fn reweighter_with(
+        responses: Vec<(i32, &str, &str)>,
+    ) -> (
+        AidaCliQuestionReweighter<DoltDomainStore<ScriptedDoltRunner>>,
+        ScriptedDoltRunner,
+    ) {
+        let runner = ScriptedDoltRunner::new(responses);
+        let handle = runner.clone();
+        let reweighter = AidaCliQuestionReweighter::with_store(DoltDomainStore::with_runner(
+            "/tmp/quizdom-dolt",
+            runner,
+        ));
+        (reweighter, handle)
     }
 
     fn question() -> Question {
@@ -540,19 +515,14 @@ mod reweight_tests {
             id: "Q-7".to_string(),
             title: "Does meaning require permanence?".to_string(),
             answer_kind: AnswerKind::YesNo,
-            tags: vec![
-                "topic:meaning".to_string(),
-                "weight:50".to_string(),
-                "quality:neutral".to_string(),
-            ],
+            tags: vec!["topic:meaning".to_string(), "quality:neutral".to_string()],
             weight: 50,
         }
     }
 
     #[test]
-    fn insightful_bumps_and_persists_full_tag_set() {
-        let runner = RecordingRunner::ok();
-        let reweighter = AidaCliQuestionReweighter::new("aida", runner);
+    fn insightful_bumps_weight_column_and_quality_tag() {
+        let (reweighter, runner) = reweighter_with(vec![(0, "", ""), (0, "", ""), (0, "", "")]);
         let updated = reweighter
             .reweight_question(&question(), QualitySignal::Insightful)
             .expect("reweight should succeed");
@@ -562,70 +532,57 @@ mod reweight_tests {
             updated.tags,
             vec![
                 "topic:meaning".to_string(),
-                "weight:62".to_string(),
-                "quality:insightful".to_string(),
+                "quality:insightful".to_string()
             ]
         );
 
-        let calls = reweighter.store.runner.calls.borrow();
-        assert_eq!(calls.len(), 1);
-        assert_eq!(calls[0].0, "aida");
-        assert_eq!(
-            calls[0].1,
-            vec![
-                "edit".to_string(),
-                "Q-7".to_string(),
-                "--tags".to_string(),
-                "topic:meaning,weight:62,quality:insightful".to_string(),
-            ]
-        );
+        let calls = runner.calls.borrow();
+        let update = ScriptedDoltRunner::sql_of_call(&calls[0]);
+        assert!(update.contains("tags = 'topic:meaning,quality:insightful'"));
+        assert!(update.contains("weight = 62"));
+        assert!(update.contains("WHERE id = 'Q-7'"));
     }
 
     #[test]
     fn unhelpful_decays_and_updates_quality_tag() {
-        let runner = RecordingRunner::ok();
-        let reweighter = AidaCliQuestionReweighter::new("aida", runner);
+        let (reweighter, runner) = reweighter_with(vec![(0, "", ""), (0, "", ""), (0, "", "")]);
         let updated = reweighter
             .reweight_question(&question(), QualitySignal::Unhelpful)
             .expect("reweight should succeed");
 
         assert_eq!(updated.weight, 38);
-        let calls = reweighter.store.runner.calls.borrow();
-        assert_eq!(
-            calls[0].1[3],
-            "topic:meaning,weight:38,quality:unhelpful".to_string()
-        );
+        let calls = runner.calls.borrow();
+        let update = ScriptedDoltRunner::sql_of_call(&calls[0]);
+        assert!(update.contains("weight = 38"));
+        assert!(update.contains("quality:unhelpful"));
     }
 
     #[test]
     fn decay_is_clamped_to_floor() {
         let mut low = question();
         low.weight = 5;
-        low.tags = vec!["topic:meaning".to_string(), "weight:5".to_string()];
-        let runner = RecordingRunner::ok();
-        let reweighter = AidaCliQuestionReweighter::new("aida", runner);
+        low.tags = vec!["topic:meaning".to_string()];
+        let (reweighter, runner) = reweighter_with(vec![(0, "", ""), (0, "", ""), (0, "", "")]);
         let updated = reweighter
             .reweight_question(&low, QualitySignal::Punted)
             .expect("reweight should succeed");
 
         assert_eq!(updated.weight, 0);
-        let calls = reweighter.store.runner.calls.borrow();
-        assert_eq!(
-            calls[0].1[3],
-            "topic:meaning,weight:0,quality:punted".to_string()
-        );
+        let calls = runner.calls.borrow();
+        let update = ScriptedDoltRunner::sql_of_call(&calls[0]);
+        assert!(update.contains("weight = 0"));
+        assert!(update.contains("quality:punted"));
     }
 
     #[test]
-    fn aida_failure_surfaces_as_error() {
-        let runner = RecordingRunner::failing("no such requirement Q-7");
-        let reweighter = AidaCliQuestionReweighter::new("aida", runner);
+    fn store_failure_surfaces_as_error() {
+        let (reweighter, _runner) = reweighter_with(vec![(1 << 8, "", "table not found: nodes")]);
         let result = reweighter.reweight_question(&question(), QualitySignal::Insightful);
         match result {
-            Err(QuizdomError::Aida(message)) => {
-                assert!(message.contains("no such requirement"));
+            Err(QuizdomError::Dolt(message)) => {
+                assert!(message.contains("table not found"));
             }
-            other => panic!("expected Aida error, got {other:?}"),
+            other => panic!("expected Dolt error, got {other:?}"),
         }
     }
 
@@ -639,65 +596,52 @@ mod reweight_tests {
             updated.tags,
             vec![
                 "topic:meaning".to_string(),
-                "weight:62".to_string(),
-                "quality:insightful".to_string(),
+                "quality:insightful".to_string()
             ]
         );
     }
 }
 
 // trace:STORY-85 | ai:claude
+// trace:STORY-208 | ai:claude — user-authored persistence lands in the Dolt
+// store: create_node mints the id, the link edge is a plain edges insert.
 #[cfg(test)]
 mod user_authored_tests {
     use super::*;
+    use crate::dolt_store::{DoltDomainStore, ScriptedDoltRunner};
     use crate::model::AnswerKind;
-    use std::cell::RefCell;
-    use std::os::unix::process::ExitStatusExt;
-    use std::process::{ExitStatus, Output};
 
-    /// A `CommandRunner` that records every invocation and replays canned
-    /// stdout/exit-status per call (FIFO), so we can hand the `aida add` call a
-    /// stdout containing the freshly minted Q id while later `rel add` calls
-    /// succeed silently.
-    struct ScriptedRunner {
-        calls: RefCell<Vec<(String, Vec<String>)>>,
-        responses: RefCell<Vec<(i32, String, String)>>,
+    fn persister_with(
+        responses: Vec<(i32, &str, &str)>,
+    ) -> (
+        AidaCliUserAuthoredQuestionPersister<DoltDomainStore<ScriptedDoltRunner>>,
+        ScriptedDoltRunner,
+    ) {
+        let runner = ScriptedDoltRunner::new(responses);
+        let handle = runner.clone();
+        let persister = AidaCliUserAuthoredQuestionPersister::with_store(
+            DoltDomainStore::with_runner("/tmp/quizdom-dolt", runner),
+        );
+        (persister, handle)
     }
 
-    impl ScriptedRunner {
-        /// `responses` are `(raw_status, stdout, stderr)` replayed in order.
-        fn new(responses: Vec<(i32, &str, &str)>) -> Self {
-            Self {
-                calls: RefCell::new(Vec::new()),
-                responses: RefCell::new(
-                    responses
-                        .into_iter()
-                        .map(|(status, out, err)| (status, out.to_string(), err.to_string()))
-                        .collect(),
-                ),
-            }
-        }
+    /// The canned response for the id-mint scan: the highest existing Q id.
+    fn mint_scan(highest: &str) -> (i32, String, String) {
+        (
+            0,
+            format!(r#"{{"rows":[{{"id":"{highest}"}}]}}"#),
+            String::new(),
+        )
     }
 
-    impl CommandRunner for ScriptedRunner {
-        fn run(&self, program: &str, args: &[String]) -> Result<Output> {
-            self.calls
-                .borrow_mut()
-                .push((program.to_string(), args.to_vec()));
-            let (raw_status, stdout, stderr) = {
-                let mut responses = self.responses.borrow_mut();
-                if responses.is_empty() {
-                    (0, String::new(), String::new())
-                } else {
-                    responses.remove(0)
-                }
-            };
-            Ok(Output {
-                status: ExitStatus::from_raw(raw_status),
-                stdout: stdout.into_bytes(),
-                stderr: stderr.into_bytes(),
-            })
-        }
+    fn persister_minting(
+        highest: &str,
+    ) -> (
+        AidaCliUserAuthoredQuestionPersister<DoltDomainStore<ScriptedDoltRunner>>,
+        ScriptedDoltRunner,
+    ) {
+        let (status, out, err) = mint_scan(highest);
+        persister_with(vec![(status, &out, &err)])
     }
 
     fn question() -> Question {
@@ -710,19 +654,9 @@ mod user_authored_tests {
         }
     }
 
-    /// Find the value following a flag in an `aida` arg vector.
-    fn flag<'a>(args: &'a [String], flag: &str) -> &'a str {
-        let index = args
-            .iter()
-            .position(|arg| arg == flag)
-            .unwrap_or_else(|| panic!("missing {flag} in {args:?}"));
-        &args[index + 1]
-    }
-
     #[test]
     fn create_emits_user_authored_tags_and_neutral_weight() {
-        let runner = ScriptedRunner::new(vec![(0, "Added Q-21", "")]);
-        let persister = AidaCliUserAuthoredQuestionPersister::new("aida", runner);
+        let (persister, runner) = persister_minting("Q-20");
         let persisted = persister
             .persist_user_authored_question(&question(), "identity", &QuestionLink::Standalone)
             .expect("standalone create should succeed");
@@ -735,29 +669,27 @@ mod user_authored_tests {
                 "source:user-authored".to_string(),
                 "topic:identity".to_string(),
                 "answer:yes-no".to_string(),
-                "weight:50".to_string(),
                 "seed".to_string(),
             ]
         );
 
-        let calls = persister.store.runner.calls.borrow();
-        // Standalone -> exactly one call (the add), no rel edge.
-        assert_eq!(calls.len(), 1);
-        let add = &calls[0].1;
-        assert_eq!(add[0], "add");
-        assert_eq!(flag(add, "--prefix"), "Q");
-        assert_eq!(flag(add, "--type"), "functional");
-        assert_eq!(flag(add, "--title"), "Is the self continuous over time?");
-        assert_eq!(
-            flag(add, "--tags"),
-            "source:user-authored,topic:identity,answer:yes-no,weight:50,seed"
+        let calls = runner.calls.borrow();
+        // Standalone -> mint scan + insert + add + commit, no edge insert.
+        assert_eq!(calls.len(), 4);
+        let insert = ScriptedDoltRunner::sql_of_call(&calls[1]);
+        assert!(insert.contains("'Q-21'"));
+        assert!(insert.contains("'question'"));
+        assert!(insert.contains("'Is the self continuous over time?'"));
+        assert!(
+            insert.contains("'source:user-authored,topic:identity,answer:yes-no,seed'"),
+            "no weight tag in the tags column: {insert}"
         );
+        assert!(insert.contains(", 50)"), "weight in the column: {insert}");
     }
 
     #[test]
     fn begets_link_adds_origin_to_new_edge() {
-        let runner = ScriptedRunner::new(vec![(0, "Added Q-30", ""), (0, "", "")]);
-        let persister = AidaCliUserAuthoredQuestionPersister::new("aida", runner);
+        let (persister, runner) = persister_minting("Q-29");
         let persisted = persister
             .persist_user_authored_question(
                 &question(),
@@ -769,21 +701,18 @@ mod user_authored_tests {
             .expect("begets create should succeed");
 
         assert_eq!(persisted.id, "Q-30");
-        let calls = persister.store.runner.calls.borrow();
-        assert_eq!(calls.len(), 2);
-        let rel = &calls[1].1;
-        assert_eq!(rel[0], "rel");
-        assert_eq!(rel[1], "add");
+        let calls = runner.calls.borrow();
+        // mint + insert + add + commit, then edge insert + add + commit.
+        assert_eq!(calls.len(), 7);
+        let edge = ScriptedDoltRunner::sql_of_call(&calls[4]);
         // begets is origin -> new.
-        assert_eq!(flag(rel, "--from"), "Q-7");
-        assert_eq!(flag(rel, "--to"), "Q-30");
-        assert_eq!(flag(rel, "--type"), "begets");
+        assert!(edge.contains("INSERT INTO edges"));
+        assert!(edge.contains("'Q-7', 'Q-30', 'begets'"));
     }
 
     #[test]
     fn probes_link_adds_new_to_term_edge() {
-        let runner = ScriptedRunner::new(vec![(0, "Added Q-31", ""), (0, "", "")]);
-        let persister = AidaCliUserAuthoredQuestionPersister::new("aida", runner);
+        let (persister, runner) = persister_minting("Q-30");
         let mut free_text = question();
         free_text.answer_kind = AnswerKind::FreeText;
         let persisted = persister
@@ -798,19 +727,15 @@ mod user_authored_tests {
 
         assert_eq!(persisted.id, "Q-31");
         assert!(persisted.tags.contains(&"answer:free-text".to_string()));
-        let calls = persister.store.runner.calls.borrow();
-        assert_eq!(calls.len(), 2);
-        let rel = &calls[1].1;
+        let calls = runner.calls.borrow();
+        let edge = ScriptedDoltRunner::sql_of_call(&calls[4]);
         // probes is new -> term.
-        assert_eq!(flag(rel, "--from"), "Q-31");
-        assert_eq!(flag(rel, "--to"), "TERM-3");
-        assert_eq!(flag(rel, "--type"), "probes");
+        assert!(edge.contains("'Q-31', 'TERM-3', 'probes'"));
     }
 
     #[test]
     fn empty_topic_falls_back_to_user_authored() {
-        let runner = ScriptedRunner::new(vec![(0, "Added Q-40", "")]);
-        let persister = AidaCliUserAuthoredQuestionPersister::new("aida", runner);
+        let (persister, _runner) = persister_minting("Q-39");
         let persisted = persister
             .persist_user_authored_question(&question(), "  ", &QuestionLink::Standalone)
             .expect("create should succeed");
@@ -818,9 +743,8 @@ mod user_authored_tests {
     }
 
     #[test]
-    fn add_failure_surfaces_as_error_and_skips_rel() {
-        let runner = ScriptedRunner::new(vec![(1 << 8, "", "duplicate title")]);
-        let persister = AidaCliUserAuthoredQuestionPersister::new("aida", runner);
+    fn create_failure_surfaces_as_error_and_skips_edge() {
+        let (persister, runner) = persister_with(vec![(1 << 8, "", "table not found: nodes")]);
         let result = persister.persist_user_authored_question(
             &question(),
             "identity",
@@ -829,17 +753,23 @@ mod user_authored_tests {
             },
         );
         match result {
-            Err(QuizdomError::Aida(message)) => assert!(message.contains("duplicate title")),
-            other => panic!("expected Aida error, got {other:?}"),
+            Err(QuizdomError::Dolt(message)) => assert!(message.contains("table not found")),
+            other => panic!("expected Dolt error, got {other:?}"),
         }
-        // The failed add must not be followed by a rel add.
-        assert_eq!(persister.store.runner.calls.borrow().len(), 1);
+        // The failed create must not be followed by an edge insert.
+        assert_eq!(runner.calls.borrow().len(), 1);
     }
 
     #[test]
-    fn rel_failure_surfaces_as_error() {
-        let runner = ScriptedRunner::new(vec![(0, "Added Q-50", ""), (1 << 8, "", "no such node")]);
-        let persister = AidaCliUserAuthoredQuestionPersister::new("aida", runner);
+    fn edge_failure_surfaces_as_error() {
+        let (status, out, err) = mint_scan("Q-49");
+        let (persister, _runner) = persister_with(vec![
+            (status, &out, &err),
+            (0, "", ""),                  // insert
+            (0, "", ""),                  // add -A
+            (0, "", ""),                  // commit
+            (1 << 8, "", "no such node"), // edge insert fails
+        ]);
         let result = persister.persist_user_authored_question(
             &question(),
             "identity",
@@ -848,25 +778,13 @@ mod user_authored_tests {
             },
         );
         match result {
-            Err(QuizdomError::Aida(message)) => assert!(message.contains("no such node")),
-            other => panic!("expected Aida error, got {other:?}"),
+            Err(QuizdomError::Dolt(message)) => assert!(message.contains("no such node")),
+            other => panic!("expected Dolt error, got {other:?}"),
         }
     }
 
     #[test]
-    fn missing_id_in_add_output_is_a_parse_error() {
-        let runner = ScriptedRunner::new(vec![(0, "no id here", "")]);
-        let persister = AidaCliUserAuthoredQuestionPersister::new("aida", runner);
-        let result = persister.persist_user_authored_question(
-            &question(),
-            "identity",
-            &QuestionLink::Standalone,
-        );
-        assert!(matches!(result, Err(QuizdomError::Parse(_))));
-    }
-
-    #[test]
-    fn noop_persister_applies_tags_without_running_aida() {
+    fn noop_persister_applies_tags_without_touching_the_store() {
         let persisted = NoopUserAuthoredQuestionPersister
             .persist_user_authored_question(
                 &question(),
@@ -883,7 +801,6 @@ mod user_authored_tests {
                 "source:user-authored".to_string(),
                 "topic:identity".to_string(),
                 "answer:yes-no".to_string(),
-                "weight:50".to_string(),
                 "seed".to_string(),
             ]
         );
