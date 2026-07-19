@@ -1,8 +1,10 @@
+// trace:BUG-200 | ai:claude — all aida spawns go through the pinned-format
+// choke point so piped output stays in the human layout these parsers expect.
+use crate::aida_cmd::aida_command;
 use crate::error::{QuizdomError, Result};
 use crate::model::{answer_kind_from_tags, Question, QuestionRef, TermDefinition, TermRef};
 use crate::strategy::QualitySignal;
 use std::collections::BTreeSet;
-use std::process::Command;
 
 pub trait QuestionBank {
     fn load_question(&self, id: &str) -> Result<Question>;
@@ -32,7 +34,7 @@ impl Default for AidaCliQuestionBank {
 
 impl QuestionBank for AidaCliQuestionBank {
     fn load_question(&self, id: &str) -> Result<Question> {
-        let output = Command::new(&self.command).args(["show", id]).output()?;
+        let output = aida_command(&self.command).args(["show", id]).output()?;
         if !output.status.success() {
             return Err(QuizdomError::Aida(
                 String::from_utf8_lossy(&output.stderr).to_string(),
@@ -43,7 +45,7 @@ impl QuestionBank for AidaCliQuestionBank {
     }
 
     fn begets(&self, id: &str) -> Result<Vec<QuestionRef>> {
-        let output = Command::new(&self.command)
+        let output = aida_command(&self.command)
             .args(["rel", "list", id, "--type", "begets"])
             .output()?;
         if !output.status.success() {
@@ -59,7 +61,7 @@ impl QuestionBank for AidaCliQuestionBank {
 
     fn all_questions(&self) -> Result<Vec<Question>> {
         // trace:STORY-53 | ai:codex
-        let output = Command::new(&self.command)
+        let output = aida_command(&self.command)
             .args(["list", "--type", "functional", "--no-scope"])
             .output()?;
         if !output.status.success() {
@@ -78,7 +80,7 @@ impl QuestionBank for AidaCliQuestionBank {
     }
 
     fn probes(&self, id: &str) -> Result<Vec<TermRef>> {
-        let output = Command::new(&self.command)
+        let output = aida_command(&self.command)
             .args(["rel", "list", id, "--type", "probes"])
             .output()?;
         if !output.status.success() {
@@ -93,7 +95,7 @@ impl QuestionBank for AidaCliQuestionBank {
     }
 
     fn load_term(&self, id: &str) -> Result<TermDefinition> {
-        let output = Command::new(&self.command).args(["show", id]).output()?;
+        let output = aida_command(&self.command).args(["show", id]).output()?;
         if !output.status.success() {
             return Err(QuizdomError::Aida(
                 String::from_utf8_lossy(&output.stderr).to_string(),

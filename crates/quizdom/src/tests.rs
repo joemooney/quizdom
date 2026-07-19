@@ -38,6 +38,17 @@ Tags: topic:free-will, answer:choice[libertarian, compatibilist], weight:42
     assert_eq!(question.weight, 42);
 }
 
+// trace:BUG-200 | ai:claude
+#[test]
+fn compact_toon_show_output_is_rejected_not_misparsed() {
+    // What upstream aida emits when stdout is piped and the format is NOT
+    // pinned to human — lowercase keys, no "ID:" prefix. The parser must
+    // fail loudly rather than fabricate a question.
+    let output = "id: Q-23\ntitle: Do you believe in free will?\ntags: answer:yes-no,weight:42\n";
+
+    assert!(parse_question_show(output).is_err());
+}
+
 #[test]
 fn parses_begets_relationships_from_aida_rel_list() {
     let output = r#"FROM  TYPE    TO    TITLE
