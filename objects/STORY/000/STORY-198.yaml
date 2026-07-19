@@ -3,16 +3,32 @@ spec_id: STORY-198
 agreed_id: STORY-198
 title: 'Add root README.md: human-facing quickstart (prereqs, build/run, subcommands, env vars)'
 description: 'Repo has OVERVIEW.md (vision) and CLAUDE.md (agent guidance) but no README.md — a human landing on the repo can''t tell how to run it (surfaced 2026-07-19). Content: one-paragraph what-it-is (link OVERVIEW.md), prereqs (aida CLI + store on the aida-store branch; claude CLI as default LLM backend per ADR-39), quickstart (cargo run -p quizdom; session start --seed Q-23 --mode socratic; session resume; contradictions/curate/question add), env vars (QUIZDOM_BACKEND, QUIZDOM_MODEL, QUIZDOM_CLAUDE_COMMAND, QUIZDOM_STRATEGY, ANTHROPIC_API_KEY, NO_COLOR), and pointer to docs/architecture/graph-schema.md. Decision noted: NO run.sh wrapper — cargo run is one line and the flags are the interface. Acceptance: README.md at root covering the above; commands verified against the current CLI; CLAUDE.md dev section stays the agent-facing source (no duplication drift — README links it).'
-status: Done
+status: Completed
 priority: Medium
 owner: ''
 feature: Uncategorized
 created_at: 2026-07-19T18:03:33.664601302Z
-modified_at: 2026-07-19T18:35:10.453227792Z
+modified_at: 2026-07-19T18:36:26.230635474Z
 req_type: Story
 tags:
 - batch:onboarding
+history:
+- id: 019f7baa-4cf6-7853-84a2-4e3286f16207
+  author: aida-reconcile
+  timestamp: 2026-07-19T18:36:26.230301656Z
+  changes:
+  - field_name: status
+    old_value: Done
+    new_value: Completed
+processing_record:
+- id: 019f7baa-4cf6-7853-84a2-4e47ef5b2928
+  timestamp: 2026-07-19T18:36:26.230634908Z
+  agent: aida
+  commit_sha: fd55a7ed4f40141a34e3333a3f5e47c985b9dd65
+  summary: Completed via merge fd55a7ed
 implementation_info:
   implemented: true
   implemented_at: 2026-07-19T18:35:10.453227792Z
   implemented_by: joe
+  completed_at: 2026-07-19T18:36:26.217528620Z
+  completion_sha: fd55a7ed4f40141a34e3333a3f5e47c985b9dd65
