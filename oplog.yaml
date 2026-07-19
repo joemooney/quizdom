@@ -1939,5 +1939,28 @@ operations:
   timestamp: 2026-07-19T19:20:47.977212117Z
   kind: !SetStatus
     status: In Progress
-clock: 192
+- id: 019f7bdd-5560-7f82-bdb2-d64cf219beac
+  target_id: 019f7bdd-53be-7520-8497-6ce4990800d8
+  author: aida
+  node_id: ''
+  lamport: 193
+  timestamp: 2026-07-19T19:32:10.720681161Z
+  kind: !Create
+    title: db-migrate does not preserve AIDA Opened/Modified timestamps on migrated nodes
+    description: |
+      The STORY-206 exporter leaves nodes.created_at / nodes.updated_at to their
+      schema defaults (load time) instead of carrying over the AIDA objects'
+      Opened/Modified times. The spec's acceptance criteria only covered object,
+      edge, and weight parity, so this shipped as a within-scope design call —
+      but if historical provenance matters for the domain graph (e.g. "when was
+      this question generated"), a follow-up could parse the Opened:/Modified:
+      lines from `aida show` and write explicit timestamp literals. Noted in
+      docs/architecture/graph-schema.md § Migration.
+
+      Raised by the implementer while working STORY-206.
+      Branch: epic-202-2  ·  Commit: f0b0bad  (PR link added on merge)
+    req_type: Task
+    status: Draft
+    priority: Medium
+clock: 193
 node_id: ''
