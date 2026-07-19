@@ -2183,5 +2183,21 @@ operations:
   timestamp: 2026-07-19T20:05:37.908896325Z
   kind: !SetStatus
     status: In Progress
-clock: 208
+- id: 019f7c12-a81c-7082-af29-960328511e22
+  target_id: 019f7c12-a65d-7f61-8e6c-cda037a6ba94
+  author: aida
+  node_id: ''
+  lamport: 209
+  timestamp: 2026-07-19T20:30:25.308289936Z
+  kind: !Create
+    title: STORY-208 removed the QUIZDOM_STORE selector entirely, not just the default
+    description: |
+      The spec title says "default to Dolt backend" but the acceptance says "removed code paths are gone, not feature-flagged off". Keeping an aida-selectable domain backend would have kept the ADR-31 per-hop walk and ADR-22 weight-tag parsing alive behind a flag, contradicting the acceptance (and STORY-209 empties the AIDA store of domain objects anyway). So the cutover deleted SelectedDomainStore and the QUIZDOM_STORE env/config key outright; only QUIZDOM_DOLT_PATH / dolt_path remain (crates/quizdom/src/dolt_store.rs). The aida CLI survives solely as AidaIntentStore (decision nodes + references edges, ADR-201), and the contradiction-resolution persister now splits its writes: contradicts edge -> Dolt, decision/references -> AIDA (crates/quizdom/src/contradiction.rs).
+
+      Raised by the implementer while working STORY-208.
+      Branch: epic-202-2  ·  Commit: 1cf0b84  (PR link added on merge)
+    req_type: Task
+    status: Draft
+    priority: Medium
+clock: 209
 node_id: ''
