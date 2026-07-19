@@ -1801,5 +1801,21 @@ operations:
   timestamp: 2026-07-19T19:03:22.037841763Z
   kind: !SetStatus
     status: In Progress
-clock: 184
+- id: 019f7bc7-4380-7fe2-8775-75d14e28b5e8
+  target_id: 019f7bc7-40be-7db3-b9eb-581051b46a20
+  author: aida
+  node_id: ''
+  lamport: 185
+  timestamp: 2026-07-19T19:08:04.352066817Z
+  kind: !Create
+    title: 'STORY-205 dolt acceptance not verified live: dolt binary absent on dev machine and CI'
+    description: |
+      STORY-205's acceptance ("db-init on a clean checkout produces a working empty Dolt db; recursive CTE works on a hand-inserted fixture") could not be executed live: the `dolt` binary is not installed on this machine, and CI does not install it either. Coverage shipped instead: unit tests over a DoltRunner seam (crates/quizdom/src/db_init.rs), checked-in fixture + CTE check (db/fixtures/), and an #[ignore]d end-to-end test (`real_dolt_bootstrap_fixture_and_recursive_cte`) that runs the full init → schema → fixture → recursive-CTE flow once dolt is on PATH: `cargo test real_dolt -- --ignored`. Suggest installing dolt locally (or adding a CI job) and running that test before STORY-207 builds on the schema.
+
+      Raised by the implementer while working STORY-205.
+      Branch: epic-202  ·  Commit: bf768ae  (PR link added on merge)
+    req_type: Task
+    status: Draft
+    priority: Medium
+clock: 185
 node_id: ''
