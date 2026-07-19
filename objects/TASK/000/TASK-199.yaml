@@ -3,12 +3,12 @@ spec_id: TASK-199
 agreed_id: TASK-199
 title: Top-level 'quizdom --help' errors with session-only usage instead of listing all subcommands
 description: 'quizdom --help (and any unknown arg) exits nonzero and prints only the ''usage: quizdom session ...'' block; contradictions, curate, question add, session show/synopsis are undiscoverable from the CLI itself (main.rs falls through to run_cli for unmatched args). Acceptance: ''quizdom --help'' exits 0 with a top-level command list; each subcommand keeps its own -h. Surfaced 2026-07-19 alongside the README gap.'
-status: Done
+status: Completed
 priority: Low
 owner: ''
 feature: Uncategorized
 created_at: 2026-07-19T18:03:36.132146571Z
-modified_at: 2026-07-19T18:31:24.472967956Z
+modified_at: 2026-07-19T18:32:28.429602291Z
 req_type: Task
 tags:
 - batch:onboarding
@@ -19,7 +19,23 @@ comments:
   created_at: 2026-07-19T18:31:03.208593383Z
   modified_at: 2026-07-19T18:31:03.208593383Z
   session_id: e4967702-0134-422b-ba6a-cad540402334
+history:
+- id: 019f7ba6-ac0d-7272-8bf0-925fdde0926f
+  author: aida-reconcile
+  timestamp: 2026-07-19T18:32:28.429263867Z
+  changes:
+  - field_name: status
+    old_value: Done
+    new_value: Completed
+processing_record:
+- id: 019f7ba6-ac0d-7272-8bf0-92657019990e
+  timestamp: 2026-07-19T18:32:28.429601705Z
+  agent: aida
+  commit_sha: 80465c2fca4b59d02e910b09d39296fc2c3a463b
+  summary: Completed via merge 80465c2f
 implementation_info:
   implemented: true
   implemented_at: 2026-07-19T18:31:24.472967956Z
   implemented_by: joe
+  completed_at: 2026-07-19T18:32:28.414897711Z
+  completion_sha: 80465c2fca4b59d02e910b09d39296fc2c3a463b
