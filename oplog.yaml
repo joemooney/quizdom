@@ -2031,5 +2031,23 @@ operations:
   timestamp: 2026-07-19T19:45:35.864851706Z
   kind: !SetStatus
     status: In Progress
-clock: 197
+- id: 019f7bf5-9c19-7a72-8c8f-c7036c743696
+  target_id: 019f7bf5-9881-7992-b1ed-4ec4996bc9cf
+  author: aida
+  node_id: ''
+  lamport: 198
+  timestamp: 2026-07-19T19:58:41.689416865Z
+  kind: !Create
+    title: Backend selection via settings.toml is load-only; a /settings save would drop the store keys
+    description: |
+      STORY-207 selects the domain-store backend from `QUIZDOM_STORE`/`QUIZDOM_DOLT_PATH` env vars or `store` / `dolt_path` keys in `~/.config/quizdom/settings.toml` (crates/quizdom/src/dolt_store.rs, `domain_store_from_config`). The config-file read leans on STORY-194's "unknown keys are ignored on load" convention — but the settings SAVE path (settings.rs `save`) serializes only its known keys, so any hand-added `store = dolt` line is silently dropped the next time the user touches `/settings`. Env vars are the durable selection today.
+
+      Options if this matters: (a) preserve unrecognised lines through settings save, or (b) promote `store`/`dolt_path` into the Settings struct so they round-trip (and could surface in the `/settings` panel).
+
+      Raised by the implementer while working STORY-207.
+      Branch: epic-202-2  ·  Commit: 4d21269  (PR #85: https://github.com/joemooney/quizdom/pull/85)
+    req_type: Task
+    status: Draft
+    priority: Medium
+clock: 198
 node_id: ''
