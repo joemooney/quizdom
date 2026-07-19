@@ -1,0 +1,18 @@
+id: 019f7bfa-7fd4-79a1-ba0f-7015b1ab3941
+spec_id: TASK-221
+agreed_id: TASK-221
+title: 'Cross-backend neighbors ordering drift: dolt created_at (1s) ties break by to_id, aida returns insertion order'
+description: |
+  DoltDomainStore::neighbors orders by `created_at, to_id` (crates/quizdom/src/dolt_store.rs:232), but created_at is a 1-second-resolution TIMESTAMP. Two edges inserted within the same second return in to_id lexical order (Q-10 before Q-2), while the aida backend's `aida rel list` returns insertion order. DomainStore::reachable sorts its result so parity holds there, but any direct neighbors() consumer (e.g. question-selection order) can see a different order per backend on same-second inserts. Options: add a monotonic sequence column, or use TIMESTAMP(6).
+
+  Raised in review of PR-85: https://github.com/joemooney/quizdom/pull/85#issuecomment-5017187770
+status: Draft
+priority: Medium
+owner: ''
+feature: Uncategorized
+created_at: 2026-07-19T20:04:02.132548408Z
+modified_at: 2026-07-19T20:04:02.132548408Z
+req_type: Task
+tags:
+- from-review:PR-85
+- severity:minor
