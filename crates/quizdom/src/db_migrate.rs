@@ -5,10 +5,12 @@
 //! ADR-201).
 //!
 //! Reads through the `aida` CLI exactly like the [`crate::store`] backend
-//! does (two `aida list` calls for the id inventory, one `aida show <id>
-//! --full` per node — the `Relations:` section carries every outgoing edge),
-//! converts the ADR-22 `weight:N` tag into the numeric `weight` column, and
-//! writes via `dolt sql`. Re-running is safe: nodes upsert (`INSERT … ON
+//! does: two `aida list` calls for the id inventory, one `aida show <id>
+//! --full` per node, and one global `aida rel list --limit 0 --all` scan for
+//! the edges — show output collapses custom edge kinds to `Related` (the
+//! FR-282 blind spot behind BUG-231), so the edge leg cannot come from the
+//! show parse. It converts the ADR-22 `weight:N` tag into the numeric
+//! `weight` column and writes via `dolt sql`. Re-running is safe: nodes upsert (`INSERT … ON
 //! DUPLICATE KEY UPDATE`) and edges insert-ignore against their
 //! duplicate-proof primary key.
 //!
@@ -20,9 +22,10 @@
 //!
 //! The aida-side edge truth in that report is NOT the exporter's own read
 //! (BUG-231: a blind spot shared by both sides self-passes). It is a second,
-//! independent read — per-node `aida rel list <id> --type <kind>` — that is
-//! cross-checked edge-by-edge against what the exporter parsed out of the
-//! `Relations:` sections, and that also feeds the spot-check BFS.
+//! independent read — per-node `aida rel list <id> --type <kind>`, a
+//! filtered query path distinct from the exporter's unfiltered global scan —
+//! that is cross-checked edge-by-edge against what the exporter loaded, and
+//! that also feeds the spot-check BFS.
 
 use crate::db_init::{DoltRunner, SystemDoltRunner, DEFAULT_DOLT_DB_PATH};
 use crate::error::{QuizdomError, Result};
@@ -61,8 +64,8 @@ struct DomainNode {
     body: String,
 }
 
-/// A custom edge as read from the AIDA store — by the exporter (a node's
-/// `Relations:` section) or by the independent `rel list` verification read.
+/// A custom edge as read from the AIDA store — by the exporter (the global
+/// `rel list` scan) or by the independent per-node verification read.
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct DomainEdge {
     from: String,
@@ -158,15 +161,14 @@ fn db_migrate(
         )));
     }
 
-    // Read side: inventory, then one show per node.
+    // Read side: inventory, one show per node, then one global edge scan
+    // (show output cannot see custom edge kinds — BUG-231).
     let ids = collect_domain_ids(aida, &config.aida_command)?;
     let mut nodes = Vec::new();
-    let mut edges = Vec::new();
     for id in &ids {
-        let (node, node_edges) = fetch_node(aida, &config.aida_command, id)?;
-        nodes.push(node);
-        edges.extend(node_edges);
+        nodes.push(fetch_node(aida, &config.aida_command, id)?);
     }
+    let edges = collect_domain_edges(aida, &config.aida_command)?;
     let node_counts = count_by(nodes.iter().map(|node| node.kind.to_string()));
     writeln!(
         output,
@@ -208,8 +210,8 @@ fn db_migrate(
     )?;
 
     // Independent aida-side edge read (BUG-231): per-node `rel list --type`
-    // sees custom edge kinds through a different aida surface than the
-    // exporter's show parse, so a blind spot in either read cannot self-pass.
+    // queries are a different query path than the exporter's unfiltered
+    // global scan, so a blind spot in either read cannot self-pass.
     // trace:BUG-231 | ai:claude
     let verified: Vec<DomainEdge> = read_edges_via_rel_list(aida, &config.aida_command, &ids)?
         .into_iter()
@@ -318,13 +320,10 @@ fn parse_list_ids(output: &str, prefixes: &[&str]) -> Vec<String> {
         .collect()
 }
 
-/// One `aida show <id> --full` gives the node's fields, its description, and
-/// (via `Relations:`) every outgoing edge.
-fn fetch_node(
-    aida: &dyn CommandRunner,
-    command: &str,
-    id: &str,
-) -> Result<(DomainNode, Vec<DomainEdge>)> {
+/// One `aida show <id> --full` gives the node's fields and its description.
+/// Edges do NOT come from here — show output collapses custom edge kinds to
+/// `Related`, the FR-282 blind spot behind BUG-231.
+fn fetch_node(aida: &dyn CommandRunner, command: &str, id: &str) -> Result<DomainNode> {
     let show = run_aida(aida, command, &["show", id, "--full"])?;
     let record = parse_node_show(&show)?;
     let kind = node_kind_for_id(&record.id)?;
@@ -334,16 +333,14 @@ fn fetch_node(
         .filter(|tag| !tag.starts_with("weight:"))
         .cloned()
         .collect();
-    let edges = parse_show_relations(&show, &record.id);
-    let node = DomainNode {
+    Ok(DomainNode {
         id: record.id,
         kind,
         title: record.title,
         tags,
         weight: record.weight,
         body: extract_description(&show),
-    };
-    Ok((node, edges))
+    })
 }
 
 /// Map an id prefix onto the `nodes.kind` enum value.
@@ -361,23 +358,44 @@ fn node_kind_for_id(id: &str) -> Result<&'static str> {
     }
 }
 
-/// Outgoing custom edges from a show output's `Relations:` section — lines of
-/// the shape `↳ <kind> <TARGET-ID> (<target title>)`. Built-in edge kinds
-/// (`references`, `parent`, …) are not domain edges and are dropped here.
-fn parse_show_relations(show: &str, from: &str) -> Vec<DomainEdge> {
-    show.lines()
+/// The exporter's edge read (BUG-231): one global `aida rel list --limit 0
+/// --all` scan of the whole graph. `--limit 0` lifts the firehose auto-cap
+/// and `--all` keeps edges whose endpoints reached a terminal status —
+/// truncation on either axis would silently drop domain edges. Custom kinds
+/// only; endpoint filtering against the migrated node set happens at the
+/// call site.
+// trace:BUG-231 | ai:claude
+fn collect_domain_edges(aida: &dyn CommandRunner, command: &str) -> Result<Vec<DomainEdge>> {
+    let listing = run_aida(aida, command, &["rel", "list", "--limit", "0", "--all"])?;
+    Ok(parse_global_rel_list(&listing))
+}
+
+/// Custom-kind rows of the global `aida rel list` table. Built-in edge kinds
+/// (`references`, `parent`, …) are not domain edges and are dropped here;
+/// the header, the `N edges` footer, and pagination notes fail the row shape.
+fn parse_global_rel_list(output: &str) -> Vec<DomainEdge> {
+    output
+        .lines()
         .filter_map(|line| {
-            let rest = line.trim_start().strip_prefix('↳')?;
-            let mut tokens = rest.split_whitespace();
-            let kind = tokens.next()?;
-            let target = tokens.next()?;
+            let (from, kind, to) = rel_list_row(line)?;
             CUSTOM_EDGE_KINDS.contains(&kind).then(|| DomainEdge {
                 from: from.to_string(),
-                to: target.to_string(),
+                to: to.to_string(),
                 kind: kind.to_string(),
             })
         })
         .collect()
+}
+
+/// The `FROM TYPE TO` head of an `aida rel list` data row (both the global
+/// and the per-node table share the layout); a leading `·` (rel list's
+/// built-in-edge marker) is tolerated.
+fn rel_list_row(line: &str) -> Option<(&str, &str, &str)> {
+    let mut tokens = line.split_whitespace().peekable();
+    if tokens.peek() == Some(&"·") {
+        tokens.next();
+    }
+    Some((tokens.next()?, tokens.next()?, tokens.next()?))
 }
 
 /// The description block of a human-format `aida show`: everything between
@@ -405,10 +423,10 @@ fn extract_description(show: &str) -> String {
 }
 
 /// The independent aida-side edge read (BUG-231): one `aida rel list <id>
-/// --type <kind>` per node per custom kind. This goes through aida's
-/// relationship surface directly — a different code path than the show
-/// output the exporter parses — so the parity check it feeds cannot share a
-/// blind spot with the exporter.
+/// --type <kind>` per node per custom kind. These are filtered per-node
+/// queries — a different query path than the unfiltered global scan the
+/// exporter loads from — so the parity check it feeds cannot share a blind
+/// spot (a broken type filter, a missed node) with the exporter.
 // trace:BUG-231 | ai:claude
 fn read_edges_via_rel_list(
     aida: &dyn CommandRunner,
@@ -425,20 +443,15 @@ fn read_edges_via_rel_list(
     Ok(edges)
 }
 
-/// Data rows of an `aida rel list` human table (`FROM TYPE TO TITLE`): keep
+/// Data rows of a per-node `aida rel list` table (`FROM TYPE TO TITLE`): keep
 /// rows whose FROM is the queried node and TYPE the queried kind. The header,
 /// the `N edges` footer, and the empty-filter message all fail that shape, so
-/// no explicit skipping is needed; a leading `·` (rel list's built-in-edge
-/// marker) is tolerated.
+/// no explicit skipping is needed.
 fn parse_rel_list(output: &str, from: &str, kind: &str) -> Vec<DomainEdge> {
     output
         .lines()
         .filter_map(|line| {
-            let mut tokens = line.split_whitespace().peekable();
-            if tokens.peek() == Some(&"·") {
-                tokens.next();
-            }
-            let (row_from, row_kind, to) = (tokens.next()?, tokens.next()?, tokens.next()?);
+            let (row_from, row_kind, to) = rel_list_row(line)?;
             (row_from == from && row_kind == kind).then(|| DomainEdge {
                 from: from.to_string(),
                 to: to.to_string(),
@@ -713,6 +726,27 @@ mod tests {
             }
         }
 
+        /// Script the exporter's global `rel list --limit 0 --all` response,
+        /// rendered from `edges` the way the real CLI prints the full-graph
+        /// table — `·`-marked built-in rows, a header, and a footer included.
+        fn with_global_rel_list(mut self, edges: &[(&str, &str, &str)]) -> Self {
+            let mut table = "FROM  TYPE  TO  TITLE\n".to_string();
+            table.push_str("· VIS-1  parent  EPIC-5  Domain graph model on AIDA\n");
+            for (from, kind, to) in edges {
+                table.push_str(&format!("  {from}  {kind}  {to}  Title of {to}\n"));
+            }
+            table.push_str("  Q-1  references  STORY-16  seed cluster\n");
+            table.push_str(&format!("\n{} edges\n", edges.len() + 2));
+            self.responses.push((
+                ["rel", "list", "--limit", "0", "--all"]
+                    .iter()
+                    .map(|arg| arg.to_string())
+                    .collect(),
+                table,
+            ));
+            self
+        }
+
         /// Script one `rel list <id> --type <kind>` response per node × custom
         /// kind, rendered from `edges` the way the real CLI prints them.
         fn with_rel_lists(mut self, nodes: &[&str], edges: &[(&str, &str, &str)]) -> Self {
@@ -824,8 +858,8 @@ mod tests {
     }
 
     /// The scripted store's node inventory and its true custom-edge set —
-    /// what both the show `Relations:` sections and the `rel list` responses
-    /// render (`Q-2 -begets-> Q-404` dangles on purpose).
+    /// what both the global `rel list` scan and the per-node `rel list`
+    /// responses render (`Q-2 -begets-> Q-404` dangles on purpose).
     const SCRIPTED_NODES: &[&str] = &["Q-1", "Q-2", "BELIEF-9", "TERM-5"];
     const SCRIPTED_EDGES: &[(&str, &str, &str)] = &[
         ("Q-1", "begets", "Q-2"),
@@ -834,53 +868,54 @@ mod tests {
         ("Q-2", "begets", "Q-404"),
     ];
 
-    fn scripted_store() -> ScriptedAida {
+    /// The four show responses — `Relations:` sections deliberately carry
+    /// only a built-in edge: show output cannot see custom edge kinds (the
+    /// FR-282 blind spot), so nothing here may feed the edge read.
+    fn scripted_shows() -> Vec<(Vec<String>, String)> {
         let q1 = show_output(
             "Q-1",
-            "  ↳ begets Q-2 (Follow-up)\n  ↳ probes TERM-5 (free will / libertarian)\n  ↳ references STORY-16 (seed cluster)\n",
+            "  ↳ references STORY-16 (seed cluster)\n",
             "answer: yes-no\n\nRoot of the chain. It's \"quoted\".",
         );
-        let q2 = show_output(
-            "Q-2",
-            "  ↳ probes BELIEF-9 (Belief one)\n  ↳ begets Q-404 (dangling target)\n",
-            "answer: free-text",
-        );
-        let belief = show_output("BELIEF-9", "", "A proposition.");
-        let term = show_output("TERM-5", "", "definition: the libertarian sense");
-        ScriptedAida::new(&[
-            (
-                &["list", "--type", "functional", "--no-scope"],
-                FUNCTIONAL_LIST,
-            ),
-            (&["list", "--type", "term", "--no-scope"], TERM_LIST),
-            (&["show", "Q-1", "--full"], &q1),
-            (&["show", "Q-2", "--full"], &q2),
-            (&["show", "BELIEF-9", "--full"], &belief),
-            (&["show", "TERM-5", "--full"], &term),
-        ])
-        .with_rel_lists(SCRIPTED_NODES, SCRIPTED_EDGES)
-    }
-
-    /// The BUG-231 shape: every show output renders an empty `Relations:`
-    /// section (the exporter's read is blind), while `rel list` still sees
-    /// the real edges. The parity check must fail, not self-pass.
-    fn blind_exporter_store() -> ScriptedAida {
-        let q1 = show_output("Q-1", "", "answer: yes-no");
         let q2 = show_output("Q-2", "", "answer: free-text");
         let belief = show_output("BELIEF-9", "", "A proposition.");
         let term = show_output("TERM-5", "", "definition: the libertarian sense");
-        ScriptedAida::new(&[
+        [
+            ("Q-1", q1),
+            ("Q-2", q2),
+            ("BELIEF-9", belief),
+            ("TERM-5", term),
+        ]
+        .into_iter()
+        .map(|(id, stdout)| (["show", id, "--full"].map(String::from).to_vec(), stdout))
+        .collect()
+    }
+
+    fn inventory_store() -> ScriptedAida {
+        let mut store = ScriptedAida::new(&[
             (
                 &["list", "--type", "functional", "--no-scope"],
                 FUNCTIONAL_LIST,
             ),
             (&["list", "--type", "term", "--no-scope"], TERM_LIST),
-            (&["show", "Q-1", "--full"], &q1),
-            (&["show", "Q-2", "--full"], &q2),
-            (&["show", "BELIEF-9", "--full"], &belief),
-            (&["show", "TERM-5", "--full"], &term),
-        ])
-        .with_rel_lists(SCRIPTED_NODES, SCRIPTED_EDGES)
+        ]);
+        store.responses.extend(scripted_shows());
+        store
+    }
+
+    fn scripted_store() -> ScriptedAida {
+        inventory_store()
+            .with_global_rel_list(SCRIPTED_EDGES)
+            .with_rel_lists(SCRIPTED_NODES, SCRIPTED_EDGES)
+    }
+
+    /// The BUG-231 shape: the exporter's global scan comes back without the
+    /// custom edges, while the per-node `rel list --type` verification still
+    /// sees them. The parity check must fail, not self-pass.
+    fn blind_exporter_store() -> ScriptedAida {
+        inventory_store()
+            .with_global_rel_list(&[])
+            .with_rel_lists(SCRIPTED_NODES, SCRIPTED_EDGES)
     }
 
     fn dolt_repo_dir(label: &str) -> PathBuf {
@@ -1144,28 +1179,30 @@ mod tests {
     }
 
     #[test]
-    fn parse_show_relations_keeps_custom_kinds_only() {
-        let show = show_output(
-            "Q-1",
-            "  ↳ begets Q-2 (x)\n  ↳ references STORY-16 (y)\n  ↳ disagrees BELIEF-9 (z)\n",
-            "text",
-        );
-        let edges = parse_show_relations(&show, "Q-1");
+    fn parse_global_rel_list_keeps_custom_kinds_only() {
+        let listing = "FROM  TYPE  TO  TITLE\n\
+            \x20 Q-23   begets      Q-26      Do you mean the ability…\n\
+            · VIS-1  parent      EPIC-5    Domain graph model on AIDA\n\
+            · Q-23   disagrees   BELIEF-9  a built-in-marked row is still a row\n\
+            \x20 Q-1    references  STORY-16  built-in kinds stay behind\n\
+            \n50 of 143 edges shown — pass --limit 0 for all, or a filter\n\
+            \x20 (185 hidden between Completed/Rejected reqs — pass --all to see them)\n";
         assert_eq!(
-            edges,
+            parse_global_rel_list(listing),
             vec![
                 DomainEdge {
-                    from: "Q-1".to_string(),
-                    to: "Q-2".to_string(),
+                    from: "Q-23".to_string(),
+                    to: "Q-26".to_string(),
                     kind: "begets".to_string(),
                 },
                 DomainEdge {
-                    from: "Q-1".to_string(),
+                    from: "Q-23".to_string(),
                     to: "BELIEF-9".to_string(),
                     kind: "disagrees".to_string(),
                 },
             ]
         );
+        assert!(parse_global_rel_list("FROM  TYPE  TO  TITLE\n\n0 edges\n").is_empty());
     }
 
     #[test]
