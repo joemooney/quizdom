@@ -8,7 +8,7 @@ priority: Medium
 owner: ''
 feature: Uncategorized
 created_at: 2026-07-19T20:51:18.088009278Z
-modified_at: 2026-07-19T21:35:55.713260196Z
+modified_at: 2026-07-19T21:35:59.856103967Z
 req_type: Bug
 relationships:
 - rel_type: References
@@ -64,6 +64,12 @@ comments:
     Follow-up: TASK-236 (design-choice finding — both edge reads now share the rel-list subcommand)
   created_at: 2026-07-19T21:28:10.080587659Z
   modified_at: 2026-07-19T21:28:10.080587659Z
+  session_id: 019f7c3d-732b-7862-aeae-98a0aef5c65a
+- id: 019f7c4e-b170-7713-b525-dc53abda9336
+  author: joe
+  content: 'PR opened: https://github.com/joemooney/quizdom/pull/88 (review story STORY-237)'
+  created_at: 2026-07-19T21:35:59.856103967Z
+  modified_at: 2026-07-19T21:35:59.856103967Z
   session_id: 019f7c3d-732b-7862-aeae-98a0aef5c65a
 history:
 - id: 019f7c3a-fbee-7560-a4c1-da14cbc35182
