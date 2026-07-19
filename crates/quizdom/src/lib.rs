@@ -5,6 +5,8 @@ mod bank;
 mod contradiction;
 // trace:STORY-205 | ai:claude — Dolt repo bootstrap for the domain graph (EPIC-202).
 mod db_init;
+// trace:STORY-206 | ai:claude — AIDA-store → Dolt exporter with parity check (EPIC-202).
+mod db_migrate;
 // trace:STORY-180 | ai:claude — the capable TUI free-text editor (tui-textarea).
 mod editor;
 mod error;
@@ -58,6 +60,7 @@ pub use contradiction::{
 };
 // trace:STORY-205 | ai:claude
 pub use db_init::{run_db_init, DEFAULT_DOLT_DB_PATH, DOLT_SCHEMA_SQL};
+pub use db_migrate::{run_db_migrate, DEFAULT_SPOT_CHECK_ROOT};
 pub use error::{QuizdomError, Result};
 pub use model::{
     Answer, AnswerKind, Question, QuestionRef, RefinementProposal, TermDefinition,
@@ -120,6 +123,7 @@ pub fn top_level_usage() -> String {
         "  contradictions           Detect contradictions among adopted beliefs",
         "  curate                   Re-weight the question bank from session signals",
         "  db-init                  Create the Dolt domain-graph repo and apply its schema",
+        "  db-migrate               Migrate the domain graph from the AIDA store into Dolt",
         "  question add             Author a new question into the bank",
         "  -h, --help               Show this help",
         "",

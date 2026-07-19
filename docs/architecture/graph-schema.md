@@ -212,6 +212,22 @@ re-run). The default repo location is `data/dolt` (`--path` overrides).
 | Custom relationship (`aida rel add --type begets` …) | `edges` row |
 | One-hop walk via `aida rel list` (ADR-31) | recursive CTE over `edges` |
 
+### Migration
+
+<!-- trace:STORY-206 | ai:claude -->
+
+`quizdom db-migrate` is the one-shot exporter that loads the AIDA-side
+domain graph into the tables above (after `quizdom db-init`). It reads the
+inventory through the `aida` CLI (`Q-*` and `BELIEF-*` are `functional`
+objects, `TERM-*` are `term` objects), converts each `weight:N` tag into
+the numeric `weight` column, keeps only the six custom edge kinds whose
+endpoints are both domain nodes, and verifies parity at the end: node and
+edge counts per kind (aida-side vs Dolt-side) plus a recursive-CTE walk of
+a `begets` lineage (default root `Q-23`, `--spot-check <id>|none`
+overrides) compared against an app-side BFS over the same edges. Re-running
+is safe — nodes upsert and edges insert-ignore. Node timestamps are
+load-time defaults, not the AIDA `Opened`/`Modified` times.
+
 ### Traversal
 
 ADR-31's one-hop-at-a-time BFS existed because `aida graph` cannot follow
