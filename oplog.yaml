@@ -2049,5 +2049,21 @@ operations:
     req_type: Task
     status: Draft
     priority: Medium
-clock: 198
+- id: 019f7bf5-abd2-7e10-a3cf-9d957dc964b9
+  target_id: 019f7bf5-aa1f-7070-adeb-51be2ba13df5
+  author: aida
+  node_id: ''
+  lamport: 199
+  timestamp: 2026-07-19T19:58:45.714890907Z
+  kind: !Create
+    title: Install dolt in CI so the real_dolt acceptance tests run in the pipeline
+    description: |
+      The STORY-205/206/207 acceptance tests against a real Dolt repo (`cargo test real_dolt -- --ignored`, now 3 tests including the STORY-207 full-trait-surface + aida-parity check) are `#[ignore]`d because CI has no dolt binary — they only run when a developer remembers to run them locally. Adding a dolt install step to `.github/workflows/ci.yml` (e.g. the dolthub install script, or a cached binary) and a `cargo test real_dolt -- --ignored` step would put the EPIC-202 acceptance surface under CI before the backend flips on by default.
+
+      Raised by the implementer while working STORY-207.
+      Branch: epic-202-2  ·  Commit: 4d21269  (PR #85: https://github.com/joemooney/quizdom/pull/85)
+    req_type: Task
+    status: Draft
+    priority: Medium
+clock: 199
 node_id: ''
