@@ -2538,5 +2538,26 @@ operations:
   timestamp: 2026-07-19T21:37:32.607390130Z
   kind: !SetStatus
     status: In Progress
-clock: 231
+- id: 019f7c55-ea11-7111-bf80-f1c4988acc61
+  target_id: 019f7c55-e894-79d1-9d42-df5b5309a57e
+  author: aida
+  node_id: ''
+  lamport: 232
+  timestamp: 2026-07-19T21:43:53.105655249Z
+  kind: !Create
+    title: 'Reviewer fix-forward on PR-88: purge stale ''exporter reads show Relations'' comments'
+    description: |
+      Reviewer fix-forwarded a doc-only correction during review of PR-88.
+
+      Commit: 0689c34f137fe10db212556f024641e4060fdb01
+      Files:  crates/quizdom/src/db_migrate.rs:67-68, crates/quizdom/src/db_migrate.rs:212-214
+      Change: Two comments still claimed the exporter reads edges from `aida show` `Relations:` output (the DomainEdge doc-comment and the parity-read rationale comment). PR-88 removed that read path in favor of the global `aida rel list --limit 0 --all` scan, so both comments misstated the current design. Comment prose only — no behavior delta.
+
+      Verdict: Approved (mergeStateStatus CLEAN confirmed on the fix-forward
+      commit before approval).
+      PR: https://github.com/joemooney/quizdom/pull/88
+    req_type: Task
+    status: Draft
+    priority: Medium
+clock: 232
 node_id: ''
