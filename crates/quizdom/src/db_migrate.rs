@@ -64,8 +64,8 @@ struct DomainNode {
     body: String,
 }
 
-/// A custom edge as read from the AIDA store — by the exporter (a node's
-/// `Relations:` section) or by the independent `rel list` verification read.
+/// A custom edge as read from the AIDA store — by the exporter (the global
+/// `rel list` scan) or by the independent per-node verification read.
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct DomainEdge {
     from: String,
@@ -210,8 +210,8 @@ fn db_migrate(
     )?;
 
     // Independent aida-side edge read (BUG-231): per-node `rel list --type`
-    // sees custom edge kinds through a different aida surface than the
-    // exporter's show parse, so a blind spot in either read cannot self-pass.
+    // queries are a different query path than the exporter's unfiltered
+    // global scan, so a blind spot in either read cannot self-pass.
     // trace:BUG-231 | ai:claude
     let verified: Vec<DomainEdge> = read_edges_via_rel_list(aida, &config.aida_command, &ids)?
         .into_iter()
