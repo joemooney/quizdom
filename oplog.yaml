@@ -2504,5 +2504,31 @@ operations:
     req_type: Task
     status: Draft
     priority: Medium
-clock: 229
+- id: 019f7c4e-932a-7842-a0f1-edf5e1c0c9dd
+  target_id: 019f7c4e-916f-7592-8d41-dac649f07092
+  author: aida
+  node_id: ''
+  lamport: 230
+  timestamp: 2026-07-19T21:35:52.106431076Z
+  kind: !Create
+    title: 'Review PR-88: [AI:claude] fix(db): db-migrate reads edges via global ''aida rel list --limit 0 --all'' scan (BUG-231)'
+    description: |
+      Auto-filed by `aida pr auto-queue-review` (typically from /aida-pr) (session `019f7c3d`) for branch `epic-202-2`.
+
+      - PR: <https://github.com/joemooney/quizdom/pull/88>
+      - Branch: `epic-202-2` → `main`
+
+      ## Covers
+
+      - BUG-231
+
+      ## Acceptance
+
+      - Generate a structured review prompt with `aida review prompt --pr 88` and verify each spec's acceptance criteria.
+      - Approve and merge, or request changes by spec id.
+      - Mark this story `completed` once the PR is merged.
+    req_type: Story
+    status: Approved
+    priority: Medium
+clock: 230
 node_id: ''
