@@ -15,14 +15,14 @@
 //! lists what it finds without touching the live session loop.
 
 // trace:EPIC-9 | ai:claude
-use crate::aida_cmd::aida_command;
+// trace:STORY-204 | ai:claude — domain-graph access goes through DomainStore.
 use crate::error::{QuizdomError, Result};
+use crate::store::{AidaDomainStore, DomainStore, EdgeKind, NewNode, NodeKind};
 use llm::{LLMClient, Message};
 use serde_json::Value;
 use std::collections::{BTreeMap, BTreeSet};
 use std::io::{BufRead, BufReader, Read, Write};
 use std::path::PathBuf;
-use std::process::Output;
 
 const DEFAULT_USER: &str = "local-user";
 
@@ -102,57 +102,32 @@ pub trait ContradictsEdges {
     fn contradicts(&self, belief_id: &str) -> Result<Vec<String>>;
 }
 
-/// Resolves `contradicts` edges by shelling out to the `aida` CLI, one hop at a
-/// time (ADR-31: `aida graph` cannot follow custom edges).
-pub struct AidaCliContradictsEdges {
-    command: String,
+/// Resolves `contradicts` edges through the domain store, one hop at a time
+/// (ADR-31: traversal is app-side, walking single hops).
+pub struct AidaCliContradictsEdges<S = AidaDomainStore> {
+    store: S,
 }
 
 impl Default for AidaCliContradictsEdges {
     fn default() -> Self {
         Self {
-            command: "aida".to_string(),
+            store: AidaDomainStore::default(),
         }
     }
 }
 
-impl ContradictsEdges for AidaCliContradictsEdges {
-    // trace:BUG-200 | ai:claude — spawn via the pinned-format choke point.
+impl<S> ContradictsEdges for AidaCliContradictsEdges<S>
+where
+    S: DomainStore,
+{
     fn contradicts(&self, belief_id: &str) -> Result<Vec<String>> {
-        let output = aida_command(&self.command)
-            .args(["rel", "list", belief_id, "--type", "contradicts"])
-            .output()?;
-        if !output.status.success() {
-            return Err(QuizdomError::Aida(
-                String::from_utf8_lossy(&output.stderr).to_string(),
-            ));
-        }
-        Ok(parse_contradicts_rel_list(&String::from_utf8_lossy(
-            &output.stdout,
-        )))
+        self.store.neighbors(belief_id, EdgeKind::Contradicts)
     }
 }
 
 /// Parses the `to` column of `aida rel list <node> --type contradicts` output.
 pub fn parse_contradicts_rel_list(output: &str) -> Vec<String> {
-    output
-        .lines()
-        .filter_map(|line| {
-            let trimmed = line.trim();
-            if trimmed.is_empty()
-                || trimmed.starts_with("FROM")
-                || trimmed.starts_with("(no outgoing")
-                || trimmed.ends_with("edges")
-            {
-                return None;
-            }
-            let mut columns = trimmed.split_whitespace();
-            let _from = columns.next()?;
-            let relationship_type = columns.next()?;
-            let to = columns.next()?;
-            (relationship_type == "contradicts").then(|| to.to_string())
-        })
-        .collect()
+    crate::store::parse_rel_list(output, "contradicts")
 }
 
 /// Flags pairs of adopted beliefs joined by a `contradicts` edge in the bank.
@@ -301,52 +276,33 @@ impl ContradictionResolutionPersister for NoopContradictionResolutionPersister {
     }
 }
 
-pub trait ResolutionCommandRunner {
-    fn run(&self, program: &str, args: &[String]) -> Result<Output>;
+pub struct AidaCliContradictionResolutionPersister<S = AidaDomainStore> {
+    store: S,
 }
 
-pub struct SystemResolutionCommandRunner;
-
-impl ResolutionCommandRunner for SystemResolutionCommandRunner {
-    // trace:BUG-200 | ai:claude — spawn via the pinned-format choke point.
-    fn run(&self, program: &str, args: &[String]) -> Result<Output> {
-        aida_command(program)
-            .args(args)
-            .output()
-            .map_err(Into::into)
-    }
-}
-
-pub struct AidaCliContradictionResolutionPersister<R = SystemResolutionCommandRunner> {
-    command: String,
-    runner: R,
-}
-
-impl Default for AidaCliContradictionResolutionPersister<SystemResolutionCommandRunner> {
+impl Default for AidaCliContradictionResolutionPersister {
     fn default() -> Self {
         Self {
-            command: "aida".to_string(),
-            runner: SystemResolutionCommandRunner,
+            store: AidaDomainStore::default(),
         }
     }
 }
 
-impl<R> AidaCliContradictionResolutionPersister<R>
+#[cfg(test)]
+impl<R> AidaCliContradictionResolutionPersister<AidaDomainStore<R>>
 where
-    R: ResolutionCommandRunner,
+    R: crate::store::CommandRunner,
 {
-    #[cfg(test)]
     pub fn new(command: impl Into<String>, runner: R) -> Self {
         Self {
-            command: command.into(),
-            runner,
+            store: AidaDomainStore::new(command, runner),
         }
     }
 }
 
-impl<R> ContradictionResolutionPersister for AidaCliContradictionResolutionPersister<R>
+impl<S> ContradictionResolutionPersister for AidaCliContradictionResolutionPersister<S>
 where
-    R: ResolutionCommandRunner,
+    S: DomainStore,
 {
     fn persist_resolution(
         &self,
@@ -375,28 +331,13 @@ where
     }
 }
 
-impl<R> AidaCliContradictionResolutionPersister<R>
+impl<S> AidaCliContradictionResolutionPersister<S>
 where
-    R: ResolutionCommandRunner,
+    S: DomainStore,
 {
     fn confirm_contradicts_edge(&self, left_id: &str, right_id: &str) -> Result<()> {
-        let args = vec![
-            "rel".to_string(),
-            "add".to_string(),
-            "--from".to_string(),
-            left_id.to_string(),
-            "--to".to_string(),
-            right_id.to_string(),
-            "--type".to_string(),
-            "contradicts".to_string(),
-        ];
-        let output = self.runner.run(&self.command, &args)?;
-        if output.status.success() || relationship_already_exists(&output) {
-            return Ok(());
-        }
-        Err(QuizdomError::Aida(
-            String::from_utf8_lossy(&output.stderr).to_string(),
-        ))
+        self.store
+            .ensure_edge(left_id, right_id, EdgeKind::Contradicts)
     }
 
     fn record_resolution_decision(
@@ -412,59 +353,24 @@ where
         let description = format!(
             "source: quizdom contradiction follow-up.\n\nleft: {left_id} -- {left}\n\nright: {right_id} -- {right}\n\nuser resolution: {raw_answer}\n\nkept side: {kept_side}"
         );
-        let tags =
-            format!("contradiction-resolution,kept:{kept_side},left:{left_id},right:{right_id}");
-        let add_args = vec![
-            "add".to_string(),
-            "--type".to_string(),
-            "decision".to_string(),
-            "--status".to_string(),
-            "approved".to_string(),
-            "--priority".to_string(),
-            "medium".to_string(),
-            "--title".to_string(),
-            title,
-            "--description".to_string(),
-            description,
-            "--tags".to_string(),
-            tags,
+        let tags = vec![
+            "contradiction-resolution".to_string(),
+            format!("kept:{kept_side}"),
+            format!("left:{left_id}"),
+            format!("right:{right_id}"),
         ];
-        let output = self.runner.run(&self.command, &add_args)?;
-        if !output.status.success() {
-            return Err(QuizdomError::Aida(
-                String::from_utf8_lossy(&output.stderr).to_string(),
-            ));
-        }
-        let resolution_id = parse_added_resolution_id(&String::from_utf8_lossy(&output.stdout))?;
-        self.reference_resolution(&resolution_id, left_id)?;
-        self.reference_resolution(&resolution_id, right_id)?;
+        let resolution_id = self.store.create_node(&NewNode {
+            kind: NodeKind::Decision,
+            title,
+            description,
+            tags,
+        })?;
+        self.store
+            .ensure_edge(&resolution_id, left_id, EdgeKind::References)?;
+        self.store
+            .ensure_edge(&resolution_id, right_id, EdgeKind::References)?;
         Ok(resolution_id)
     }
-
-    fn reference_resolution(&self, resolution_id: &str, target_id: &str) -> Result<()> {
-        let args = vec![
-            "rel".to_string(),
-            "add".to_string(),
-            "--from".to_string(),
-            resolution_id.to_string(),
-            "--to".to_string(),
-            target_id.to_string(),
-            "--type".to_string(),
-            "references".to_string(),
-        ];
-        let output = self.runner.run(&self.command, &args)?;
-        if output.status.success() || relationship_already_exists(&output) {
-            return Ok(());
-        }
-        Err(QuizdomError::Aida(
-            String::from_utf8_lossy(&output.stderr).to_string(),
-        ))
-    }
-}
-
-fn relationship_already_exists(output: &Output) -> bool {
-    let stderr = String::from_utf8_lossy(&output.stderr).to_ascii_lowercase();
-    stderr.contains("already") || stderr.contains("duplicate") || stderr.contains("exists")
 }
 
 fn classify_kept_side(contradiction: &Contradiction, raw_answer: &str) -> String {
@@ -494,24 +400,6 @@ fn classify_kept_side(contradiction: &Contradiction, raw_answer: &str) -> String
         return "right".to_string();
     }
     "refinement".to_string()
-}
-
-fn parse_added_resolution_id(output: &str) -> Result<String> {
-    output
-        .split_whitespace()
-        .find_map(|word| {
-            let candidate = word.trim_matches(|character: char| {
-                !character.is_ascii_alphanumeric() && character != '-'
-            });
-            (candidate.contains('-')
-                && candidate
-                    .chars()
-                    .any(|character| character.is_ascii_digit()))
-            .then(|| candidate.to_string())
-        })
-        .ok_or_else(|| {
-            QuizdomError::Parse("aida add output did not include a resolution id".to_string())
-        })
 }
 
 fn belief_index(item: &Value, key: &str, len: usize) -> Option<usize> {

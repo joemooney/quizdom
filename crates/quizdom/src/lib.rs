@@ -26,6 +26,8 @@ mod session;
 mod settings;
 // trace:STORY-68 | ai:claude
 mod signals;
+// trace:STORY-204 | ai:claude — the DomainStore storage abstraction (EPIC-202).
+mod store;
 // trace:STORY-83 | ai:claude
 mod spinner;
 mod strategy;
@@ -50,7 +52,7 @@ pub use contradiction::{
     merge_contradictions, parse_contradicts_rel_list, run_contradictions, AdoptedBelief,
     AidaCliContradictionResolutionPersister, AidaCliContradictsEdges, Contradiction,
     ContradictionKind, ContradictionResolution, ContradictionResolutionPersister, ContradictsEdges,
-    NoopContradictionResolutionPersister, ResolutionCommandRunner,
+    NoopContradictionResolutionPersister,
 };
 pub use error::{QuizdomError, Result};
 pub use model::{
@@ -66,7 +68,9 @@ pub use persist::{
 };
 // trace:STORY-87 | ai:claude
 pub use question_add::run_question_add;
+// trace:STORY-204 | ai:claude
 pub use session::run_cli;
+pub use store::{AidaDomainStore, DomainStore, EdgeKind, NewNode, NodeKind, NodeRecord};
 // trace:STORY-68 | ai:claude
 pub use signals::{
     analyze_session_log, apply_log_signals, run_curate, signals_from_log, QuestionSignalStats,

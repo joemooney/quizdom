@@ -9,6 +9,7 @@ use crate::persist::{
     QuestionLink, QuestionReweighter, UserAuthoredQuestionPersister, UserSpecificTermPersister,
 };
 use crate::session::*;
+use crate::store::parse_question_list_ids;
 use crate::strategy::*;
 use llm::{AnthropicClient, LLMClient, LLMError, LLMFuture, Message, ToolDef};
 use rustyline::EditMode;
@@ -3599,18 +3600,6 @@ impl RecordingCommandRunner {
 }
 
 impl CommandRunner for RecordingCommandRunner {
-    fn run(&self, program: &str, args: &[String]) -> Result<Output> {
-        let mut call = vec![program.to_string()];
-        call.extend(args.iter().cloned());
-        self.calls.borrow_mut().push(call);
-        if self.outputs.borrow().is_empty() {
-            return Err(QuizdomError::Aida("unexpected command".to_string()));
-        }
-        Ok(self.outputs.borrow_mut().remove(0))
-    }
-}
-
-impl ResolutionCommandRunner for RecordingCommandRunner {
     fn run(&self, program: &str, args: &[String]) -> Result<Output> {
         let mut call = vec![program.to_string()];
         call.extend(args.iter().cloned());

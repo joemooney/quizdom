@@ -1,8 +1,9 @@
-// trace:BUG-200 | ai:claude — all aida spawns go through the pinned-format
-// choke point so piped output stays in the human layout these parsers expect.
-use crate::aida_cmd::aida_command;
+// trace:STORY-204 | ai:claude — domain reads go through the DomainStore
+// abstraction; the aida backend keeps the human-layout parsing these
+// wrappers expose.
 use crate::error::{QuizdomError, Result};
 use crate::model::{answer_kind_from_tags, Question, QuestionRef, TermDefinition, TermRef};
+use crate::store::{parse_node_show, AidaDomainStore, DomainStore, EdgeKind, NodeKind, NodeRecord};
 use crate::strategy::QualitySignal;
 use std::collections::BTreeSet;
 
@@ -20,58 +21,39 @@ pub trait QuestionBank {
     }
 }
 
-pub struct AidaCliQuestionBank {
-    command: String,
+pub struct AidaCliQuestionBank<S = AidaDomainStore> {
+    store: S,
 }
 
 impl Default for AidaCliQuestionBank {
     fn default() -> Self {
         Self {
-            command: "aida".to_string(),
+            store: AidaDomainStore::default(),
         }
     }
 }
 
-impl QuestionBank for AidaCliQuestionBank {
+impl<S> QuestionBank for AidaCliQuestionBank<S>
+where
+    S: DomainStore,
+{
     fn load_question(&self, id: &str) -> Result<Question> {
-        let output = aida_command(&self.command).args(["show", id]).output()?;
-        if !output.status.success() {
-            return Err(QuizdomError::Aida(
-                String::from_utf8_lossy(&output.stderr).to_string(),
-            ));
-        }
-
-        parse_question_show(&String::from_utf8_lossy(&output.stdout))
+        question_from_node(self.store.fetch_node(id)?)
     }
 
     fn begets(&self, id: &str) -> Result<Vec<QuestionRef>> {
-        let output = aida_command(&self.command)
-            .args(["rel", "list", id, "--type", "begets"])
-            .output()?;
-        if !output.status.success() {
-            return Err(QuizdomError::Aida(
-                String::from_utf8_lossy(&output.stderr).to_string(),
-            ));
-        }
-
-        Ok(parse_begets_rel_list(&String::from_utf8_lossy(
-            &output.stdout,
-        )))
+        Ok(self
+            .store
+            .neighbors(id, EdgeKind::Begets)?
+            .into_iter()
+            .map(|id| QuestionRef { id })
+            .collect())
     }
 
     fn all_questions(&self) -> Result<Vec<Question>> {
         // trace:STORY-53 | ai:codex
-        let output = aida_command(&self.command)
-            .args(["list", "--type", "functional", "--no-scope"])
-            .output()?;
-        if !output.status.success() {
-            return Err(QuizdomError::Aida(
-                String::from_utf8_lossy(&output.stderr).to_string(),
-            ));
-        }
-
         let mut questions = Vec::new();
-        for id in parse_question_list_ids(&String::from_utf8_lossy(&output.stdout)) {
+        for id in self.store.list_node_ids(NodeKind::Question)? {
             if let Ok(question) = self.load_question(&id) {
                 questions.push(question);
             }
@@ -80,69 +62,52 @@ impl QuestionBank for AidaCliQuestionBank {
     }
 
     fn probes(&self, id: &str) -> Result<Vec<TermRef>> {
-        let output = aida_command(&self.command)
-            .args(["rel", "list", id, "--type", "probes"])
-            .output()?;
-        if !output.status.success() {
-            return Err(QuizdomError::Aida(
-                String::from_utf8_lossy(&output.stderr).to_string(),
-            ));
-        }
-
-        Ok(parse_probes_rel_list(&String::from_utf8_lossy(
-            &output.stdout,
-        )))
+        Ok(self
+            .store
+            .neighbors(id, EdgeKind::Probes)?
+            .into_iter()
+            .map(|id| TermRef { id })
+            .collect())
     }
 
     fn load_term(&self, id: &str) -> Result<TermDefinition> {
-        let output = aida_command(&self.command).args(["show", id]).output()?;
-        if !output.status.success() {
-            return Err(QuizdomError::Aida(
-                String::from_utf8_lossy(&output.stderr).to_string(),
-            ));
-        }
-
-        parse_term_show(&String::from_utf8_lossy(&output.stdout))
+        term_from_node(self.store.fetch_node(id)?)
     }
 }
 
-pub fn parse_question_show(output: &str) -> Result<Question> {
-    let id = prefixed_line(output, "ID:")
-        .ok_or_else(|| QuizdomError::Parse("aida show output missing ID".to_string()))?;
-    let title = prefixed_line(output, "Title:")
-        .ok_or_else(|| QuizdomError::Parse("aida show output missing Title".to_string()))?;
-    let tags = split_tags(&prefixed_line(output, "Tags:").unwrap_or_default());
-    let answer_kind = answer_kind_from_tags(&tags)
-        .ok_or_else(|| QuizdomError::Parse(format!("{id} missing answer:* tag")))?;
-    let weight = tags
-        .iter()
-        .find_map(|tag| tag.strip_prefix("weight:")?.parse::<u32>().ok())
-        .unwrap_or(0);
-
+/// Build a [`Question`] from a stored node: the answer shape comes from the
+/// `answer:*` tag and the selection weight from the record.
+fn question_from_node(record: NodeRecord) -> Result<Question> {
+    let answer_kind = answer_kind_from_tags(&record.tags)
+        .ok_or_else(|| QuizdomError::Parse(format!("{} missing answer:* tag", record.id)))?;
     Ok(Question {
-        id,
-        title,
-        tags,
+        id: record.id,
+        title: record.title,
+        tags: record.tags,
         answer_kind,
-        weight,
+        weight: record.weight,
     })
 }
 
-pub fn parse_term_show(output: &str) -> Result<TermDefinition> {
-    let id = prefixed_line(output, "ID:")
-        .ok_or_else(|| QuizdomError::Parse("aida show output missing ID".to_string()))?;
-    let title = prefixed_line(output, "Title:")
-        .ok_or_else(|| QuizdomError::Parse("aida show output missing Title".to_string()))?;
-    let tags = split_tags(&prefixed_line(output, "Tags:").unwrap_or_default());
-    let definition = parse_definition_text(output)
-        .ok_or_else(|| QuizdomError::Parse(format!("{id} missing definition: line")))?;
-
+/// Build a [`TermDefinition`] from a stored node: the definition text is
+/// extracted from the node's descriptive body.
+fn term_from_node(record: NodeRecord) -> Result<TermDefinition> {
+    let definition = parse_definition_text(&record.body)
+        .ok_or_else(|| QuizdomError::Parse(format!("{} missing definition: line", record.id)))?;
     Ok(TermDefinition {
-        id,
-        title,
-        tags,
+        id: record.id,
+        title: record.title,
+        tags: record.tags,
         definition,
     })
+}
+
+pub fn parse_question_show(output: &str) -> Result<Question> {
+    question_from_node(parse_node_show(output)?)
+}
+
+pub fn parse_term_show(output: &str) -> Result<TermDefinition> {
+    term_from_node(parse_node_show(output)?)
 }
 
 fn parse_definition_text(output: &str) -> Option<String> {
@@ -168,90 +133,17 @@ fn parse_definition_text(output: &str) -> Option<String> {
     (!definition.is_empty()).then(|| definition.join(" "))
 }
 
-fn split_tags(line: &str) -> Vec<String> {
-    let mut tags = Vec::new();
-    let mut current = String::new();
-    let mut bracket_depth = 0_u32;
-
-    for character in line.chars() {
-        match character {
-            '[' => {
-                bracket_depth += 1;
-                current.push(character);
-            }
-            ']' => {
-                bracket_depth = bracket_depth.saturating_sub(1);
-                current.push(character);
-            }
-            ',' if bracket_depth == 0 => {
-                let tag = current.trim();
-                if !tag.is_empty() {
-                    tags.push(tag.to_string());
-                }
-                current.clear();
-            }
-            _ => current.push(character),
-        }
-    }
-
-    let tag = current.trim();
-    if !tag.is_empty() {
-        tags.push(tag.to_string());
-    }
-
-    tags
-}
-
-fn prefixed_line(output: &str, prefix: &str) -> Option<String> {
-    output
-        .lines()
-        .find_map(|line| line.strip_prefix(prefix).map(str::trim))
-        .map(str::to_string)
-}
-
 pub fn parse_begets_rel_list(output: &str) -> Vec<QuestionRef> {
-    parse_rel_list(output, "begets")
+    crate::store::parse_rel_list(output, "begets")
         .into_iter()
         .map(|id| QuestionRef { id })
         .collect()
 }
 
 pub fn parse_probes_rel_list(output: &str) -> Vec<TermRef> {
-    parse_rel_list(output, "probes")
+    crate::store::parse_rel_list(output, "probes")
         .into_iter()
         .map(|id| TermRef { id })
-        .collect()
-}
-
-// trace:STORY-53 | ai:codex
-pub fn parse_question_list_ids(output: &str) -> Vec<String> {
-    output
-        .lines()
-        .filter_map(|line| {
-            let id = line.split_whitespace().next()?;
-            id.starts_with("Q-").then(|| id.to_string())
-        })
-        .collect()
-}
-
-fn parse_rel_list(output: &str, expected_type: &str) -> Vec<String> {
-    output
-        .lines()
-        .filter_map(|line| {
-            let trimmed = line.trim();
-            if trimmed.is_empty()
-                || trimmed.starts_with("FROM")
-                || trimmed.starts_with("(no outgoing")
-                || trimmed.ends_with("edges")
-            {
-                return None;
-            }
-            let mut columns = trimmed.split_whitespace();
-            let _from = columns.next()?;
-            let relationship_type = columns.next()?;
-            let to = columns.next()?;
-            (relationship_type == expected_type).then(|| to.to_string())
-        })
         .collect()
 }
 
