@@ -1693,5 +1693,17 @@ operations:
   timestamp: 2026-07-19T18:42:28.865085145Z
   kind: !SetStatus
     status: Rejected
-clock: 174
+- id: 019f7bb1-534e-7cd1-ad4e-88c05bffad04
+  target_id: 019f7bb1-4f0e-70b1-81ad-30f35cb71eae
+  author: aida
+  node_id: ''
+  lamport: 175
+  timestamp: 2026-07-19T18:44:06.606321161Z
+  kind: !Create
+    title: Dolt access starts as dolt sql CLI spawns behind the storage trait; sql-server adoption deferred
+    description: 'Decision (2026-07-19): quizdom talks to Dolt by spawning dolt sql -r json per query, behind the storage trait from EPIC-202 - the same choke-point pattern used for aida spawns today, so no daemon lifecycle or port assignment is needed initially. A persistent dolt sql-server (MySQL protocol, sqlx/mysql client, port registered in ~/.ports) is the upgrade path if spawn latency becomes a problem; the swap is contained entirely inside the storage trait. References ADR-201.'
+    req_type: Decision
+    status: Approved
+    priority: Medium
+clock: 175
 node_id: ''
