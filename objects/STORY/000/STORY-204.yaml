@@ -8,7 +8,7 @@ priority: Medium
 owner: ''
 feature: Uncategorized
 created_at: 2026-07-19T18:44:51.550094749Z
-modified_at: 2026-07-19T18:52:19.878038406Z
+modified_at: 2026-07-19T19:09:13.999999734Z
 req_type: Story
 tags:
 - batch:dolt-phase-1
@@ -16,3 +16,17 @@ relationships:
 - rel_type: Child
   target_id: 019f7baf-7934-7863-a787-0001f14c0af1
   created_at: 2026-07-19T18:44:56.420418787Z
+comments:
+- id: 019f7bc8-5390-7cd2-bd51-2e557adb6fa7
+  author: joe
+  content: |-
+    Implemented via branch epic-202 (commit 80bf344; PR link on open):
+
+    - New crates/quizdom/src/store.rs: DomainStore trait (fetch_node, one-hop neighbors, list_node_ids, create_node, create_edge/ensure_edge, replace_tags) + AidaDomainStore backend holding all aida arg-building and human-output parsing
+    - bank/persist/contradiction types now generic over DomainStore; public names, default constructors, and exact aida command sequences preserved
+    - Duplicate ResolutionCommandRunner trait removed; CommandRunner unified in store.rs
+
+    Test status: 549/549 quizdom + 7/7 llm tests green
+  created_at: 2026-07-19T19:09:13.999999734Z
+  modified_at: 2026-07-19T19:09:13.999999734Z
+  session_id: 019f7bb7-dbf2-7d62-aa7c-3669e4532a25
