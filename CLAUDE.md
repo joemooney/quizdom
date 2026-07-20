@@ -23,7 +23,8 @@ data substrate.
   (binary). A provider-agnostic `llm` crate is coming in EPIC-7 (`ADR-34`) —
   built fresh here, not extracted from `~/ai/aida-chat`.
 - **Domain data lives in Dolt** (`ADR-201`, EPIC-202, supersedes `ADR-3`;
-  cutover: `STORY-208`): the domain graph — `Q-*` questions, `TERM-*`
+  cutover: `STORY-208`; store-side domain objects deleted post-cutover:
+  `STORY-209`): the domain graph — `Q-*` questions, `TERM-*`
   definitions, `BELIEF-*` propositions, joined by custom edges
   (`begets`/`probes`/`refines`/`contradicts`/`agrees`/`disagrees`) — lives
   in a local Dolt repo (`quizdom db-init` bootstraps it, `quizdom

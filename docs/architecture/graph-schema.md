@@ -1,18 +1,22 @@
 # quizdom Graph Schema
 
 <!-- trace:STORY-14 | ai:codex -->
+<!-- trace:STORY-209 | ai:claude -->
 
-This document is the canonical v1 schema for quizdom's domain graph. Domain
-objects live in AIDA so the product can dogfood AIDA as its shared knowledge
-substrate while keeping user-specific exploration logs separate until a belief
-is intentionally promoted.
+This document is the canonical schema for quizdom's domain graph. Domain
+objects live in a local [Dolt](https://www.dolthub.com/) repo (ADR-201,
+EPIC-202; see the *Dolt Schema* section below) — the AIDA store remains
+canonical for project intent only. *Historical note (ADR-3, superseded):
+v1 kept the domain graph in the AIDA store to dogfood AIDA as a shared
+knowledge substrate; STORY-208 cut the runtime over to Dolt and STORY-209
+removed the store-side domain objects.* User-specific exploration logs stay
+separate until a belief is intentionally promoted.
 
 ## Object Model
 
-Each graph object is represented as an AIDA requirement-like object with a
-stable ID, title, description, tags, and typed relationships. quizdom uses the
-prefixes below to make object roles clear in titles, tags, and relationship
-traversals even before AIDA has first-class domain object types.
+Each graph object is a row in the Dolt `nodes` table with a stable ID,
+title, body, tags, and typed edges. quizdom uses the prefixes below to make
+object roles clear in titles, tags, and traversals.
 
 | Prefix | Node type | Purpose | Required fields |
 |---|---|---|---|
@@ -49,7 +53,8 @@ nodes needed to make the proposition intelligible.
 
 ## Edge Vocabulary
 
-Relationships are typed AIDA edges. The source and target order matters.
+Relationships are typed rows in the Dolt `edges` table. The source and
+target order matters.
 
 | Edge | Source -> target | Meaning |
 |---|---|---|
@@ -60,10 +65,11 @@ Relationships are typed AIDA edges. The source and target order matters.
 | `agrees` | `BELIEF -> BELIEF` | The source supports or is compatible with the target. |
 | `disagrees` | `BELIEF -> BELIEF` | The source rejects or stands against the target without strict logical contradiction. |
 
-Use these quizdom-specific edge names as custom AIDA relationship types. If a
-relationship is merely implementation dependency or ownership, use AIDA's
-normal `parent`, `child`, `references`, `blocked-by`, or `verifies` edges
-instead.
+These six kinds are the only values the `edges.kind` column admits. Links
+that are project intent rather than domain structure — e.g. a
+contradiction-resolution decision node pointing at project specs — stay in
+AIDA as its normal `parent`, `child`, `references`, `blocked-by`, or
+`verifies` edges.
 
 ## Tag Conventions
 
@@ -77,7 +83,6 @@ colon.
 | `answer:<shape>` | `Q` | Answer shape, such as `answer:yes-no` or `answer:free-text`. |
 | `definition:<kind>` | `TERM` | Definition source class: `formal`, `academic`, `public`, or `user-specific`. |
 | `quality:<state>` | `Q` | Reuse signal: `insightful`, `neutral`, or `unhelpful`. |
-| `weight:N` | reusable nodes | Selection weight from `0` through `100`. |
 | `from-answer:<value>` | `Q` | Records the normalized answer that triggered this follow-on, so different answers to the origin can branch to different follow-ups. |
 | `seed` | all nodes | Hand-authored seed data used to bootstrap a cluster. |
 
@@ -102,26 +107,28 @@ question:
 - A successor whose `from-answer` names a **different** answer is **excluded**
   from automatic selection for the current answer.
 
-**VIS-2 substrate note.** The triggering answer lives on the target node as a
-tag rather than on the `begets` edge itself, because `aida rel add` has no
-edge-tag/attribute support today (the alternative would be answer-specific
-custom edge types, which AIDA cannot express). If AIDA gains edge attributes,
-the cleaner model is an `on-answer:<value>` attribute on the `begets` edge,
-which would also let a single shared follow-on be reached from more than one
-answer. Tracked as a substrate gap for the AIDA dogfooding goal.
+**Substrate note (historical, VIS-2).** The triggering answer lives on the
+target node as a tag rather than on the `begets` edge itself — originally
+because `aida rel add` had no edge-attribute support. The Dolt `edges` table
+could now carry an `on-answer` column (which would also let a single shared
+follow-on be reached from more than one answer); until a need materializes,
+the node-tag encoding stands.
 
 ### Weight Encoding
 
-`weight:N` is the only weight encoding. `N` is an integer from `0` to `100`.
+Selection weight is the numeric `weight` column on `nodes` — an integer
+from `0` to `100`. *(Historical: ADR-22, now retired, encoded this as a
+`weight:N` tag while the graph lived in the AIDA store; `quizdom
+db-migrate` converted the tags into the column.)*
 
-- `weight:0` means never select automatically, but keep for history.
-- `weight:1` through `weight:39` means low-priority reuse.
-- `weight:40` through `weight:69` means normal reuse.
-- `weight:70` through `weight:100` means high-priority reuse.
+- `0` means never select automatically, but keep for history.
+- `1` through `39` means low-priority reuse.
+- `40` through `69` means normal reuse.
+- `70` through `100` means high-priority reuse.
 
-When `quality:*` and `weight:N` disagree, treat `weight:N` as the current
-selection signal and `quality:*` as human-readable history. Update the weight
-when repeated sessions show that a question is more or less useful.
+When `quality:*` and `weight` disagree, treat `weight` as the current
+selection signal and `quality:*` as human-readable history. Update the
+weight when repeated sessions show that a question is more or less useful.
 
 ## Worked Example
 
@@ -129,25 +136,25 @@ The first seed cluster for free will should look like this shape:
 
 ```text
 Q: Do you believe in free will?
-  tags: topic:free-will, answer:yes-no, quality:neutral, weight:70, seed
+  tags: topic:free-will, answer:yes-no, quality:neutral, seed   weight: 70
 
 TERM: free will / libertarian
-  tags: topic:free-will, definition:academic, weight:60, seed
+  tags: topic:free-will, definition:academic, seed              weight: 60
 
 TERM: free will / compatibilist
-  tags: topic:free-will, definition:academic, weight:60, seed
+  tags: topic:free-will, definition:academic, seed              weight: 60
 
 Q: Do you mean the ability to have chosen otherwise in exactly the same conditions?
-  tags: topic:free-will, answer:yes-no, quality:neutral, weight:65, seed
+  tags: topic:free-will, answer:yes-no, quality:neutral, seed   weight: 65
 
 Q: Can a choice be free if it is fully caused by prior events?
-  tags: topic:free-will, answer:yes-no, quality:neutral, weight:65, seed
+  tags: topic:free-will, answer:yes-no, quality:neutral, seed   weight: 65
 
 BELIEF: Free will requires genuine alternative possibilities
-  tags: topic:free-will, weight:50, seed
+  tags: topic:free-will, seed                                   weight: 50
 
 BELIEF: Free will is compatible with causal determinism
-  tags: topic:free-will, weight:50, seed
+  tags: topic:free-will, seed                                   weight: 50
 
 Edges:
   Q "Do you believe in free will?"
@@ -180,9 +187,9 @@ same term definitions with `agrees`, `disagrees`, or `contradicts` edges.
 
 <!-- trace:STORY-205 | ai:claude -->
 
-ADR-201 moves the domain graph out of the AIDA store into
-[Dolt](https://www.dolthub.com/), a versioned MySQL-compatible database;
-AIDA remains canonical for project intent. The SQL schema below mirrors the
+ADR-201 (superseding ADR-3) moves the domain graph out of the AIDA store
+into [Dolt](https://www.dolthub.com/), a versioned MySQL-compatible
+database; AIDA remains canonical for project intent. The SQL schema below mirrors the
 object model above and lives in `db/schema.sql`, applied by
 `quizdom db-init` (idempotent — `CREATE TABLE IF NOT EXISTS` only, safe to
 re-run). The default repo location is `data/dolt` (`--path` overrides).
@@ -227,6 +234,14 @@ a `begets` lineage (default root `Q-23`, `--spot-check <id>|none`
 overrides) compared against an app-side BFS over the same edges. Re-running
 is safe — nodes upsert and edges insert-ignore. Node timestamps are
 load-time defaults, not the AIDA `Opened`/`Modified` times.
+
+<!-- trace:STORY-209 | ai:claude -->
+After the STORY-208 cutover, parity was verified one final time and the
+store-side domain objects (`Q-*`/`TERM-*`/`BELIEF-*` and their custom
+edges) were deleted from the AIDA store (STORY-209) — Dolt's history is
+the domain graph's version control now. `db-migrate` remains available for
+importing a legacy store, but this repo's store no longer holds domain
+data.
 
 ### Traversal
 

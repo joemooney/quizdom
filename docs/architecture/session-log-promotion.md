@@ -1,12 +1,19 @@
 # Session Log and Promotion Path
 
 <!-- trace:STORY-15 | ai:codex -->
+<!-- trace:STORY-209 | ai:claude -->
 
-quizdom keeps raw per-user exploration outside the shared AIDA knowledge graph.
-The session log is the local, append-friendly record of what happened in one
-user's belief exploration. AIDA receives only promoted domain objects: notable
-beliefs, reusable questions, and definitions that should become shared
-knowledge.
+> **Substrate note (ADR-201).** This doc predates the EPIC-202 migration
+> and describes promotion targets as AIDA objects. The domain graph now
+> lives in Dolt — read "AIDA object" / "AIDA edge" below as a row in the
+> Dolt `nodes` / `edges` tables (see `graph-schema.md`); the promote-only
+> rule and field mappings are unchanged.
+
+quizdom keeps raw per-user exploration outside the shared domain knowledge
+graph. The session log is the local, append-friendly record of what happened
+in one user's belief exploration. The domain graph receives only promoted
+domain objects: notable beliefs, reusable questions, and definitions that
+should become shared knowledge.
 
 This follows the promote-only rule from ADR-12 and the graph schema in
 [`graph-schema.md`](graph-schema.md). Promotion uses `BELIEF`, `TERM`, and `Q`
