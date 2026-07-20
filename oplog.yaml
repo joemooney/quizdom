@@ -3108,5 +3108,21 @@ operations:
   lamport: 310
   timestamp: 2026-07-20T01:36:37.685082447Z
   kind: Archive
-clock: 310
+- id: 019f7d2c-0039-7a71-9160-9e0ee209f610
+  target_id: 019e7e5e-6e6e-76e3-a004-1a89f431fc5d
+  author: aida
+  node_id: ''
+  lamport: 311
+  timestamp: 2026-07-20T01:37:43.481318219Z
+  kind: !SetStatus
+    status: Rejected
+- id: 019f7d2c-003e-7403-968c-256863128078
+  target_id: 019e7e5e-6e6e-76e3-a004-1a89f431fc5d
+  author: aida
+  node_id: ''
+  lamport: 312
+  timestamp: 2026-07-20T01:37:43.486989405Z
+  kind: !AddTag
+    tag: superseded-by:ADR-201
+clock: 312
 node_id: ''
