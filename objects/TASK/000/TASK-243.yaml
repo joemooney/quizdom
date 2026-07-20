@@ -1,0 +1,12 @@
+id: 019f7d34-2a01-7273-9384-2edf8699a3ae
+spec_id: TASK-243
+agreed_id: TASK-243
+title: Set up a Dolt remote (or backup) for data/dolt - domain graph currently exists only locally
+description: 'Post EPIC-202: the domain graph lives solely in the local data/dolt repo (gitignored). The AIDA store no longer carries it (STORY-209) - the only recovery path today is replaying db-migrate from aida-store git history, which will drift stale as new sessions write to Dolt. Decide and wire the sync story: a Dolt remote (DoltHub or file/S3 remote) with push after session writes, or a scheduled dolt backup. Register any chosen approach in OVERVIEW.md.'
+status: Draft
+priority: Medium
+owner: ''
+feature: Uncategorized
+created_at: 2026-07-20T01:46:38.465693379Z
+modified_at: 2026-07-20T01:46:38.465693379Z
+req_type: Task
