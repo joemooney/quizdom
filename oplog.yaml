@@ -3156,5 +3156,21 @@ operations:
   timestamp: 2026-07-20T01:37:46.178774434Z
   kind: !AddTag
     tag: retired-by:STORY-208
-clock: 316
+- id: 019f7d2f-0ca8-7f81-83db-4857944bde84
+  target_id: 019f7d2f-0ace-7c91-9d67-132476fde04e
+  author: aida
+  node_id: ''
+  lamport: 317
+  timestamp: 2026-07-20T01:41:03.272621348Z
+  kind: !Create
+    title: ADR supersede/retire mapped onto status 'rejected' + tags — AIDA has no native superseded status
+    description: |
+      STORY-209 asked to mark ADR-3/ADR-31/ADR-22 "superseded/retired", but AIDA's status vocabulary is draft/approved/planned/in-progress/done/completed/rejected — no superseded state. Shipped mapping: status=rejected + tag superseded-by:ADR-201 (ADR-3) / retired-by:STORY-208 (ADR-31, ADR-22) + an explanatory comment on each clarifying that 'rejected' here means adopted-then-replaced, not turned down. If this reads as misleading in listings, the advisor may want a substrate-level 'superseded' status (VIS-2 dogfood gap) or a different convention.
+
+      Raised by the implementer while working STORY-209.
+      Branch: epic-202-2  ·  Commit: 1b08325  (PR link added on merge)
+    req_type: Task
+    status: Draft
+    priority: Medium
+clock: 317
 node_id: ''
