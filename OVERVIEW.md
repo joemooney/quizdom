@@ -49,11 +49,16 @@ trivia apps test recall; nothing helps you explore and stress-test what you
 
 Decided early:
 
-- **Data substrate → AIDA (ADR-3).** quizdom's domain data — questions as typed
-  objects, belief relations as typed edges, tags as quality signals — lives in
-  the AIDA git-canonical store, dogfooding it as a general substrate (VIS-2).
-  Where AIDA can't express what quizdom needs, file an AIDA finding rather than
-  working around it.
+- **Data substrate → Dolt (ADR-201, superseding ADR-3).** quizdom's domain
+  data — questions, term definitions, and belief propositions joined by typed
+  edges — lives in a local [Dolt](https://www.dolthub.com/) repo
+  (`data/dolt`; `quizdom db-init` bootstraps it), with multi-hop traversal as
+  a recursive CTE and selection weight as a numeric column. The AIDA store
+  remains canonical for *project intent* (specs, decisions, `references`
+  edges). *Historical: ADR-3 originally put the domain graph in the AIDA
+  store to dogfood it as a general substrate (VIS-2); EPIC-202 migrated it
+  out after the dogfooding surfaced real substrate gaps — which was itself
+  the point.*
 - **Interface → CLI/TUI first (ADR-4).** A full-screen **ratatui + crossterm**
   TUI is now the default for interactive sessions (EPIC-167); a headless line
   front-end behind the same engine seam serves non-TTY / scripted / piped paths
@@ -89,7 +94,8 @@ decision`); progress in the EPIC tree (`aida list --type epic`).
 
 - **EPIC-5 (domain graph model) — complete.** Schema (`docs/architecture/
   graph-schema.md`) + the "free will" seed cluster (`Q-23`, `TERM-24/25`,
-  `BELIEF-28/29`) live as AIDA objects with custom edges.
+  `BELIEF-28/29`) with custom edges — originally AIDA objects, migrated to
+  Dolt in EPIC-202.
 - **EPIC-6 (session engine) — complete.** `crates/quizdom`: branching Q&A loop,
   pluggable `NextQuestionStrategy` (deterministic), both-sides agree/disagree
   forking, and start/resume/end persistence over a JSONL log. 9 tests green.
@@ -162,6 +168,14 @@ decision`); progress in the EPIC tree (`aida list --type epic`).
     probes into one structured turn-envelope on the next-question call — one LLM
     call per turn instead of 2-3 full-history spawns (BUG-181 also de-flaked the
     score-gauge gate test off a live LLM).
+
+- **EPIC-202 (Dolt migration) — complete.** The domain graph moved from the
+  AIDA store to a local Dolt repo (ADR-201): schema + `db-init`
+  (STORY-205), the `db-migrate` exporter with parity checks (STORY-206),
+  a Dolt-backed `DomainStore` with recursive-CTE traversal (STORY-207),
+  runtime cutover retiring the ADR-31 BFS and ADR-22 weight tags
+  (STORY-208), and post-cutover removal of the store-side domain objects
+  (STORY-209).
 
 **Every epic is complete** (~521 quizdom + 7 llm tests, CI green, runs on the Max
 plan by default). The product is the full vision plus the use-driven extensions;
