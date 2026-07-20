@@ -17,7 +17,7 @@ priority: High
 owner: ''
 feature: Uncategorized
 created_at: 2026-05-31T15:25:14.361384584Z
-modified_at: 2026-07-20T01:37:44.790864693Z
+modified_at: 2026-07-20T01:37:45.435960297Z
 req_type: Decision
 tags:
 - decision
@@ -36,3 +36,10 @@ relationships:
   target_id: 019e7e5e-b073-7671-b834-ce12b2104736
   created_at: 2026-05-31T15:25:25.243449270Z
   created_by: joe
+comments:
+- id: 019f7d2c-07dc-7703-ab10-26540b38d7e2
+  author: joe
+  content: 'Retired at the STORY-208 cutover: multi-hop traversal is now a single recursive CTE in the Dolt backend (DomainStore::reachable) — the app-side one-hop BFS this ADR decided is gone. Status ''rejected'' means retired, not turned down. (STORY-209 cleanup)'
+  created_at: 2026-07-20T01:37:45.435960297Z
+  modified_at: 2026-07-20T01:37:45.435960297Z
+  session_id: 019f7d28-1a98-7e32-8d49-e1d61adcc0b5
