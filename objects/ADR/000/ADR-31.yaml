@@ -12,16 +12,17 @@ description: |-
   - EPIC-5 acceptance clause 'query_graph traverses Q->definitions->follow-ups' is SUPERSEDED: verify traversal via 'aida rel list' (edges exist + correct) instead. STORY-16 is acceptably complete on that basis.
 
   Revisit and collapse to the native graph walk when FR-282 lands.
-status: Approved
+status: Rejected
 priority: High
 owner: ''
 feature: Uncategorized
 created_at: 2026-05-31T15:25:14.361384584Z
-modified_at: 2026-05-31T15:25:25.243459435Z
+modified_at: 2026-07-20T01:37:44.790864693Z
 req_type: Decision
 tags:
 - decision
 - graph
+- retired-by:STORY-208
 - substrate
 - traversal
 - vis2

@@ -3124,5 +3124,21 @@ operations:
   timestamp: 2026-07-20T01:37:43.486989405Z
   kind: !AddTag
     tag: superseded-by:ADR-201
-clock: 312
+- id: 019f7d2c-055e-7681-8a76-6d778c6ef11c
+  target_id: 019e7ea3-a4f9-7d02-a803-d016c925b2cd
+  author: aida
+  node_id: ''
+  lamport: 313
+  timestamp: 2026-07-20T01:37:44.798522280Z
+  kind: !SetStatus
+    status: Rejected
+- id: 019f7d2c-0566-70f3-90b1-0fe3dc8bdd04
+  target_id: 019e7ea3-a4f9-7d02-a803-d016c925b2cd
+  author: aida
+  node_id: ''
+  lamport: 314
+  timestamp: 2026-07-20T01:37:44.806589126Z
+  kind: !AddTag
+    tag: retired-by:STORY-208
+clock: 314
 node_id: ''
