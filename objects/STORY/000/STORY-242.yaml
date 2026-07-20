@@ -1,0 +1,26 @@
+id: 019f7d30-bb39-7ca2-b2fc-5c643e82504f
+spec_id: STORY-242
+agreed_id: STORY-242
+title: 'Review PR-89: [AI:claude] docs(architecture): post-cutover cleanup — remove AIDA-store domain data, retire ADR-3/31/22 (STORY-209)'
+description: |
+  Auto-filed by `aida pr auto-queue-review` (typically from /aida-pr) (session `019f7d28`) for branch `story-209-cleanup`.
+
+  - PR: <https://github.com/joemooney/quizdom/pull/89>
+  - Branch: `story-209-cleanup` → `main`
+
+  ## Covers
+
+  - STORY-209
+
+  ## Acceptance
+
+  - Generate a structured review prompt with `aida review prompt --pr 89` and verify each spec's acceptance criteria.
+  - Approve and merge, or request changes by spec id.
+  - Mark this story `completed` once the PR is merged.
+status: Approved
+priority: Medium
+owner: ''
+feature: Uncategorized
+created_at: 2026-07-20T01:42:53.497063395Z
+modified_at: 2026-07-20T01:42:53.497063395Z
+req_type: Story
