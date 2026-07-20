@@ -3188,5 +3188,21 @@ operations:
     req_type: Task
     status: Draft
     priority: Medium
-clock: 318
+- id: 019f7d2f-1ff6-71e3-a1e2-b1dbe9818694
+  target_id: 019f7d2f-1e02-7050-8b7a-b21ddac3a76a
+  author: aida
+  node_id: ''
+  lamport: 319
+  timestamp: 2026-07-20T01:41:08.214156568Z
+  kind: !Create
+    title: Rewrite docs/architecture/session-log-promotion.md in Dolt terms (banner-only fix shipped)
+    description: |
+      session-log-promotion.md (STORY-15) pervasively describes belief-promotion targets as AIDA objects/edges — stale since the EPIC-202 cutover, but a full rewrite was outside STORY-209's three named docs. Shipped a substrate-note banner at the top redirecting readers ("read 'AIDA object' as a Dolt nodes row") and neutralized the intro paragraph. A proper pass should rewrite the promotion flow, field-mapping table, and worked example (~lines 100-190) in Dolt terms.
+
+      Raised by the implementer while working STORY-209.
+      Branch: epic-202-2  ·  Commit: 1b08325  (PR link added on merge)
+    req_type: Task
+    status: Draft
+    priority: Medium
+clock: 319
 node_id: ''
