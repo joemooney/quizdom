@@ -8,9 +8,25 @@ priority: Medium
 owner: ''
 feature: Uncategorized
 created_at: 2026-07-19T18:46:17.084320554Z
-modified_at: 2026-07-20T01:33:46.508469317Z
+modified_at: 2026-07-20T01:41:54.700663696Z
 req_type: Story
 relationships:
 - rel_type: Child
   target_id: 019f7baf-7934-7863-a787-0001f14c0af1
   created_at: 2026-07-19T18:46:22.180141968Z
+comments:
+- id: 019f7d2f-d58c-73d3-a654-a56f101a76de
+  author: joe
+  content: |-
+    Implemented via branch epic-202-2 (commit 1b08325; PR link to follow):
+
+    - Final parity check green before deletion: 75 nodes (2 belief / 71 question / 2 term), 75 edges (70 begets / 1 disagrees / 3 probes / 1 refines), Q-23 lineage spot-check ✓
+    - Deleted all 75 Q-*/TERM-*/BELIEF-* domain objects + custom edges from .aida-store; store-only push done. Intent objects untouched (note: the Q-23→STORY-16 references edge went with Q-23 — see finding TASK-240)
+    - ADR-3 (superseded-by:ADR-201), ADR-31 and ADR-22 (retired-by:STORY-208) marked status=rejected with clarifying comments (no native 'superseded' status — finding TASK-239)
+    - Docs updated: CLAUDE.md, OVERVIEW.md (Dolt substrate bullet + EPIC-202 status entry), graph-schema.md (Dolt present-tense throughout), session-log-promotion.md (historical banner — full rewrite filed as TASK-241)
+
+    Acceptance verified: aida backlog list and aida burndown plan --candidates show zero domain objects.
+    Test status: docs-only code change; cargo fmt --check clean (CI runs fmt+clippy+test).
+  created_at: 2026-07-20T01:41:54.700663696Z
+  modified_at: 2026-07-20T01:41:54.700663696Z
+  session_id: 019f7d28-1a98-7e32-8d49-e1d61adcc0b5
