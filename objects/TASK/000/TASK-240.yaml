@@ -1,0 +1,20 @@
+id: 019f7d2f-13fa-77f0-b3f5-0b65efdf462f
+spec_id: TASK-240
+agreed_id: TASK-240
+title: Deleting Q-23 also removed the intent-side 'Q-23 references STORY-16' edge
+description: |
+  The store held exactly one non-custom edge touching a domain node: Q-23 references STORY-16 (the seed-cluster story). Deleting Q-23 (required by acceptance: zero domain objects) necessarily removed that references edge; STORY-16 itself is untouched. The Dolt graph never carried this edge (endpoint outside the domain set), so the Q-23→STORY-16 provenance link now exists only in aida-store git history. If cross-substrate provenance links matter, the advisor may want a convention for them (e.g. a comment on STORY-16 naming the Dolt node id — I did not add one, since the spec said to leave intent objects untouched).
+
+  Raised by the implementer while working STORY-209.
+  Branch: epic-202-2  ·  Commit: 1b08325  (PR link added on merge)
+status: Draft
+priority: Medium
+owner: ''
+feature: Uncategorized
+created_at: 2026-07-20T01:41:05.146997995Z
+modified_at: 2026-07-20T01:41:05.146997995Z
+req_type: Task
+tags:
+- from-implementer:STORY-209
+- kind:design-choice
+- severity:minor
