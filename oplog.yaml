@@ -3140,5 +3140,21 @@ operations:
   timestamp: 2026-07-20T01:37:44.806589126Z
   kind: !AddTag
     tag: retired-by:STORY-208
-clock: 314
+- id: 019f7d2c-0abc-79c2-a6f8-aafee2858a49
+  target_id: 019e7e82-8b51-70b1-a36b-b9c99611b2f7
+  author: aida
+  node_id: ''
+  lamport: 315
+  timestamp: 2026-07-20T01:37:46.172287741Z
+  kind: !SetStatus
+    status: Rejected
+- id: 019f7d2c-0ac2-74f1-817f-87d710e251f5
+  target_id: 019e7e82-8b51-70b1-a36b-b9c99611b2f7
+  author: aida
+  node_id: ''
+  lamport: 316
+  timestamp: 2026-07-20T01:37:46.178774434Z
+  kind: !AddTag
+    tag: retired-by:STORY-208
+clock: 316
 node_id: ''

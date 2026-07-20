@@ -12,16 +12,17 @@ description: |-
   If promoted, scope it concretely (per the aida advisor's guidance): a NODE field selection_weight: u8 (0-100) matching the doc, wired into the aida graph walk as ranked/weighted successor selection; per-edge begets weight is a possible later refinement. NOT a speculative general score: f64.
 
   This is the VIS-2 driver to watch: if quizdom genuinely needs substrate-side weighted traversal, that is a concrete, generalizable AIDA capability (ranked blockers, weighted impact) worth a deliberate yes/no in ~/ai/aida — promoted by real friction, not added speculatively.
-status: Approved
+status: Rejected
 priority: Medium
 owner: ''
 feature: Uncategorized
 created_at: 2026-05-31T14:49:05.105592939Z
-modified_at: 2026-05-31T14:49:17.757552646Z
+modified_at: 2026-07-20T01:37:46.165921021Z
 req_type: Decision
 tags:
 - decision
 - graph
+- retired-by:STORY-208
 - substrate
 - vis2
 - weighting
