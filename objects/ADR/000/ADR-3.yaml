@@ -8,7 +8,7 @@ priority: High
 owner: ''
 feature: Uncategorized
 created_at: 2026-05-31T14:09:38.414646686Z
-modified_at: 2026-07-20T01:37:43.476261358Z
+modified_at: 2026-07-20T01:37:44.093024896Z
 req_type: Decision
 tags:
 - aida
@@ -23,3 +23,9 @@ comments:
   created_at: 2026-07-19T18:42:19.159286262Z
   modified_at: 2026-07-19T18:42:19.159286262Z
   session_id: 789bafdb-f673-41c5-affc-d550f95e51e5
+- id: 019f7d2c-029d-7091-8a94-242c3b794cef
+  author: joe
+  content: 'Superseded by ADR-201 (EPIC-202): the domain graph now lives in Dolt; the AIDA store remains canonical for project intent only. Status ''rejected'' here means retired/superseded — this decision WAS in force until the STORY-208 cutover, not turned down. (STORY-209 cleanup)'
+  created_at: 2026-07-20T01:37:44.093024896Z
+  modified_at: 2026-07-20T01:37:44.093024896Z
+  session_id: 019f7d28-1a98-7e32-8d49-e1d61adcc0b5
