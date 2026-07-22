@@ -1,0 +1,40 @@
+id: 019f8a78-a5f4-7a13-9370-c555a1457fb5
+spec_id: TASK-301
+agreed_id: TASK-301
+title: db-init does not create parent directories for the resolved dolt_path
+description: |
+  `quizdom db-init` fails with a bare `error: No such file or directory (os error 2)`
+  when the resolved path's PARENT does not exist. It creates the leaf repo dir but
+  not the chain above it.
+
+      mkdir -p $XDG_CONFIG_HOME/quizdom
+      printf 'dolt_path = "graphs/main"\n' > $XDG_CONFIG_HOME/quizdom/settings.toml
+      quizdom db-init
+      # error: No such file or directory (os error 2)
+      mkdir -p $XDG_CONFIG_HOME/quizdom/graphs   # <- then it works
+
+  Pre-existing, but STORY-290 / TASK-263 makes it MORE likely to be hit: a relative
+  `dolt_path` now anchors to `~/.config/quizdom/`, a directory where the user has
+  no reason to have pre-created subdirectories. Before the anchoring change a
+  relative path landed under the project tree, where `data/` usually already
+  existed.
+
+  Two things worth fixing, either separately:
+  - `db-init` should `create_dir_all` the parent (it already creates the repo dir).
+  - The error should name the path it could not create. A bare errno with no path
+    is what cost the most time diagnosing this — `settings::save` and the backup
+    path have the same "IO error with no context" shape.
+
+  Raised by the implementer while working STORY-290.
+  Branch: story-290  ·  Commit: cf4c24c  (PR link added on merge)
+status: Draft
+priority: Medium
+owner: ''
+feature: Uncategorized
+created_at: 2026-07-22T15:36:30.452419415Z
+modified_at: 2026-07-22T15:36:30.452419415Z
+req_type: Task
+tags:
+- from-implementer:STORY-290
+- kind:bug-spotted
+- severity:minor
