@@ -7,12 +7,12 @@ description: |
 
   Raised by the implementer while working STORY-209.
   Branch: epic-202-2  ·  Commit: 1b08325  (PR link added on merge)
-status: Draft
+status: Rejected
 priority: Medium
 owner: ''
 feature: Uncategorized
 created_at: 2026-07-20T01:41:05.146997995Z
-modified_at: 2026-07-22T05:43:29.671508745Z
+modified_at: 2026-07-22T05:43:31.887633887Z
 req_type: Task
 tags:
 - from-implementer:STORY-209
