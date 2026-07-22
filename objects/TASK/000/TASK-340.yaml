@@ -30,12 +30,12 @@ description: |
   — which is exactly what the conformance check verifies.
 
   Raised in review of PR-104: https://github.com/joemooney/quizdom/pull/104#issuecomment-5049890681
-status: Draft
+status: Rejected
 priority: Medium
 owner: ''
 feature: Uncategorized
 created_at: 2026-07-22T18:26:54.137267413Z
-modified_at: 2026-07-22T18:29:11.448890039Z
+modified_at: 2026-07-22T18:29:12.406834063Z
 req_type: Task
 tags:
 - from-review:PR-104
