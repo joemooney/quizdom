@@ -4379,5 +4379,31 @@ operations:
   timestamp: 2026-07-22T06:18:25.248967709Z
   kind: !SetStatus
     status: Completed
-clock: 418
+- id: 019f8879-f5d4-7552-8c04-72618aea5ed3
+  target_id: 019f8879-f138-7b93-b332-57cea04f04ef
+  author: aida
+  node_id: ''
+  lamport: 419
+  timestamp: 2026-07-22T06:18:42.004675739Z
+  kind: !Create
+    title: 'Config/path resolution: unify db-init/db-migrate with the runtime chain, and stop /settings save dropping store keys'
+    description: |-
+      Bundles TASK-228, TASK-218, TASK-222 — all in the settings/path-resolution lane, file-disjoint from the other EPIC-249 batches (touches db_init.rs, db_migrate.rs, settings.rs).
+
+      TASK-228: db-init and db-migrate resolve the Dolt repo path from --path / the compiled default only, silently ignoring QUIZDOM_DOLT_PATH and the dolt_path settings key, while the runtime store (dolt_store.rs::dolt_path_from) honors both. Repro: QUIZDOM_DOLT_PATH=/tmp/x quizdom db-init creates data/dolt anyway; a later session then reads /tmp/x and finds nothing. Especially confusing in worktree-heavy workflows. Fix: route both subcommands through the same resolution chain (flag > env > settings.toml > default), keeping --path top priority.
+
+      TASK-218: backend selection via settings.toml is load-only — a /settings save would round-trip the file and drop the store/dolt_path keys it does not model.
+
+      TASK-222: config_value key matching diverges from settings.rs from_toml on case-sensitivity and quote stripping, so the same settings file can resolve differently depending on which reader sees it.
+
+      ## Acceptance
+      - QUIZDOM_DOLT_PATH=<p> quizdom db-init and db-migrate both target <p>; --path still overrides env; settings dolt_path is honored when neither is set; default stays data/dolt.
+      - One shared resolution helper used by db_init, db_migrate and dolt_store — not three copies.
+      - A /settings save round-trip preserves store/dolt_path keys (test asserting save-after-load keeps them).
+      - config_value and from_toml agree on key matching for the same input (test covering case and quoted values).
+      - cargo test green; no new clippy warnings.
+    req_type: Story
+    status: Approved
+    priority: Medium
+clock: 419
 node_id: ''
