@@ -39,7 +39,7 @@ priority: Medium
 owner: ''
 feature: Uncategorized
 created_at: 2026-07-22T04:39:39.715652627Z
-modified_at: 2026-07-22T06:09:34.433022601Z
+modified_at: 2026-07-22T06:10:53.834754889Z
 req_type: Task
 tags:
 - from-review:PR-90
@@ -56,4 +56,19 @@ comments:
   content: Commit 8a0a383 references this requirement
   created_at: 2026-07-22T06:09:34.433022601Z
   modified_at: 2026-07-22T06:09:34.433022601Z
+  session_id: 019f8869-2b57-71d2-bcf4-e6d9f9f55e43
+- id: 019f8872-d10a-7ff0-b622-4110094173d4
+  author: joe
+  content: |-
+    Implemented on branch epic-249 (commit 8a0a383):
+
+    - Added `DomainStore::fetch_nodes_present` — the best-effort sibling of the strict `fetch_nodes`: absent ids are skipped, the surviving records keep `ids` order, and a genuine query failure still propagates. The Dolt backend shares one chunked `IN (...)` lookup (`found_nodes`) between the two reads, so the strict and lenient paths cannot drift and the lenient read costs the same single spawn.
+    - `AidaCliQuestionBank::load_terms` now reads through it, so both impls of `load_terms` carry one contract: per-item lenient. The strictness asymmetry the review flagged is gone — an absent probes target costs one definition, never every definition for the question.
+    - `load_probed_terms`' `unwrap_or_default()` now swallows the same thing the `probes()` call above it swallows: a store failure, not a gap in the graph.
+
+    Test status: 591/591 tests green (584 lib + 7 llm); `cargo fmt --all --check` clean; `cargo clippy --workspace --all-targets` clean apart from the six pre-existing lints tracked as TASK-233.
+
+    Follow-up: the "no log line distinguishes a missing batch from an empty one" half of the finding is deliberately NOT addressed — the session loop runs in a crossterm alternate screen (`tui.rs`) with no logging seam, so an `eprintln!` there would be invisible at best and corrupt the display at worst. Surfacing store failures to the reader needs a logging seam first.
+  created_at: 2026-07-22T06:10:53.834754889Z
+  modified_at: 2026-07-22T06:10:53.834754889Z
   session_id: 019f8869-2b57-71d2-bcf4-e6d9f9f55e43
