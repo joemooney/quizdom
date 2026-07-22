@@ -165,6 +165,13 @@ pub trait DomainStore {
     }
 
     // trace:TASK-247 | ai:claude
+    // trace:STORY-293 | ai:claude — the default used to be
+    // `filter_map(|id| self.fetch_node(id).ok())`, which skipped an absent row
+    // and a store failure alike while the Dolt override propagated failures:
+    // the same default-vs-override asymmetry TASK-247 removed from
+    // `load_terms`, one layer down. `QuizdomError::NotFound` is what makes the
+    // two distinguishable without string-matching, so the default can now hold
+    // the same contract every backend does.
     /// The best-effort form of [`Self::fetch_nodes`]: an id with no row is
     /// skipped rather than failing the batch. The records that do exist come
     /// back in `ids` order, repeated ids repeated.
@@ -173,14 +180,19 @@ pub trait DomainStore {
     /// rather show the reachable part of the graph than nothing at all. A
     /// caller that needs every id present wants [`Self::fetch_nodes`].
     ///
-    /// The default cannot tell an absent row from a store failure, so it
-    /// skips both; a backend that can distinguish them overrides this and
-    /// propagates store failures.
+    /// Absence is a skip, a store failure is not: an implementation of
+    /// [`Self::fetch_node`] that reports "no such row" as
+    /// [`QuizdomError::NotFound`] gets the skip; every other error propagates.
     fn fetch_nodes_present(&self, ids: &[String]) -> Result<Vec<NodeRecord>> {
-        Ok(ids
-            .iter()
-            .filter_map(|id| self.fetch_node(id).ok())
-            .collect())
+        let mut found = Vec::with_capacity(ids.len());
+        for id in ids {
+            match self.fetch_node(id) {
+                Ok(record) => found.push(record),
+                Err(QuizdomError::NotFound(_)) => {}
+                Err(error) => return Err(error),
+            }
+        }
+        Ok(found)
     }
 
     // trace:STORY-244 | ai:claude
@@ -416,4 +428,132 @@ fn split_tags(line: &str) -> Vec<String> {
     }
 
     tags
+}
+
+// trace:STORY-293 | ai:claude
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::cell::RefCell;
+
+    /// A store whose only real method is [`DomainStore::fetch_node`], so the
+    /// default trait bodies above are what the tests exercise. Every id is
+    /// answered from `rows`; an id with no entry there gets `absent`.
+    struct DefaultsOnlyStore {
+        rows: BTreeMap<String, NodeRecord>,
+        absent: fn(&str) -> QuizdomError,
+        fetched: RefCell<Vec<String>>,
+    }
+
+    impl DefaultsOnlyStore {
+        fn new(ids: &[&str], absent: fn(&str) -> QuizdomError) -> Self {
+            Self {
+                rows: ids.iter().map(|id| (id.to_string(), node(id))).collect(),
+                absent,
+                fetched: RefCell::new(Vec::new()),
+            }
+        }
+    }
+
+    fn node(id: &str) -> NodeRecord {
+        NodeRecord {
+            id: id.to_string(),
+            title: format!("node {id}"),
+            tags: Vec::new(),
+            weight: 50,
+            body: String::new(),
+        }
+    }
+
+    impl DomainStore for DefaultsOnlyStore {
+        fn fetch_node(&self, id: &str) -> Result<NodeRecord> {
+            self.fetched.borrow_mut().push(id.to_string());
+            self.rows.get(id).cloned().ok_or_else(|| (self.absent)(id))
+        }
+
+        fn list_node_ids(&self, _kind: NodeKind) -> Result<Vec<String>> {
+            unimplemented!("the defaults under test never reach this")
+        }
+        fn neighbors(&self, _id: &str, _edge: EdgeKind) -> Result<Vec<String>> {
+            unimplemented!("the defaults under test never reach this")
+        }
+        fn create_node(&self, _node: &NewNode) -> Result<String> {
+            unimplemented!("the defaults under test never reach this")
+        }
+        fn create_edge(&self, _from: &str, _to: &str, _edge: EdgeKind) -> Result<()> {
+            unimplemented!("the defaults under test never reach this")
+        }
+        fn ensure_edge(&self, _from: &str, _to: &str, _edge: EdgeKind) -> Result<()> {
+            unimplemented!("the defaults under test never reach this")
+        }
+        fn update_weight_and_tags(&self, _id: &str, _weight: u32, _tags: &[String]) -> Result<()> {
+            unimplemented!("the defaults under test never reach this")
+        }
+        fn reachable(&self, _root: &str, _edge: EdgeKind) -> Result<Vec<String>> {
+            unimplemented!("the defaults under test never reach this")
+        }
+    }
+
+    fn not_found(id: &str) -> QuizdomError {
+        QuizdomError::NotFound(format!("node {id} not found"))
+    }
+
+    fn store_failure(_id: &str) -> QuizdomError {
+        QuizdomError::Dolt("connection refused".to_string())
+    }
+
+    /// The lenient read's own half of the contract: an id the store answers
+    /// "no such row" for is skipped, the rest come back in requested order.
+    #[test]
+    fn default_fetch_nodes_present_skips_an_absent_id() {
+        let store = DefaultsOnlyStore::new(&["Q-1", "Q-2"], not_found);
+        let ids = ["Q-1", "Q-404", "Q-2"].map(String::from).to_vec();
+
+        let records = store
+            .fetch_nodes_present(&ids)
+            .expect("an absent id is a skip, not an error");
+
+        assert_eq!(
+            records.iter().map(|r| r.id.as_str()).collect::<Vec<_>>(),
+            ["Q-1", "Q-2"]
+        );
+    }
+
+    /// The half TASK-256 was filed against: the old `fetch_node(id).ok()`
+    /// default swallowed a genuine backend failure exactly the way it
+    /// swallowed an absent row, so a store that had fallen over read as an
+    /// empty graph. The failure must propagate — and must do so at the first
+    /// id, without going on to query the rest.
+    #[test]
+    fn default_fetch_nodes_present_propagates_a_store_failure() {
+        let store = DefaultsOnlyStore::new(&["Q-1", "Q-2"], store_failure);
+        let ids = ["Q-404", "Q-1", "Q-2"].map(String::from).to_vec();
+
+        match store.fetch_nodes_present(&ids) {
+            Err(QuizdomError::Dolt(message)) => {
+                assert!(message.contains("connection refused"), "{message}");
+            }
+            other => panic!("a store failure is not an absent row, got {other:?}"),
+        }
+        assert_eq!(
+            *store.fetched.borrow(),
+            ["Q-404"],
+            "the batch stops at the failure rather than reading past it"
+        );
+    }
+
+    /// The strict read is the contrast: [`QuizdomError::NotFound`] is a skip
+    /// only for the lenient form — `fetch_nodes` still fails the batch on it.
+    #[test]
+    fn default_fetch_nodes_still_fails_the_batch_on_an_absent_id() {
+        let store = DefaultsOnlyStore::new(&["Q-1"], not_found);
+        let ids = ["Q-1", "Q-404"].map(String::from).to_vec();
+
+        match store.fetch_nodes(&ids) {
+            Err(QuizdomError::NotFound(message)) => {
+                assert!(message.contains("Q-404"), "{message}");
+            }
+            other => panic!("expected the strict read to fail, got {other:?}"),
+        }
+    }
 }

@@ -325,7 +325,6 @@ impl QuestionLink {
     /// Resolve the `(from, to, edge)` triple for the edge to create, or `None`
     /// for a standalone seed. `new_id` is the id of the freshly created
     /// Q-object.
-    #[allow(dead_code)]
     fn rel_endpoints(&self, new_id: &str) -> Option<(String, String, EdgeKind)> {
         match self {
             QuestionLink::Begets { origin_id } => {
@@ -360,7 +359,6 @@ fn user_authored_question_tags(topic: &str, answer_kind: &AnswerKind) -> Vec<Str
 }
 
 // trace:STORY-85 | ai:claude
-#[allow(dead_code)]
 fn user_authored_question_description(
     question: &Question,
     topic: &str,

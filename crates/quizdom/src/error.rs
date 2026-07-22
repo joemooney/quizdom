@@ -7,6 +7,12 @@ pub enum QuizdomError {
     Aida(String),
     // trace:STORY-205 | ai:claude — dolt CLI failures during db bootstrap.
     Dolt(String),
+    // trace:STORY-293 | ai:claude — "the store answered, and there is no such
+    // row", as distinct from "the store failed to answer". Kept separate from
+    // `Dolt` so a `DomainStore` default method can skip an absent id while
+    // still propagating a genuine backend failure, without string-matching the
+    // message to tell them apart.
+    NotFound(String),
     Parse(String),
     Usage(String),
 }
@@ -17,6 +23,7 @@ impl fmt::Display for QuizdomError {
             Self::Io(error) => write!(f, "{error}"),
             Self::Aida(message)
             | Self::Dolt(message)
+            | Self::NotFound(message)
             | Self::Parse(message)
             | Self::Usage(message) => {
                 write!(f, "{message}")

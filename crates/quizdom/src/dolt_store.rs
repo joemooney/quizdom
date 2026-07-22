@@ -282,8 +282,13 @@ const NODE_COLUMNS: &str = "id, title, body, tags, weight";
 
 /// The one "no such node" error text, shared so [`DomainStore::fetch_nodes`]
 /// fails exactly the way looping [`DomainStore::fetch_node`] does.
+///
+// trace:STORY-293 | ai:claude — `NotFound`, not `Dolt`: an absent row is the
+// store answering, not the store failing, and the
+// [`DomainStore::fetch_nodes_present`] default keys its skip off exactly that
+// distinction.
 fn missing_node(id: &str) -> QuizdomError {
-    QuizdomError::Dolt(format!("node {id} not found in the Dolt store"))
+    QuizdomError::NotFound(format!("node {id} not found in the Dolt store"))
 }
 
 impl<R> DomainStore for DoltDomainStore<R>
@@ -722,8 +727,10 @@ mod tests {
     fn fetch_node_missing_row_is_an_error() {
         let store = store_with(vec![(0, r#"{"rows":[]}"#, "")]);
         match store.fetch_node("Q-404") {
-            Err(QuizdomError::Dolt(message)) => assert!(message.contains("not found")),
-            other => panic!("expected Dolt error, got {other:?}"),
+            // trace:STORY-293 | ai:claude — an absent row is `NotFound`, the
+            // variant `fetch_nodes_present`'s default skips on.
+            Err(QuizdomError::NotFound(message)) => assert!(message.contains("not found")),
+            other => panic!("expected a not-found error, got {other:?}"),
         }
     }
 
@@ -1068,11 +1075,11 @@ mod tests {
             "",
         )]);
         match store.fetch_nodes(&["Q-1".to_string(), "Q-404".to_string()]) {
-            Err(QuizdomError::Dolt(message)) => {
+            Err(QuizdomError::NotFound(message)) => {
                 assert!(message.contains("Q-404"), "{message}");
                 assert!(message.contains("not found"), "{message}");
             }
-            other => panic!("expected Dolt error, got {other:?}"),
+            other => panic!("expected a not-found error, got {other:?}"),
         }
     }
 

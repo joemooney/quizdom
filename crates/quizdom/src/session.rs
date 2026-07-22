@@ -1207,14 +1207,7 @@ fn set_goal_in_session(
         return Ok(());
     }
     *goal = Some(text.to_string());
-    logger.goal_set(
-        &config.session_id,
-        &config.user_id,
-        &config.branch_id,
-        turn,
-        text,
-        source,
-    )?;
+    logger.goal_set(config.event_scope(), turn, text, source)?;
     writeln!(
         output,
         "Goal set: {text}\n(Questions and the roundedness score now orient toward resolving it.)"
@@ -1251,13 +1244,7 @@ fn set_mode_in_session(
         return Ok(());
     };
     *mode = new_mode;
-    logger.mode_set(
-        &config.session_id,
-        &config.user_id,
-        &config.branch_id,
-        turn,
-        new_mode,
-    )?;
+    logger.mode_set(config.event_scope(), turn, new_mode)?;
     let note = match new_mode {
         SessionMode::Debate => "(The questioner now steelmans the OPPOSING side; the verdict will judge which CASE was better-argued — never which belief is true.)",
         SessionMode::Socratic => "(The questioner is again a neutral challenger of your OWN position.)",
@@ -1647,14 +1634,7 @@ fn raise_objection(
         text: text.to_string(),
         objector,
     };
-    logger.objection_raised(
-        &config.session_id,
-        &config.user_id,
-        &config.branch_id,
-        turn,
-        objector.as_str(),
-        text,
-    )?;
+    logger.objection_raised(config.event_scope(), turn, objector.as_str(), text)?;
     render_objection_motif(&state, output)?;
     *objection_state = Some(state);
     Ok(())
@@ -1691,14 +1671,7 @@ fn resolve_objection(
         return Ok(false);
     }
     let text = open.text.clone();
-    logger.objection_cleared(
-        &config.session_id,
-        &config.user_id,
-        &config.branch_id,
-        turn,
-        "resolved",
-        &text,
-    )?;
+    logger.objection_cleared(config.event_scope(), turn, "resolved", &text)?;
     writeln!(
         output,
         "Objection resolved by the objector — \"{text}\" withdrawn/accepted. Returning to normal flow."
@@ -1769,9 +1742,7 @@ fn judge_objection(
         crate::observer::JudgeVerdict::Overruled => None,
     };
     logger.objection_cleared(
-        &config.session_id,
-        &config.user_id,
-        &config.branch_id,
+        config.event_scope(),
         turn,
         ruling.verdict.as_str(),
         &ruling.resolving_condition,
@@ -1936,14 +1907,7 @@ fn run_closing_phase(
     turn: u64,
     fe: &mut dyn FrontEnd,
 ) -> Result<ClosingOutcome> {
-    logger.phase_changed(
-        &config.session_id,
-        &config.user_id,
-        &config.branch_id,
-        turn,
-        "closing",
-        rester.as_str(),
-    )?;
+    logger.phase_changed(config.event_scope(), turn, "closing", rester.as_str())?;
     render_closing_banner(fe.out())?;
 
     // The most recent settled position the user stated, fed to the challenger so
@@ -1980,9 +1944,7 @@ fn run_closing_phase(
             };
             render_closing_objection(&objection, true, fe.out())?;
             logger.closing_statement(
-                &config.session_id,
-                &config.user_id,
-                &config.branch_id,
+                config.event_scope(),
                 turn,
                 ClosingParty::Challenger.as_str(),
                 &objection.objection,
@@ -2006,9 +1968,7 @@ fn run_closing_phase(
         last_position = statement.to_string();
         render_recorded_user_statement(statement, fe.out())?;
         logger.closing_statement(
-            &config.session_id,
-            &config.user_id,
-            &config.branch_id,
+            config.event_scope(),
             turn,
             ClosingParty::User.as_str(),
             statement,
@@ -2020,9 +1980,7 @@ fn run_closing_phase(
         };
         render_closing_objection(&objection, false, fe.out())?;
         logger.closing_statement(
-            &config.session_id,
-            &config.user_id,
-            &config.branch_id,
+            config.event_scope(),
             turn,
             ClosingParty::Challenger.as_str(),
             &objection.objection,
@@ -2727,9 +2685,7 @@ fn run_session_from_current(
 
     if write_start_event {
         logger.session_started(
-            &config.session_id,
-            &config.user_id,
-            &config.branch_id,
+            config.event_scope(),
             &current.id,
             config.strategy,
             config.llm_backend,
@@ -2754,23 +2710,11 @@ fn run_session_from_current(
             )?;
             current = revised_question;
             turn = index as u64;
-            logger.question_presented(
-                &config.session_id,
-                &config.user_id,
-                &config.branch_id,
-                turn,
-                &current,
-            )?;
+            logger.question_presented(config.event_scope(), turn, &current)?;
             (turn, revised_answer)
         } else {
             let answered_turn = turn;
-            logger.question_presented(
-                &config.session_id,
-                &config.user_id,
-                &config.branch_id,
-                answered_turn,
-                &current,
-            )?;
+            logger.question_presented(config.event_scope(), answered_turn, &current)?;
             // trace:STORY-78 | ai:claude
             // Lead each frontier turn with the orientation breadcrumb so a
             // user deep in a long session always sees current topic, how far
@@ -2860,9 +2804,7 @@ fn run_session_from_current(
                                 // trace:STORY-80 | ai:claude
                                 ended_at_frontier = true;
                                 logger.session_ended(
-                                    &config.session_id,
-                                    &config.user_id,
-                                    &config.branch_id,
+                                    config.event_scope(),
                                     answered_turn,
                                     "User ended session.",
                                 )?;
@@ -2955,9 +2897,7 @@ fn run_session_from_current(
                                 ended_at_frontier = true;
                                 concluded = true;
                                 logger.session_ended(
-                                    &config.session_id,
-                                    &config.user_id,
-                                    &config.branch_id,
+                                    config.event_scope(),
                                     answered_turn,
                                     "User concluded at the well-rounded threshold.",
                                 )?;
@@ -3174,9 +3114,7 @@ fn run_session_from_current(
                         answer_recorded = true;
                         ended_at_frontier = true;
                         logger.session_ended(
-                            &config.session_id,
-                            &config.user_id,
-                            &config.branch_id,
+                            config.event_scope(),
                             answered_turn,
                             outcome.summary,
                         )?;
@@ -3189,9 +3127,7 @@ fn run_session_from_current(
                         // verdict immediately (no objection exchange). Logged as a
                         // closing phase transition so the log shows the ritual.
                         logger.phase_changed(
-                            &config.session_id,
-                            &config.user_id,
-                            &config.branch_id,
+                            config.event_scope(),
                             answered_turn,
                             "closing",
                             ClosingParty::User.as_str(),
@@ -3202,9 +3138,7 @@ fn run_session_from_current(
                         answer_recorded = true;
                         ended_at_frontier = true;
                         logger.session_ended(
-                            &config.session_id,
-                            &config.user_id,
-                            &config.branch_id,
+                            config.event_scope(),
                             answered_turn,
                             outcome.summary,
                         )?;
@@ -3218,9 +3152,7 @@ fn run_session_from_current(
                         // closing statement (its strongest remaining objection)
                         // before the verdict renders.
                         logger.phase_changed(
-                            &config.session_id,
-                            &config.user_id,
-                            &config.branch_id,
+                            config.event_scope(),
                             answered_turn,
                             "closing",
                             ClosingParty::User.as_str(),
@@ -3233,9 +3165,7 @@ fn run_session_from_current(
                         };
                         render_closing_objection(&objection, true, fe.out())?;
                         logger.closing_statement(
-                            &config.session_id,
-                            &config.user_id,
-                            &config.branch_id,
+                            config.event_scope(),
                             answered_turn,
                             ClosingParty::Challenger.as_str(),
                             &objection.objection,
@@ -3246,9 +3176,7 @@ fn run_session_from_current(
                         answer_recorded = true;
                         ended_at_frontier = true;
                         logger.session_ended(
-                            &config.session_id,
-                            &config.user_id,
-                            &config.branch_id,
+                            config.event_scope(),
                             answered_turn,
                             outcome.summary,
                         )?;
@@ -3353,9 +3281,7 @@ fn run_session_from_current(
                         // trace:STORY-80 | ai:claude
                         ended_at_frontier = true;
                         logger.session_ended(
-                            &config.session_id,
-                            &config.user_id,
-                            &config.branch_id,
+                            config.event_scope(),
                             answered_turn,
                             "User ended session.",
                         )?;
@@ -3373,9 +3299,7 @@ fn run_session_from_current(
                 prompt_for_term_meaning(&probed_terms, strategy, term_persister, fe)?
             {
                 logger.term_interpreted(
-                    &config.session_id,
-                    &config.user_id,
-                    &config.branch_id,
+                    config.event_scope(),
                     answered_turn,
                     &settled,
                     &probed_terms,
@@ -3384,14 +3308,7 @@ fn run_session_from_current(
             }
             continue;
         }
-        logger.answer_recorded(
-            &config.session_id,
-            &config.user_id,
-            &config.branch_id,
-            answered_turn,
-            &current,
-            &answer,
-        )?;
+        logger.answer_recorded(config.event_scope(), answered_turn, &current, &answer)?;
         // trace:STORY-81 | ai:claude
         answer_recorded = true;
         // trace:STORY-174 | ai:claude — count this answered turn toward the score
@@ -3408,9 +3325,7 @@ fn run_session_from_current(
             match different_topic_punt_question(&current, &recent_path, bank)? {
                 Some(next) => {
                     logger.next_question_selected(
-                        &config.session_id,
-                        &config.user_id,
-                        &config.branch_id,
+                        config.event_scope(),
                         answered_turn,
                         &current.id,
                         &next.id,
@@ -3454,9 +3369,7 @@ fn run_session_from_current(
                     )? {
                         DeadEndOutcome::Continue(next) => {
                             logger.next_question_selected(
-                                &config.session_id,
-                                &config.user_id,
-                                &config.branch_id,
+                                config.event_scope(),
                                 answered_turn,
                                 &current.id,
                                 &next.id,
@@ -3476,9 +3389,7 @@ fn run_session_from_current(
                             // trace:STORY-80 | ai:claude
                             ended_at_frontier = true;
                             logger.session_ended(
-                                &config.session_id,
-                                &config.user_id,
-                                &config.branch_id,
+                                config.event_scope(),
                                 answered_turn,
                                 "User quit at the dead-end menu (no punt target).",
                             )?;
@@ -3559,9 +3470,7 @@ fn run_session_from_current(
         match next_question {
             Some(next) => {
                 logger.next_question_selected(
-                    &config.session_id,
-                    &config.user_id,
-                    &config.branch_id,
+                    config.event_scope(),
                     answered_turn,
                     &current.id,
                     &next.id,
@@ -3595,9 +3504,7 @@ fn run_session_from_current(
                 )? {
                     DeadEndOutcome::Continue(next) => {
                         logger.next_question_selected(
-                            &config.session_id,
-                            &config.user_id,
-                            &config.branch_id,
+                            config.event_scope(),
                             answered_turn,
                             &current.id,
                             &next.id,
@@ -3617,9 +3524,7 @@ fn run_session_from_current(
                         // gets the deferred id + resume footer after the loop.
                         ended_at_frontier = true;
                         logger.session_ended(
-                            &config.session_id,
-                            &config.user_id,
-                            &config.branch_id,
+                            config.event_scope(),
                             answered_turn,
                             "User quit at the dead-end menu (no begets successor).",
                         )?;
@@ -3772,13 +3677,7 @@ fn ask_contradiction_follow_up(
         answer_kind: AnswerKind::FreeText,
         weight: 0,
     };
-    logger.question_presented(
-        &config.session_id,
-        &config.user_id,
-        &config.branch_id,
-        turn,
-        &question,
-    )?;
+    logger.question_presented(config.event_scope(), turn, &question)?;
     render_question(&question, fe.out())?;
     // trace:STORY-190 | ai:claude — the contradiction follow-up is a frontier-style
     // sub-prompt with no objection / goal / navigation state threaded in, so the
@@ -3792,18 +3691,14 @@ fn ask_contradiction_follow_up(
         AnswerInput::Answer(answer) => {
             let resolution = resolution_persister.persist_resolution(contradiction, &answer.raw)?;
             logger.contradiction_resolved(
-                &config.session_id,
-                &config.user_id,
-                &config.branch_id,
+                config.event_scope(),
                 turn,
                 contradiction,
                 &answer,
                 resolution.as_ref(),
             )?;
             logger.answer_recorded(
-                &config.session_id,
-                &config.user_id,
-                &config.branch_id,
+                config.event_scope(),
                 turn,
                 &question,
                 &answer,
@@ -3814,9 +3709,7 @@ fn ask_contradiction_follow_up(
             // trace:STORY-80 | ai:claude
             render_session_end(None, &config.session_id, fe.out())?;
             logger.session_ended(
-                &config.session_id,
-                &config.user_id,
-                &config.branch_id,
+                config.event_scope(),
                 turn,
                 "User ended session.",
             )?;
@@ -4272,9 +4165,7 @@ fn truncate_session_path(
     recent_path.truncate(from_turn as usize);
     surfaced_contradictions.clear();
     logger.path_truncated(
-        &config.session_id,
-        &config.user_id,
-        &config.branch_id,
+        config.event_scope(),
         from_turn,
         "User revised a reviewed answer.",
     )
@@ -4436,9 +4327,7 @@ fn resume_session_with_term_persister(
     {
         let mut logger = SessionLogger::open(&config.log_path)?;
         logger.next_question_selected(
-            &config.session_id,
-            &config.user_id,
-            &config.branch_id,
+            config.event_scope(),
             last.turn,
             &last_question.id,
             &next.id,
@@ -4589,18 +4478,40 @@ pub(crate) fn fork_session(config: &CliConfig, output: &mut dyn Write) -> Result
         .ok_or_else(|| QuizdomError::Usage("session fork requires --disagree-seed".to_string()))?;
 
     let mut logger = SessionLogger::open(&config.log_path)?;
-    logger.branch_forked(
-        &config.session_id,
-        &config.user_id,
-        proposition,
-        agree_seed,
-        disagree_seed,
-    )?;
+    logger.branch_forked(config.event_scope(), proposition, agree_seed, disagree_seed)?;
     writeln!(
         output,
         "Forked proposition into agree -> {agree_seed} and disagree -> {disagree_seed}."
     )?;
     Ok(())
+}
+
+// trace:STORY-293 | ai:claude — TASK-285: the payload struct
+// `clippy::too_many_arguments` was asking for on four of the writers below.
+// STORY-260's `#[allow]` argued a struct would make those four read
+// differently from the other ten, which was true of a *partial* refactor —
+// the answer is to give all fifteen the same first parameter, not to silence
+// the lint. It is `Copy` and borrows from the config, so threading it costs
+// nothing at the call site.
+/// Who this session-log event belongs to: the identity triple every event the
+/// loop writes carries, sourced from one [`CliConfig`] at every call site.
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct EventScope<'a> {
+    session_id: &'a str,
+    user_id: &'a str,
+    branch_id: &'a str,
+}
+
+impl CliConfig {
+    // trace:STORY-293 | ai:claude
+    /// The scope every session-log event this config's loop writes belongs to.
+    fn event_scope(&self) -> EventScope<'_> {
+        EventScope {
+            session_id: &self.session_id,
+            user_id: &self.user_id,
+            branch_id: &self.branch_id,
+        }
+    }
 }
 
 pub(crate) struct SessionLogger {
@@ -4795,12 +4706,9 @@ impl SessionLogger {
         Ok(Self { file, next_event })
     }
 
-    #[allow(clippy::too_many_arguments)]
     fn session_started(
         &mut self,
-        session_id: &str,
-        user_id: &str,
-        branch_id: &str,
+        scope: EventScope<'_>,
         seed_question_ref: &str,
         strategy: StrategyKind,
         llm_backend: LlmBackendKind,
@@ -4820,9 +4728,9 @@ impl SessionLogger {
             "event_id": event_id,
             "event_type": "session_started",
             "occurred_at": Utc::now().to_rfc3339(),
-            "session_id": session_id,
-            "user_id": user_id,
-            "branch_id": branch_id,
+            "session_id": scope.session_id,
+            "user_id": scope.user_id,
+            "branch_id": scope.branch_id,
             "seed_question_ref": seed_question_ref,
             "strategy": strategy.as_str(),
             "llm_backend": llm_backend_value,
@@ -4839,9 +4747,7 @@ impl SessionLogger {
     /// overrides a `--goal` flag (or a free-flowing start).
     fn goal_set(
         &mut self,
-        session_id: &str,
-        user_id: &str,
-        branch_id: &str,
+        scope: EventScope<'_>,
         turn: u64,
         goal: &str,
         source: &str,
@@ -4851,9 +4757,9 @@ impl SessionLogger {
             "event_id": event_id,
             "event_type": "goal_set",
             "occurred_at": Utc::now().to_rfc3339(),
-            "session_id": session_id,
-            "user_id": user_id,
-            "branch_id": branch_id,
+            "session_id": scope.session_id,
+            "user_id": scope.user_id,
+            "branch_id": scope.branch_id,
             "turn": turn,
             "goal": goal,
             "source": source,
@@ -4866,22 +4772,15 @@ impl SessionLogger {
     /// this is how an in-session toggle overrides the `--mode` flag (or the
     /// default). Belief-neutral: the mode picks the questioning style, never a
     /// belief.
-    fn mode_set(
-        &mut self,
-        session_id: &str,
-        user_id: &str,
-        branch_id: &str,
-        turn: u64,
-        mode: SessionMode,
-    ) -> Result<()> {
+    fn mode_set(&mut self, scope: EventScope<'_>, turn: u64, mode: SessionMode) -> Result<()> {
         let event_id = self.event_id();
         self.write(json!({
             "event_id": event_id,
             "event_type": "mode_set",
             "occurred_at": Utc::now().to_rfc3339(),
-            "session_id": session_id,
-            "user_id": user_id,
-            "branch_id": branch_id,
+            "session_id": scope.session_id,
+            "user_id": scope.user_id,
+            "branch_id": scope.branch_id,
             "turn": turn,
             "mode": mode.as_str(),
         }))
@@ -4894,9 +4793,7 @@ impl SessionLogger {
     /// resumed/inspected session can see where the closing ritual began.
     fn phase_changed(
         &mut self,
-        session_id: &str,
-        user_id: &str,
-        branch_id: &str,
+        scope: EventScope<'_>,
         turn: u64,
         phase: &str,
         caller: &str,
@@ -4906,9 +4803,9 @@ impl SessionLogger {
             "event_id": event_id,
             "event_type": "phase_changed",
             "occurred_at": Utc::now().to_rfc3339(),
-            "session_id": session_id,
-            "user_id": user_id,
-            "branch_id": branch_id,
+            "session_id": scope.session_id,
+            "user_id": scope.user_id,
+            "branch_id": scope.branch_id,
             "turn": turn,
             "phase": phase,
             "caller": caller,
@@ -4920,12 +4817,9 @@ impl SessionLogger {
     /// settled position (`speaker:"user"`) or the challenger's strongest remaining
     /// objection (`speaker:"challenger"`). The `final_word` flag marks the last
     /// statement made under the terminator-forfeits-last-word fairness rule.
-    #[allow(clippy::too_many_arguments)]
     fn closing_statement(
         &mut self,
-        session_id: &str,
-        user_id: &str,
-        branch_id: &str,
+        scope: EventScope<'_>,
         turn: u64,
         speaker: &str,
         statement: &str,
@@ -4936,9 +4830,9 @@ impl SessionLogger {
             "event_id": event_id,
             "event_type": "closing_statement",
             "occurred_at": Utc::now().to_rfc3339(),
-            "session_id": session_id,
-            "user_id": user_id,
-            "branch_id": branch_id,
+            "session_id": scope.session_id,
+            "user_id": scope.user_id,
+            "branch_id": scope.branch_id,
             "turn": turn,
             "speaker": speaker,
             "statement": statement,
@@ -4952,9 +4846,7 @@ impl SessionLogger {
     /// see where the exchange was pinned and by whom.
     fn objection_raised(
         &mut self,
-        session_id: &str,
-        user_id: &str,
-        branch_id: &str,
+        scope: EventScope<'_>,
         turn: u64,
         objector: &str,
         text: &str,
@@ -4964,9 +4856,9 @@ impl SessionLogger {
             "event_id": event_id,
             "event_type": "objection_raised",
             "occurred_at": Utc::now().to_rfc3339(),
-            "session_id": session_id,
-            "user_id": user_id,
-            "branch_id": branch_id,
+            "session_id": scope.session_id,
+            "user_id": scope.user_id,
+            "branch_id": scope.branch_id,
             "turn": turn,
             "objector": objector,
             "text": text,
@@ -4979,9 +4871,7 @@ impl SessionLogger {
     /// carries the disposition + (for a sustained ruling) the tracked open thread.
     fn objection_cleared(
         &mut self,
-        session_id: &str,
-        user_id: &str,
-        branch_id: &str,
+        scope: EventScope<'_>,
         turn: u64,
         disposition: &str,
         resolution: &str,
@@ -4991,9 +4881,9 @@ impl SessionLogger {
             "event_id": event_id,
             "event_type": "objection_cleared",
             "occurred_at": Utc::now().to_rfc3339(),
-            "session_id": session_id,
-            "user_id": user_id,
-            "branch_id": branch_id,
+            "session_id": scope.session_id,
+            "user_id": scope.user_id,
+            "branch_id": scope.branch_id,
             "turn": turn,
             "disposition": disposition,
             "resolution": resolution,
@@ -5002,9 +4892,7 @@ impl SessionLogger {
 
     fn question_presented(
         &mut self,
-        session_id: &str,
-        user_id: &str,
-        branch_id: &str,
+        scope: EventScope<'_>,
         turn: u64,
         question: &Question,
     ) -> Result<()> {
@@ -5013,9 +4901,9 @@ impl SessionLogger {
             "event_id": event_id,
             "event_type": "question_presented",
             "occurred_at": Utc::now().to_rfc3339(),
-            "session_id": session_id,
-            "user_id": user_id,
-            "branch_id": branch_id,
+            "session_id": scope.session_id,
+            "user_id": scope.user_id,
+            "branch_id": scope.branch_id,
             "turn": turn,
             "question_ref": question.id,
             "question_text": question.title,
@@ -5025,9 +4913,7 @@ impl SessionLogger {
 
     fn answer_recorded(
         &mut self,
-        session_id: &str,
-        user_id: &str,
-        branch_id: &str,
+        scope: EventScope<'_>,
         turn: u64,
         question: &Question,
         answer: &Answer,
@@ -5037,9 +4923,9 @@ impl SessionLogger {
             "event_id": event_id,
             "event_type": "answer_recorded",
             "occurred_at": Utc::now().to_rfc3339(),
-            "session_id": session_id,
-            "user_id": user_id,
-            "branch_id": branch_id,
+            "session_id": scope.session_id,
+            "user_id": scope.user_id,
+            "branch_id": scope.branch_id,
             "turn": turn,
             "question_ref": question.id,
             "answer_mode": question.answer_kind.mode(),
@@ -5048,16 +4934,9 @@ impl SessionLogger {
         }))
     }
 
-    // trace:STORY-260 | ai:claude — like `session_started` above, this method's
-    // parameter list mirrors the event's JSON schema field-for-field. Bundling
-    // a subset into a payload struct would make two of the ten writers read
-    // differently from the rest for no gain at the call site.
-    #[allow(clippy::too_many_arguments)]
     fn contradiction_resolved(
         &mut self,
-        session_id: &str,
-        user_id: &str,
-        branch_id: &str,
+        scope: EventScope<'_>,
         turn: u64,
         contradiction: &Contradiction,
         answer: &Answer,
@@ -5069,9 +4948,9 @@ impl SessionLogger {
             "event_id": event_id,
             "event_type": "contradiction_resolved",
             "occurred_at": Utc::now().to_rfc3339(),
-            "session_id": session_id,
-            "user_id": user_id,
-            "branch_id": branch_id,
+            "session_id": scope.session_id,
+            "user_id": scope.user_id,
+            "branch_id": scope.branch_id,
             "turn": turn,
             "left_belief_ref": contradiction.left_id,
             "left_belief": contradiction.left,
@@ -5086,9 +4965,7 @@ impl SessionLogger {
 
     fn path_truncated(
         &mut self,
-        session_id: &str,
-        user_id: &str,
-        branch_id: &str,
+        scope: EventScope<'_>,
         from_turn: u64,
         reason: &str,
     ) -> Result<()> {
@@ -5097,9 +4974,9 @@ impl SessionLogger {
             "event_id": event_id,
             "event_type": "path_truncated",
             "occurred_at": Utc::now().to_rfc3339(),
-            "session_id": session_id,
-            "user_id": user_id,
-            "branch_id": branch_id,
+            "session_id": scope.session_id,
+            "user_id": scope.user_id,
+            "branch_id": scope.branch_id,
             "from_turn": from_turn,
             "reason": reason,
         }))
@@ -5107,9 +4984,7 @@ impl SessionLogger {
 
     fn term_interpreted(
         &mut self,
-        session_id: &str,
-        user_id: &str,
-        branch_id: &str,
+        scope: EventScope<'_>,
         turn: u64,
         settled: &SettledTermDefinition,
         definitions: &[TermDefinition],
@@ -5119,9 +4994,9 @@ impl SessionLogger {
             "event_id": event_id,
             "event_type": "term_interpreted",
             "occurred_at": Utc::now().to_rfc3339(),
-            "session_id": session_id,
-            "user_id": user_id,
-            "branch_id": branch_id,
+            "session_id": scope.session_id,
+            "user_id": scope.user_id,
+            "branch_id": scope.branch_id,
             "turn": turn,
             "term": settled.term_label,
             "term_ref": settled.term.id,
@@ -5132,14 +5007,9 @@ impl SessionLogger {
         }))
     }
 
-    // trace:STORY-260 | ai:claude — parameter list mirrors the event schema; see
-    // the note on `contradiction_resolved`.
-    #[allow(clippy::too_many_arguments)]
     fn next_question_selected(
         &mut self,
-        session_id: &str,
-        user_id: &str,
-        branch_id: &str,
+        scope: EventScope<'_>,
         turn: u64,
         question_ref: &str,
         selected_next_question_ref: &str,
@@ -5150,9 +5020,9 @@ impl SessionLogger {
             "event_id": event_id,
             "event_type": "next_question_selected",
             "occurred_at": Utc::now().to_rfc3339(),
-            "session_id": session_id,
-            "user_id": user_id,
-            "branch_id": branch_id,
+            "session_id": scope.session_id,
+            "user_id": scope.user_id,
+            "branch_id": scope.branch_id,
             "turn": turn,
             "question_ref": question_ref,
             "selected_next_question_ref": selected_next_question_ref,
@@ -5160,22 +5030,15 @@ impl SessionLogger {
         }))
     }
 
-    fn session_ended(
-        &mut self,
-        session_id: &str,
-        user_id: &str,
-        branch_id: &str,
-        turn: u64,
-        summary: &str,
-    ) -> Result<()> {
+    fn session_ended(&mut self, scope: EventScope<'_>, turn: u64, summary: &str) -> Result<()> {
         let event_id = self.event_id();
         self.write(json!({
             "event_id": event_id,
             "event_type": "session_ended",
             "occurred_at": Utc::now().to_rfc3339(),
-            "session_id": session_id,
-            "user_id": user_id,
-            "branch_id": branch_id,
+            "session_id": scope.session_id,
+            "user_id": scope.user_id,
+            "branch_id": scope.branch_id,
             "turn": turn,
             "summary": summary,
         }))
@@ -5183,8 +5046,7 @@ impl SessionLogger {
 
     fn branch_forked(
         &mut self,
-        session_id: &str,
-        user_id: &str,
+        scope: EventScope<'_>,
         proposition: &str,
         agree_seed: &str,
         disagree_seed: &str,
@@ -5194,8 +5056,8 @@ impl SessionLogger {
             "event_id": event_id,
             "event_type": "branch_forked",
             "occurred_at": Utc::now().to_rfc3339(),
-            "session_id": session_id,
-            "user_id": user_id,
+            "session_id": scope.session_id,
+            "user_id": scope.user_id,
             "proposition": proposition,
             "branches": [
                 {
