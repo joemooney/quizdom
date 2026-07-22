@@ -34,12 +34,12 @@ description: |
 
   Raised in review of PR-92:
   https://github.com/joemooney/quizdom/pull/92#issuecomment-5042549338
-status: Draft
+status: Completed
 priority: Medium
 owner: ''
 feature: Uncategorized
 created_at: 2026-07-22T06:16:56.876282059Z
-modified_at: 2026-07-22T06:16:56.876282059Z
+modified_at: 2026-07-22T16:58:28.302589839Z
 req_type: Task
 tags:
 - from-review:PR-92
