@@ -12,12 +12,12 @@ description: |
   Fix direction: db-init/db-migrate should fall back through the same resolution chain as dolt_store (flag > env > settings.toml > default), or at least warn when QUIZDOM_DOLT_PATH is set but unused.
 
   Raised in review of PR-87: https://github.com/joemooney/quizdom/pull/87#issuecomment-5017397227
-status: Draft
+status: Rejected
 priority: Medium
 owner: ''
 feature: Uncategorized
 created_at: 2026-07-19T21:13:56.627537451Z
-modified_at: 2026-07-22T05:42:43.865473374Z
+modified_at: 2026-07-22T05:42:45.842739684Z
 req_type: Task
 tags:
 - from-review:PR-87
