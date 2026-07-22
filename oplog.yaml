@@ -6933,5 +6933,38 @@ operations:
   timestamp: 2026-07-22T16:58:47.359719542Z
   kind: !SetStatus
     status: Completed
-clock: 547
+- id: 019f8ad8-ebb1-7d50-ba18-eadceea0bcea
+  target_id: 019f8ad8-e958-7a12-b9ba-02ac61f9b993
+  author: aida
+  node_id: ''
+  lamport: 548
+  timestamp: 2026-07-22T17:21:39.761868733Z
+  kind: !Create
+    title: Show auto_backup and the diagnostic log path as read-only /settings rows
+    description: |
+      STORY-299 added two settings keys — `auto_backup` (opt-in end-of-session push)
+      and `log_path` (the diagnostic log) — but neither has a surface in the app.
+      TASK-262 made exactly this argument for `dolt_path`: a key that lives only in
+      `settings.toml` and is never shown has no discoverability, and `auto_backup`
+      is a durability control, which is the worst category to hide.
+
+      The row machinery already exists — `settings::dolt_path_row` +
+      `DOLT_PATH_ROW_LABEL`, rendered by `Settings::render_list_showing`
+      (settings.rs) and mirrored in the TUI panel (tui.rs:2109, tui.rs:3579) and the
+      headless value list (frontend.rs:417). Adding two more read-only rows means
+      touching the panel height/layout calculations in those three places, which is
+      why STORY-299 left it out rather than widening its blast radius past the
+      file-disjoint cluster it was drained in.
+
+      Suggested: an `Auto-backup:` row (On/Off, read-only, naming `auto_backup` and
+      `$QUIZDOM_AUTO_BACKUP` the way the dolt_path row names its two levers) and a
+      `Diagnostics:` row showing the resolved log path — which doubles as the answer
+      to "where do I look when something degraded?".
+
+      Raised by the implementer while working STORY-299.
+      Branch: story-299  ·  Commit: c14f75b  (PR link added on merge)
+    req_type: Task
+    status: Draft
+    priority: Medium
+clock: 548
 node_id: ''
