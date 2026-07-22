@@ -80,6 +80,44 @@ Still open:
   nodes joined by `begets` / `contradicts` / `refines` / `agrees` / `disagrees`
   custom edges (`docs/architecture/graph-schema.md`).
 
+## Settings, and how a relative path resolves
+
+<!-- trace:STORY-290 | ai:claude -->
+
+Runtime preferences live in `~/.config/quizdom/settings.toml` (or
+`$XDG_CONFIG_HOME/quizdom/`) — a small flat `key = value` table quizdom
+hand-parses. Four keys are the `/settings` surface (`editor`, `mouse`, `score`,
+`mode`) and quizdom rewrites those in place; every other line — comments, blanks,
+and foreign keys like `dolt_path` and `dolt_backup_path` — is preserved verbatim
+on save. Unknown keys are ignored on load, so an older quizdom never chokes on a
+newer file. `/settings` also *shows* the resolved `dolt_path` as a read-only row,
+since that one value decides which graph the session reads.
+
+Values parse the way TOML would: double **and** single quotes come off, and an
+inline `# comment` ends the value. `dolt_path = "/mnt/data/dolt"  # the big disk`
+means `/mnt/data/dolt`.
+
+**The anchoring rule: a relative path in `settings.toml` resolves against the
+directory `settings.toml` lives in** — not against the process's current
+directory. `dolt_path = "graphs/main"` is
+`~/.config/quizdom/graphs/main` from every shell and every checkout.
+
+That asymmetry is deliberate. The settings file is *per-user and global*: one
+file shared by every worktree. Resolving its relative paths against the cwd
+meant one config line selected a different domain graph from each sibling
+checkout, silently. Anchoring to "the project root" would have reproduced the
+bug, because each worktree has its own. The settings file's own directory is the
+only base as global as the file.
+
+The other two tiers stay cwd-relative on purpose, because both are named
+per-invocation by someone who can see their own cwd:
+
+| Tier | Example | Relative to |
+|------|---------|-------------|
+| CLI flag / env var | `--path`, `$QUIZDOM_DOLT_PATH`, `$QUIZDOM_DOLT_BACKUP_PATH` | the process cwd |
+| `settings.toml` key | `dolt_path`, `dolt_backup_path` | the settings file's directory |
+| Compiled default | `data/dolt` | the process cwd (deliberately per-checkout — it is the gitignored local graph each worktree gets for free) |
+
 ## Durability and recovery
 
 <!-- trace:STORY-261 | ai:claude -->

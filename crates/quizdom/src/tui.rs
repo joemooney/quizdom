@@ -2069,8 +2069,12 @@ impl<R: BufRead, B: Backend> TuiFrontEnd<R, B> {
     fn run_settings_panel(&mut self) -> Result<()> {
         let mut cursor = 0usize;
         let keys = SettingKey::order();
+        // trace:TASK-262 | ai:claude — resolved ONCE for the life of the panel:
+        // it is read-only here, and re-resolving it per draw would re-read the
+        // config file on every keystroke.
+        let dolt_path = crate::settings::resolve_dolt_path();
         loop {
-            self.draw_settings_panel(cursor)?;
+            self.draw_settings_panel(cursor, &dolt_path)?;
             let Event::Key(key) = event::read().map_err(QuizdomError::Io)? else {
                 continue;
             };
@@ -2096,10 +2100,13 @@ impl<R: BufRead, B: Backend> TuiFrontEnd<R, B> {
     // trace:STORY-194 | ai:claude
     /// Draw the `/settings` panel overlay: the three panes behind it plus a
     /// centered box listing each setting's label + current value, the cursor row
-    /// marked, and a footer of the controls.
-    fn draw_settings_panel(&mut self, cursor: usize) -> Result<()> {
+    /// marked, the read-only domain-graph path (TASK-262), and a footer of the
+    /// controls.
+    fn draw_settings_panel(&mut self, cursor: usize, dolt_path: &std::path::Path) -> Result<()> {
         self.draw("", None)?;
         let settings = self.settings;
+        // trace:TASK-262 | ai:claude — same row text as the headless value list.
+        let dolt_row = crate::settings::dolt_path_row(dolt_path);
         self.terminal
             .draw(|frame| {
                 let overlay = palette_rect(frame.area());
@@ -2115,8 +2122,15 @@ impl<R: BufRead, B: Backend> TuiFrontEnd<R, B> {
                     };
                     body.push(Line::styled(row, style));
                 }
+                // trace:TASK-262 | ai:claude — `dolt_path` selects WHICH domain
+                // graph this session reads, so the panel shows it even though it
+                // is not a togglable row (no cursor stop, no cycle).
+                body.push(Line::from(dolt_row.trim_end().to_string()));
                 body.push(Line::from(""));
-                body.push(Line::from("↑/↓ move · Enter/Space toggle · Esc close"));
+                body.push(Line::from(
+                    "↑/↓ move · Enter/Space toggle · Esc close · domain graph is read-only \
+                     (dolt_path in settings.toml)",
+                ));
                 let widget = Paragraph::new(body)
                     .block(
                         Block::default()
@@ -2411,6 +2425,11 @@ impl<R: BufRead, B: Backend> FrontEnd for TuiFrontEnd<R, B> {
                 self.transcript.push_block(&note);
             }
         }
+    }
+
+    // trace:TASK-266 | ai:claude
+    fn persisted_score(&self) -> bool {
+        self.settings.score
     }
 
     // trace:STORY-194 | ai:claude
@@ -3547,9 +3566,19 @@ mod tests {
     fn settings_panel_reflects_and_mutates_each_setting() {
         let mut tui = test_tui(70, 24);
         // Draw the panel overlay and confirm it lists every setting label + value.
-        tui.draw_settings_panel(0).expect("draw panel");
+        // trace:TASK-262 | ai:claude — plus the read-only domain-graph row, so the
+        // value that selects the user's graph is visible where they look for it.
+        tui.draw_settings_panel(0, std::path::Path::new("/tmp/panel-graph"))
+            .expect("draw panel");
         let frame = tui.rendered_text();
-        for label in ["Editor mode", "Mouse", "Score gauge", "Session mode"] {
+        for label in [
+            "Editor mode",
+            "Mouse",
+            "Score gauge",
+            "Session mode",
+            crate::settings::DOLT_PATH_ROW_LABEL,
+            "/tmp/panel-graph",
+        ] {
             assert!(frame.contains(label), "panel missing {label}:\n{frame}");
         }
 

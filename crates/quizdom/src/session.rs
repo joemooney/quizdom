@@ -2688,7 +2688,13 @@ fn run_session_from_current(
     // LLM pass, so it recomputes only at gates, never every turn).
     // `turns_since_score` counts answered turns since the last recompute; at
     // `SCORE_GATE_TURNS` it triggers a fresh recompute at the next frontier.
-    let mut score_gauge_on = false;
+    //
+    // trace:TASK-266 | ai:claude — SEEDED from the front-end's persisted setting,
+    // not hardcoded `false`. The default is still OFF; a user who turned the
+    // gauge on now gets it back next launch instead of watching the engine push
+    // its own default back across the seam (`fe.sync_score`) and SAVE it over
+    // their file the first time they opened `/settings`.
+    let mut score_gauge_on = fe.persisted_score();
     let mut last_gauge: Option<ScoreGauge> = None;
     let mut turns_since_score: u64 = 0;
     // trace:STORY-175 | ai:claude

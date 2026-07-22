@@ -48,12 +48,29 @@
 //!   store and the `db-init` / `db-migrate` subcommands all call (TASK-228),
 //!   with [`resolve_dolt_backup_path`] the same shape for `db-backup` /
 //!   `db-restore`.
+//!
+//! ## The file is `.toml`, so values parse like TOML (STORY-290)
+//!
+//! Three correctness rules the hand-rolled parser now honours, because the file
+//! is one a human hand-edits:
+//!
+//! * **Values are TOML-legal.** [`parse_value`] unwraps DOUBLE *and* SINGLE
+//!   quotes and ends an unquoted value at an inline `# comment` (TASK-265).
+//!   Before that, `dolt_path = "/mnt/data"  # the big disk` resolved to the
+//!   literal string *including* the comment — and `db-init` would cheerfully
+//!   CREATE a repo at that garbage path.
+//! * **Relative paths are ANCHORED to this file's directory** (TASK-263), not
+//!   to the process cwd — see [`anchor_to_config_dir`] for the rule and why.
+//! * **A save never silently loses keys.** [`merged_body`] refuses to write when
+//!   the existing file is present-but-unreadable, rather than degrading to a
+//!   fresh write that would drop exactly the foreign keys TASK-218 taught the
+//!   merge to preserve (TASK-268).
 
 use crate::db_init::DEFAULT_DOLT_DB_PATH;
 use crate::editor::{editor_model_from_editor, EditorModel};
 use crate::strategy::SessionMode;
 use std::env;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 /// Which free-text editor model the user has CHOSEN at runtime. Distinct from
 /// [`EditorModel`] (the RESOLVED Emacs/Vim layer the editor runs) because the
@@ -164,6 +181,19 @@ const MODELLED_KEYS: [&str; 4] = ["editor", "mouse", "score", "mode"];
 const CONFIG_HEADER: &str =
     "# quizdom settings (STORY-194) — edited live by /settings; other keys are preserved\n";
 
+// trace:TASK-262 | ai:claude
+/// The label of the read-only `dolt_path` row `/settings` shows below the four
+/// toggles. `dolt_path` selects WHICH domain graph the session reads, so leaving
+/// it invisible after STORY-258 took the preserve-foreign-lines option meant the
+/// single most consequential value in the file had no surface at all.
+pub(crate) const DOLT_PATH_ROW_LABEL: &str = "Domain graph:";
+
+/// The `/settings` row for the resolved domain-graph path, shared by the
+/// headless value list and the TUI panel so the two cannot drift.
+pub(crate) fn dolt_path_row(dolt_path: &Path) -> String {
+    format!("  {DOLT_PATH_ROW_LABEL:<14}{}\n", dolt_path.display())
+}
+
 /// The four settings the `/settings` panel rows toggle/cycle in place.
 #[derive(Debug, Clone, Copy, Eq, PartialEq)]
 pub(crate) enum SettingKey {
@@ -271,8 +301,17 @@ impl Settings {
     }
 
     /// Render the panel as a printed list of `label: value` rows (the HEADLESS
-    /// degradation of the TUI panel, and the body of the `/settings` line echo).
+    /// degradation of the TUI panel, and the body of the `/settings` line echo),
+    /// followed by the read-only [`DOLT_PATH_ROW_LABEL`] row (TASK-262).
     pub(crate) fn render_list(&self) -> String {
+        self.render_list_showing(&resolve_dolt_path())
+    }
+
+    // trace:TASK-262 | ai:claude
+    /// [`Settings::render_list`] with the domain-graph path passed IN, so the
+    /// rendering stays pure and testable while the public entry point resolves
+    /// the live one.
+    fn render_list_showing(&self, dolt_path: &Path) -> String {
         let mut out = String::from("Settings\n");
         for key in SettingKey::order() {
             out.push_str(&format!(
@@ -281,8 +320,11 @@ impl Settings {
                 self.value_label(key)
             ));
         }
+        out.push_str(&dolt_path_row(dolt_path));
         out.push_str(
-            "  (toggle with /editor, /mouse, /score, /mode — or /settings set <key> <value>)\n",
+            "  (toggle with /editor, /mouse, /score, /mode — or /settings set <key> <value>;\n   \
+             the domain graph is read-only here — set dolt_path in settings.toml or \
+             $QUIZDOM_DOLT_PATH)\n",
         );
         out
     }
@@ -295,7 +337,7 @@ impl Settings {
     pub(crate) fn to_toml(self) -> String {
         let mut out = String::from(CONFIG_HEADER);
         for key in MODELLED_KEYS {
-            out.push_str(&self.rendered_line(key));
+            out.push_str(&self.modelled_line(key));
         }
         out
     }
@@ -326,7 +368,7 @@ impl Settings {
                 // duplicate behind would resurrect it on the next load.
                 Some(key) => {
                     if !rewritten.contains(&key) {
-                        out.push_str(&self.rendered_line(&key));
+                        out.push_str(&self.modelled_line(&key));
                         rewritten.push(key);
                     }
                 }
@@ -338,7 +380,7 @@ impl Settings {
         }
         for key in MODELLED_KEYS {
             if !rewritten.iter().any(|written| written == key) {
-                out.push_str(&self.rendered_line(key));
+                out.push_str(&self.modelled_line(key));
             }
         }
         out
@@ -347,14 +389,42 @@ impl Settings {
     /// The `key = value` line for one modelled key — the single renderer behind
     /// both [`Settings::to_toml`] and [`Settings::to_toml_merged`], so a fresh
     /// write and an in-place rewrite can never format a value differently.
-    fn rendered_line(self, key: &str) -> String {
+    ///
+    /// `None` for a key this function does not know how to render. Every entry
+    /// in [`MODELLED_KEYS`] must yield `Some`; see [`Settings::modelled_line`].
+    fn rendered_line(self, key: &str) -> Option<String> {
         match key {
-            "editor" => format!("editor = \"{}\"\n", self.editor.as_str()),
-            "mouse" => format!("mouse = {}\n", self.mouse),
-            "score" => format!("score = {}\n", self.score),
-            "mode" => format!("mode = \"{}\"\n", self.mode.as_str()),
-            // Unreachable for MODELLED_KEYS; a nothing-line is the safe degrade.
-            _ => String::new(),
+            "editor" => Some(format!("editor = \"{}\"\n", self.editor.as_str())),
+            "mouse" => Some(format!("mouse = {}\n", self.mouse)),
+            "score" => Some(format!("score = {}\n", self.score)),
+            "mode" => Some(format!("mode = \"{}\"\n", self.mode.as_str())),
+            _ => None,
+        }
+    }
+
+    // trace:TASK-267 | ai:claude
+    /// [`Settings::rendered_line`] for a key that is KNOWN to be modelled — the
+    /// form both serializers call.
+    ///
+    /// The `None` arm is the maintenance trap TASK-267 was filed against: before
+    /// this split, `rendered_line`'s catch-all returned an empty string, so
+    /// adding a fifth entry to [`MODELLED_KEYS`] and forgetting the matching arm
+    /// would DROP that key from every file quizdom ever wrote — no compile
+    /// error, no panic, no log line. Now it trips a debug assertion here and
+    /// fails `every_modelled_key_renders_a_line` in release too, which is the
+    /// acceptance STORY-290 asked for: the omission fails a test rather than
+    /// losing data.
+    fn modelled_line(self, key: &str) -> String {
+        match self.rendered_line(key) {
+            Some(line) => line,
+            None => {
+                debug_assert!(
+                    false,
+                    "MODELLED_KEYS entry `{key}` has no `rendered_line` arm — it would be \
+                     silently dropped from every saved settings file"
+                );
+                String::new()
+            }
         }
     }
 
@@ -399,8 +469,9 @@ impl Settings {
 
 // trace:TASK-222 | ai:claude
 /// Parse ONE line of the flat config schema into a normalised
-/// `(key, value)` — key lowercased, value unquoted. Comments, blank lines and
-/// lines without an `=` yield `None`.
+/// `(key, value)` — key lowercased, value read through [`parse_value`] (quotes
+/// off, inline comment off). Comments, blank lines and lines without an `=`
+/// yield `None`.
 ///
 /// The single line-parser for this file: both [`Settings::from_toml`] and
 /// [`config_value`] go through it, so `Store = "dolt"` and `store = dolt`
@@ -414,10 +485,7 @@ fn config_entry(line: &str) -> Option<(String, String)> {
         return None;
     }
     let (raw_key, raw_value) = line.split_once('=')?;
-    Some((
-        raw_key.trim().to_ascii_lowercase(),
-        unquote(raw_value.trim()),
-    ))
+    Some((raw_key.trim().to_ascii_lowercase(), parse_value(raw_value)))
 }
 
 // trace:TASK-222 | ai:claude
@@ -449,16 +517,18 @@ pub(crate) fn resolve_dolt_path() -> PathBuf {
     dolt_path_from(
         env::var("QUIZDOM_DOLT_PATH").ok().as_deref(),
         &config_text(),
+        config_dir().as_deref(),
     )
 }
 
 /// The pure tier-selection behind [`resolve_dolt_path`], split from the env and
 /// file reads so it is testable without touching the process environment (the
 /// same pattern as [`EditorChoice::resolve`]).
-fn dolt_path_from(env_path: Option<&str>, config: &str) -> PathBuf {
+fn dolt_path_from(env_path: Option<&str>, config: &str, config_dir: Option<&Path>) -> PathBuf {
     tiered_path(
         env_path,
         config,
+        config_dir,
         "dolt_path",
         PathBuf::from(DEFAULT_DOLT_DB_PATH),
     )
@@ -474,6 +544,7 @@ pub(crate) fn resolve_dolt_backup_path() -> PathBuf {
     tiered_path(
         env::var("QUIZDOM_DOLT_BACKUP_PATH").ok().as_deref(),
         &config_text(),
+        config_dir().as_deref(),
         "dolt_backup_path",
         default_dolt_backup_path(),
     )
@@ -498,16 +569,54 @@ fn default_dolt_backup_path() -> PathBuf {
 
 /// The shared env > settings > default selection both Dolt paths use. Blank
 /// values fall through to the next tier so an exported-but-empty variable
-/// cannot silently repoint the app at `""`.
-fn tiered_path(env_path: Option<&str>, config: &str, key: &str, default: PathBuf) -> PathBuf {
+/// cannot silently repoint the app at `""`. Only the SETTINGS tier is anchored
+/// ([`anchor_to_config_dir`]) — the env tier and the compiled default are
+/// per-invocation / per-checkout and stay cwd-relative.
+fn tiered_path(
+    env_path: Option<&str>,
+    config: &str,
+    config_dir: Option<&Path>,
+    key: &str,
+    default: PathBuf,
+) -> PathBuf {
     fn non_blank(value: &str) -> Option<PathBuf> {
         let trimmed = value.trim();
         (!trimmed.is_empty()).then(|| PathBuf::from(trimmed))
     }
-    env_path
-        .and_then(non_blank)
-        .or_else(|| config_value(config, key).as_deref().and_then(non_blank))
-        .unwrap_or(default)
+    if let Some(from_env) = env_path.and_then(non_blank) {
+        return from_env;
+    }
+    match config_value(config, key).as_deref().and_then(non_blank) {
+        Some(from_config) => anchor_to_config_dir(from_config, config_dir),
+        None => default,
+    }
+}
+
+// trace:TASK-263 | ai:claude
+/// ANCHOR a relative path read out of `settings.toml` to the directory that file
+/// lives in (`~/.config/quizdom/`), leaving absolute paths alone.
+///
+/// **The rule and why it is this one.** `settings.toml` is per-USER and GLOBAL —
+/// one file shared by every checkout, every sibling worktree, and every shell.
+/// Before TASK-263 a relative `dolt_path` came back unanchored and the callers
+/// handed it straight to `Command::current_dir` / `Path::join`, so it resolved
+/// against the PROCESS cwd: one config line selected a DIFFERENT domain graph
+/// from each worktree, silently. Anchoring to the settings file's own directory
+/// is the only base that is as global as the file itself; anchoring to "the
+/// project root" would have reproduced the bug, since each worktree has its own.
+///
+/// The other two tiers deliberately stay cwd-relative, because both are named
+/// per-invocation by someone who can see their own cwd:
+///
+/// * `$QUIZDOM_DOLT_PATH` / `$QUIZDOM_DOLT_BACKUP_PATH` (and the `--path` /
+///   `--to` / `--from` flags that sit above them) — a shell-local choice.
+/// * the compiled default `data/dolt` — deliberately per-checkout: it is the
+///   gitignored local graph each worktree gets for free.
+fn anchor_to_config_dir(path: PathBuf, config_dir: Option<&Path>) -> PathBuf {
+    match config_dir {
+        Some(dir) if path.is_relative() => dir.join(path),
+        _ => path,
+    }
 }
 
 /// The settings file's text, or empty when it is absent / unreadable — the
@@ -531,6 +640,14 @@ pub(crate) fn config_path() -> Option<PathBuf> {
     Some(base.join("quizdom").join("settings.toml"))
 }
 
+// trace:TASK-263 | ai:claude
+/// The DIRECTORY holding the settings file — the anchor base a relative
+/// `dolt_path` / `dolt_backup_path` resolves against (see
+/// [`anchor_to_config_dir`]).
+fn config_dir() -> Option<PathBuf> {
+    config_path().and_then(|path| path.parent().map(PathBuf::from))
+}
+
 /// LOAD the persisted settings, or SEED a first run from `$EDITOR`/`$VISUAL`.
 ///
 /// * If the config file EXISTS, parse it (saved value wins, unknown keys ignored).
@@ -540,7 +657,19 @@ pub(crate) fn config_path() -> Option<PathBuf> {
 ///   the old STORY-180 startup inference. Thereafter the saved value wins.
 ///
 /// Never fails: an unreadable / missing path degrades to a seeded default.
+///
+/// **Under `cfg(test)` this returns [`Settings::default`] without touching the
+/// disk** (TASK-266). Every front-end loads through here at construction, so
+/// once a persisted `score = true` began SEEDING the engine's gauge, the
+/// developer's own `~/.config/quizdom/settings.toml` would have leaked into the
+/// ~617 in-crate tests and changed their output on one machine but not another.
+/// The persistence logic itself stays fully covered — the tests below drive
+/// [`Settings::from_toml`], [`Settings::to_toml_merged`] and [`merged_body`]
+/// directly, which is where the behaviour actually lives.
 pub(crate) fn load_or_seed() -> Settings {
+    if cfg!(test) {
+        return Settings::default();
+    }
     match config_path().filter(|p| p.exists()) {
         Some(path) => match std::fs::read_to_string(&path) {
             Ok(text) => Settings::from_toml(&text),
@@ -561,15 +690,48 @@ pub(crate) fn load_or_seed() -> Settings {
 /// the four modelled keys — otherwise the first `/settings` toggle of a session
 /// would silently delete a hand-added `dolt_path` line and repoint the app at
 /// `data/dolt`.
+///
+/// **Under `cfg(test)` this is a no-op** — the mirror of [`load_or_seed`]'s
+/// guard. A test that exercised `/settings set …` through the line front-end
+/// would otherwise rewrite the DEVELOPER's real config file.
 pub(crate) fn save(settings: &Settings) -> std::io::Result<()> {
+    if cfg!(test) {
+        return Ok(());
+    }
     let Some(path) = config_path() else {
         return Ok(());
     };
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent)?;
     }
-    let existing = std::fs::read_to_string(&path).unwrap_or_default();
-    std::fs::write(path, settings.to_toml_merged(&existing))
+    let body = merged_body(settings, std::fs::read_to_string(&path))?;
+    std::fs::write(path, body)
+}
+
+// trace:TASK-268 | ai:claude
+/// Decide WHAT [`save`] writes, given the result of reading the existing file.
+/// Split out from the IO so the refuse-vs-preserve decision is testable without
+/// having to manufacture an unreadable file (which is not portable, and is not
+/// even possible when the suite runs as root).
+///
+/// Three cases, and the middle one is the bug fix:
+///
+/// * **Read OK** → merge over it, preserving every foreign line (TASK-218).
+/// * **Not found** → no file yet, so a fresh write loses nothing.
+/// * **Any other error** (permissions, a directory in the way, an IO fault) →
+///   the file EXISTS but we cannot see inside it. Before TASK-268 this fell
+///   through `unwrap_or_default()` to an empty string, which
+///   [`Settings::to_toml_merged`] treats as "no file" — so the very next
+///   `/settings` toggle would OVERWRITE the unreadable file with the four
+///   modelled keys and drop exactly the `dolt_path` line TASK-218 was fixed to
+///   preserve. REFUSE instead: the caller treats persistence as best-effort, so
+///   the setting still applies for the session; it just does not eat the file.
+fn merged_body(settings: &Settings, existing: std::io::Result<String>) -> std::io::Result<String> {
+    match existing {
+        Ok(text) => Ok(settings.to_toml_merged(&text)),
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => Ok(settings.to_toml()),
+        Err(err) => Err(err),
+    }
 }
 
 /// First-run seed: editor choice inferred from `$VISUAL`/`$EDITOR`, everything
@@ -616,10 +778,56 @@ pub(crate) fn parse_on_off(value: &str) -> Option<bool> {
     }
 }
 
-/// Strip surrounding double-quotes from a config value (the string settings are
-/// quoted; the booleans are not). Tolerant — an unquoted value passes through.
-fn unquote(value: &str) -> String {
+// trace:TASK-265 | ai:claude
+/// Parse ONE config value the way TOML would read it:
+///
+/// * a **quoted** string — DOUBLE or SINGLE quotes — yields its bare contents,
+///   and anything after the closing quote must be blank or a `# comment`;
+/// * an **unquoted** value ends at the first `#` (an inline comment);
+/// * surrounding whitespace is trimmed either way.
+///
+/// The file is `settings.toml` and humans hand-edit it, so
+/// `dolt_path = "/mnt/data/dolt"  # the big disk` has to resolve to
+/// `/mnt/data/dolt`. Before TASK-265 the matched-pair strip never fired on that
+/// line (it does not END in a quote), so the value kept the trailing comment —
+/// and since TASK-228 routed `db-init` through this same chain, the blast radius
+/// was a Dolt repo CREATED at a path with a comment in its name. Single quotes
+/// had the mirror problem: they simply survived into the value.
+///
+/// MALFORMED input stays TOLERANT rather than fatal — the schema's whole promise
+/// is that a file it cannot understand still loads. An unterminated or doubled
+/// quote falls back to the pre-TASK-265 matched-pair strip, so `""/tmp/x""`
+/// still yields `"/tmp/x"` and `"vim` still yields `"vim` (which then fails
+/// [`EditorChoice::parse`] and leaves the setting at its default).
+fn parse_value(value: &str) -> String {
     let trimmed = value.trim();
+    match trimmed.chars().next() {
+        Some(quote @ ('"' | '\'')) => {
+            // The closing quote is the next one of the SAME kind; the remainder
+            // has to be blank or a comment for this to be a legal TOML value.
+            if let Some(offset) = trimmed[quote.len_utf8()..].find(quote) {
+                let close = quote.len_utf8() + offset;
+                let rest = trimmed[close + quote.len_utf8()..].trim();
+                if rest.is_empty() || rest.starts_with('#') {
+                    return trimmed[quote.len_utf8()..close].to_string();
+                }
+            }
+            strip_matched_double_quotes(trimmed)
+        }
+        // A bare value: an inline comment ends it. (A `#` that is part of the
+        // value has to be quoted — that is TOML's rule, not ours.)
+        _ => trimmed
+            .split_once('#')
+            .map_or(trimmed, |(before, _)| before)
+            .trim()
+            .to_string(),
+    }
+}
+
+/// The pre-TASK-265 tolerant strip, kept as the degrade path for values that are
+/// not TOML-legal: only a MATCHED pair of surrounding double-quotes comes off, so
+/// unmatched and doubled quotes survive intact instead of being half-eaten.
+fn strip_matched_double_quotes(trimmed: &str) -> String {
     trimmed
         .strip_prefix('"')
         .and_then(|v| v.strip_suffix('"'))
@@ -753,7 +961,7 @@ mod tests {
         );
         // ...and the resolver still reads the same path back out of the file.
         assert_eq!(
-            dolt_path_from(None, &saved),
+            dolt_path_from(None, &saved, None),
             PathBuf::from("/mnt/data/dolt")
         );
         // The modelled keys were rewritten, not appended alongside the old ones.
@@ -826,26 +1034,29 @@ mod tests {
     fn dolt_path_chain_is_env_then_settings_then_default() {
         let config = "editor = \"vim\"\ndolt_path = \"/tmp/graph\"\n";
         assert_eq!(
-            dolt_path_from(None, ""),
+            dolt_path_from(None, "", None),
             PathBuf::from(DEFAULT_DOLT_DB_PATH)
         );
-        assert_eq!(dolt_path_from(None, config), PathBuf::from("/tmp/graph"));
         assert_eq!(
-            dolt_path_from(Some("/env/path"), config),
+            dolt_path_from(None, config, None),
+            PathBuf::from("/tmp/graph")
+        );
+        assert_eq!(
+            dolt_path_from(Some("/env/path"), config, None),
             PathBuf::from("/env/path")
         );
         // Surrounding whitespace is trimmed off the env value.
         assert_eq!(
-            dolt_path_from(Some("  /env/path  "), config),
+            dolt_path_from(Some("  /env/path  "), config, None),
             PathBuf::from("/env/path")
         );
         // A blank tier is not a selection — fall through to the next one.
         assert_eq!(
-            dolt_path_from(Some("   "), config),
+            dolt_path_from(Some("   "), config, None),
             PathBuf::from("/tmp/graph")
         );
         assert_eq!(
-            dolt_path_from(Some(""), "dolt_path = \"\"\n"),
+            dolt_path_from(Some(""), "dolt_path = \"\"\n", None),
             PathBuf::from(DEFAULT_DOLT_DB_PATH)
         );
     }
@@ -858,30 +1069,38 @@ mod tests {
         let default = PathBuf::from("/home/someone/.local/share/quizdom/dolt-backup");
         let config = "editor = \"vim\"\ndolt_backup_path = \"/mnt/usb/quizdom\"\n";
         assert_eq!(
-            tiered_path(None, "", "dolt_backup_path", default.clone()),
+            tiered_path(None, "", None, "dolt_backup_path", default.clone()),
             default
         );
         assert_eq!(
-            tiered_path(None, config, "dolt_backup_path", default.clone()),
+            tiered_path(None, config, None, "dolt_backup_path", default.clone()),
             PathBuf::from("/mnt/usb/quizdom")
         );
         assert_eq!(
             tiered_path(
                 Some(" /env/backup "),
                 config,
+                None,
                 "dolt_backup_path",
                 default.clone()
             ),
             PathBuf::from("/env/backup")
         );
         assert_eq!(
-            tiered_path(Some("  "), config, "dolt_backup_path", default.clone()),
+            tiered_path(
+                Some("  "),
+                config,
+                None,
+                "dolt_backup_path",
+                default.clone()
+            ),
             PathBuf::from("/mnt/usb/quizdom")
         );
         assert_eq!(
             tiered_path(
                 Some(""),
                 "dolt_backup_path = \"\"\n",
+                None,
                 "dolt_backup_path",
                 default.clone()
             ),
@@ -889,6 +1108,237 @@ mod tests {
         );
         // The backup default must not sit inside the repo it protects.
         assert!(!default_dolt_backup_path().starts_with(DEFAULT_DOLT_DB_PATH));
+    }
+
+    // trace:TASK-265 | ai:claude — the file is `.toml`, so TOML-LEGAL values parse
+    // to the bare value: double-quoted, single-quoted, and either of those (or a
+    // bare value) followed by an inline `# comment`. The comment case is the one
+    // with teeth: before TASK-265 `dolt_path = "/mnt/data/dolt" # big disk` kept
+    // the comment in the value, and TASK-228 had just wired that string into
+    // `db-init`, which would CREATE a repo at that path.
+    #[test]
+    fn toml_legal_values_parse_to_the_bare_value() {
+        for (line, expected) in [
+            ("dolt_path = \"/mnt/data/dolt\"", "/mnt/data/dolt"),
+            ("dolt_path = '/mnt/data/dolt'", "/mnt/data/dolt"),
+            (
+                "dolt_path = \"/mnt/data/dolt\"  # the big disk",
+                "/mnt/data/dolt",
+            ),
+            (
+                "dolt_path = '/mnt/data/dolt'  # the big disk",
+                "/mnt/data/dolt",
+            ),
+            (
+                "dolt_path = /mnt/data/dolt # the big disk",
+                "/mnt/data/dolt",
+            ),
+            ("dolt_path = /mnt/data/dolt", "/mnt/data/dolt"),
+            // A `#` INSIDE quotes is part of the value, not a comment.
+            ("dolt_path = \"/mnt/data/dolt#2\"", "/mnt/data/dolt#2"),
+            // An empty quoted string stays empty (and so falls through the chain).
+            ("dolt_path = \"\"", ""),
+        ] {
+            assert_eq!(
+                config_value(line, "dolt_path").as_deref(),
+                Some(expected),
+                "{line}"
+            );
+        }
+
+        // The same rules in the settings loader, not just `config_value`.
+        assert_eq!(
+            Settings::from_toml("editor = 'vim'  # single-quoted\nmouse = off # inline\n"),
+            Settings {
+                editor: EditorChoice::Vim,
+                mouse: false,
+                ..Settings::default()
+            }
+        );
+
+        // ...and the whole resolution chain, since that is what `db-init` uses.
+        assert_eq!(
+            dolt_path_from(
+                None,
+                "dolt_path = \"/mnt/data/dolt\"  # the big disk\n",
+                None
+            ),
+            PathBuf::from("/mnt/data/dolt")
+        );
+    }
+
+    // trace:TASK-263 | ai:claude — `settings.toml` is per-USER and GLOBAL, so a
+    // RELATIVE `dolt_path` in it must name the SAME repo from every worktree.
+    // Before TASK-263 it resolved against the process cwd, so one config line
+    // selected a different graph from each sibling checkout — silently.
+    #[test]
+    fn a_relative_settings_path_is_anchored_to_the_settings_dir() {
+        let config = "dolt_path = \"graphs/main\"\n";
+        let config_dir = PathBuf::from("/home/someone/.config/quizdom");
+
+        // The same config, resolved from two different worktrees, is ONE repo:
+        // the anchor is the settings file's own directory, not the cwd.
+        let anchored = dolt_path_from(None, config, Some(&config_dir));
+        assert_eq!(
+            anchored,
+            PathBuf::from("/home/someone/.config/quizdom/graphs/main")
+        );
+        assert!(anchored.is_absolute());
+
+        // An ABSOLUTE settings value is left alone.
+        assert_eq!(
+            dolt_path_from(None, "dolt_path = \"/mnt/data/dolt\"\n", Some(&config_dir)),
+            PathBuf::from("/mnt/data/dolt")
+        );
+
+        // The env tier is NOT anchored — it is named per-invocation by someone
+        // who can see their own cwd (same for the `--path` flag above it).
+        assert_eq!(
+            dolt_path_from(Some("local/graph"), config, Some(&config_dir)),
+            PathBuf::from("local/graph")
+        );
+
+        // Nor is the compiled default: `data/dolt` is deliberately per-checkout.
+        assert_eq!(
+            dolt_path_from(None, "", Some(&config_dir)),
+            PathBuf::from(DEFAULT_DOLT_DB_PATH)
+        );
+
+        // The backup directory rides the identical rule.
+        assert_eq!(
+            tiered_path(
+                None,
+                "dolt_backup_path = \"backups\"\n",
+                Some(&config_dir),
+                "dolt_backup_path",
+                PathBuf::from("/fallback")
+            ),
+            PathBuf::from("/home/someone/.config/quizdom/backups")
+        );
+    }
+
+    // trace:TASK-267 | ai:claude — the maintenance trap made loud: every entry in
+    // MODELLED_KEYS must have a `rendered_line` arm. Add a fifth key without the
+    // matching arm and THIS fails, instead of the key silently vanishing from
+    // every settings file quizdom writes.
+    #[test]
+    fn every_modelled_key_renders_a_line() {
+        let settings = Settings::default();
+        for key in MODELLED_KEYS {
+            let line = settings
+                .rendered_line(key)
+                .unwrap_or_else(|| panic!("MODELLED_KEYS entry `{key}` has no rendered_line arm"));
+            // The rendered line must also parse back as that key, or a save/load
+            // round trip would still lose it.
+            assert_eq!(
+                config_entry(line.trim_end())
+                    .map(|(name, _)| name)
+                    .as_deref(),
+                Some(key),
+                "{line}"
+            );
+        }
+        // A key that is genuinely not modelled is still `None` (the arm exists
+        // so the trap can be detected, not so every string renders).
+        assert_eq!(settings.rendered_line("dolt_path"), None);
+    }
+
+    // trace:TASK-268 | ai:claude — a save over a present-but-UNREADABLE file must
+    // refuse, never degrade to a fresh write. The fresh write would drop exactly
+    // the foreign keys TASK-218 taught the merge to preserve, and the user would
+    // have no idea: the toggle they typed appears to have worked.
+    #[test]
+    fn save_refuses_rather_than_dropping_keys_when_the_file_is_unreadable() {
+        let settings = Settings {
+            editor: EditorChoice::Vim,
+            mouse: false,
+            score: true,
+            mode: SessionMode::Debate,
+        };
+
+        // Readable → merge, foreign keys preserved.
+        let existing = "dolt_path = \"/mnt/data/dolt\"\neditor = \"emacs\"\n";
+        let merged = merged_body(&settings, Ok(existing.to_string())).expect("merge");
+        assert!(
+            merged.contains("dolt_path = \"/mnt/data/dolt\""),
+            "{merged}"
+        );
+        assert!(merged.contains("editor = \"vim\""), "{merged}");
+
+        // Absent → a fresh write loses nothing, so it is allowed.
+        let fresh = merged_body(
+            &settings,
+            Err(std::io::Error::new(std::io::ErrorKind::NotFound, "nope")),
+        )
+        .expect("fresh write on a missing file");
+        assert_eq!(fresh, settings.to_toml());
+
+        // Present but unreadable → REFUSE. The error propagates to the caller,
+        // which treats persistence as best-effort; the file is left intact.
+        for kind in [
+            std::io::ErrorKind::PermissionDenied,
+            std::io::ErrorKind::InvalidData,
+            std::io::ErrorKind::Other,
+        ] {
+            let err = merged_body(&settings, Err(std::io::Error::new(kind, "boom")))
+                .expect_err("an unreadable existing file must not be overwritten");
+            assert_eq!(err.kind(), kind);
+        }
+    }
+
+    // trace:TASK-262 | ai:claude — `dolt_path` selects WHICH domain graph the
+    // session reads, and STORY-258's preserve-foreign-lines option left it with
+    // no surface at all. `/settings` now shows it (read-only — the file and the
+    // env var stay the way to change it).
+    #[test]
+    fn settings_list_shows_the_domain_graph_path() {
+        let list =
+            Settings::default().render_list_showing(Path::new("/home/someone/graphs/quizdom"));
+        assert!(list.contains(DOLT_PATH_ROW_LABEL), "{list}");
+        assert!(list.contains("/home/someone/graphs/quizdom"), "{list}");
+        // Read-only is stated, so nobody hunts for a toggle that is not there.
+        assert!(list.contains("dolt_path"), "{list}");
+        assert!(list.contains("QUIZDOM_DOLT_PATH"), "{list}");
+        // The four toggles are still the rows above it.
+        assert!(list.contains("Editor mode"), "{list}");
+    }
+
+    // trace:TASK-266 | ai:claude — a persisted `score` survives a load/save round
+    // trip. It used to die on the first `/settings`: the engine seeded
+    // `score_gauge_on = false` regardless of the file, then `sync_score(false)`
+    // wrote that default straight back over the saved `true`. The engine now
+    // seeds from `FrontEnd::persisted_score`, so the value that comes back out is
+    // the value that went in.
+    #[test]
+    fn a_persisted_score_survives_a_load_save_round_trip() {
+        let on_disk = "# hand-edited\n\
+                       dolt_path = \"/mnt/data/dolt\"\n\
+                       score = true\n\
+                       mode = \"debate\"\n";
+
+        // LOAD: the persisted score is honoured, not ignored.
+        let loaded = Settings::from_toml(on_disk);
+        assert!(loaded.score, "a persisted `score = true` must load as true");
+
+        // SAVE (with nothing else changed): the value is still true on disk, and
+        // the foreign `dolt_path` line rode through untouched.
+        let saved = loaded.to_toml_merged(on_disk);
+        assert!(saved.contains("score = true"), "{saved}");
+        assert!(saved.contains("dolt_path = \"/mnt/data/dolt\""), "{saved}");
+        assert_eq!(Settings::from_toml(&saved), loaded);
+
+        // The clobber the engine used to perform, spelled out: writing the
+        // ENGINE's hardcoded default over the file is what lost the setting.
+        let clobbered = Settings {
+            score: false,
+            ..loaded
+        }
+        .to_toml_merged(on_disk);
+        assert!(clobbered.contains("score = false"), "{clobbered}");
+        assert!(
+            !Settings::from_toml(&clobbered).score,
+            "sanity: this is the regression the seed prevents"
+        );
     }
 
     // trace:STORY-194 | ai:claude — the printed list (headless panel degrade) shows
