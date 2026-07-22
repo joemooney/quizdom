@@ -23,12 +23,12 @@ description: |-
   - A user's own 'dolt add' is still detected as foreign (test).
   - Per-write spawn count does not regress: assert the spawn count for a session write and for curate (curate must stay at its post-STORY-244 count).
   - cargo test green; real_dolt green; clippy clean.
-status: InProgress
+status: Done
 priority: Medium
 owner: ''
 feature: Uncategorized
 created_at: 2026-07-22T21:24:16.816690558Z
-modified_at: 2026-07-22T21:53:58.802037920Z
+modified_at: 2026-07-22T21:54:03.818541583Z
 req_type: Bug
 relationships:
 - rel_type: Parent
@@ -88,3 +88,7 @@ comments:
   created_at: 2026-07-22T21:53:07.080895943Z
   modified_at: 2026-07-22T21:53:07.080895943Z
   session_id: 019f8bb7-3660-70d0-adff-89cd28fdf628
+implementation_info:
+  implemented: true
+  implemented_at: 2026-07-22T21:54:03.818541583Z
+  implemented_by: joe
