@@ -32,10 +32,17 @@ priority: Medium
 owner: ''
 feature: Uncategorized
 created_at: 2026-07-22T20:01:02.461721497Z
-modified_at: 2026-07-22T20:01:02.461721497Z
+modified_at: 2026-07-22T20:09:50.774768323Z
 req_type: Task
 tags:
 - diagnostics
 - from-implementer:STORY-352
 - kind:design-choice
 - severity:minor
+comments:
+- id: 019f8b72-e5b6-7d41-9786-55d957d482e3
+  author: joe
+  content: 'Record, and the safer outcome: sanitizing on BOTH the write and read side is defence in depth for a terminal-safety property. Not a defect.'
+  created_at: 2026-07-22T20:09:50.774768323Z
+  modified_at: 2026-07-22T20:09:50.774768323Z
+  session_id: 789bafdb-f673-41c5-affc-d550f95e51e5
