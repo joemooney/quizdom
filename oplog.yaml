@@ -5313,5 +5313,31 @@ operations:
     req_type: Task
     status: Draft
     priority: Medium
-clock: 466
+- id: 019f88cd-ed3e-72f2-8dd2-a1098c433823
+  target_id: 019f88cd-e58d-7463-a1ef-ac40cd12f52f
+  author: aida
+  node_id: ''
+  lamport: 467
+  timestamp: 2026-07-22T07:50:24.830550323Z
+  kind: !Create
+    title: 'Review PR-96: BUG-277: a backup directory belongs to exactly one lineage'
+    description: |
+      Auto-filed by `aida pr auto-queue-review` (typically from /aida-pr) (session `019f88c0`) for branch `bug-277`.
+
+      - PR: <https://github.com/joemooney/quizdom/pull/96>
+      - Branch: `bug-277` → `main`
+
+      ## Covers
+
+      - BUG-277
+
+      ## Acceptance
+
+      - Generate a structured review prompt with `aida review prompt --pr 96` and verify each spec's acceptance criteria.
+      - Approve and merge, or request changes by spec id.
+      - Mark this story `completed` once the PR is merged.
+    req_type: Story
+    status: Approved
+    priority: Medium
+clock: 467
 node_id: ''
