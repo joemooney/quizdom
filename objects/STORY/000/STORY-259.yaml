@@ -24,9 +24,16 @@ priority: Medium
 owner: ''
 feature: Uncategorized
 created_at: 2026-07-22T06:19:03.054916312Z
-modified_at: 2026-07-22T06:39:44.868934137Z
+modified_at: 2026-07-22T06:52:28.236991873Z
 req_type: Story
 relationships:
 - rel_type: Child
   target_id: 019f885d-96af-7591-80ec-cb27a5e08351
   created_at: 2026-07-22T06:19:04.614859389Z
+comments:
+- id: 019f8898-e0cd-78e0-8d14-f39b4be7c867
+  author: joe
+  content: 'Implemented on branch story-259, PR #94 (https://github.com/joemooney/quizdom/pull/94). TASK-248: chunk_by_sql_bytes splits batches on accumulated SQL bytes (shared 64 KiB SQL_BATCH_BUDGET, now pub(crate) from db_migrate) as well as MAX_BATCH_IDS; update_weights builds its CASE arms before chunking so the chunker measures real SQL. TASK-221: neighbors ordering documented on the trait and in graph-schema.md (created_at, ties by to_id lexically; 1s TIMESTAMP means a same-second batch is ordered entirely by the tie-break). TASK-223: weight:0/weight:N shape symmetry asserted (the ADR-22 asymmetry is gone with the numeric column; test guards against reintroduction). TASK-224: reachable maps the engine''s CTE-iteration abort to a quizdom error naming cte_max_recursion_depth and the 1000-hop default. 600 workspace tests pass; the 3 ignored real_dolt tests pass locally against dolt 2.2.1; fmt clean and no new clippy lints. Awaiting PR merge to complete.'
+  created_at: 2026-07-22T06:52:28.236991873Z
+  modified_at: 2026-07-22T06:52:28.236991873Z
+  session_id: 019f888d-3cab-7161-9cd7-e656ca977e33
