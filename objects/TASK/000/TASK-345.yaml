@@ -21,7 +21,7 @@ priority: Medium
 owner: ''
 feature: Uncategorized
 created_at: 2026-07-22T18:47:36.836762898Z
-modified_at: 2026-07-22T18:47:36.836762898Z
+modified_at: 2026-07-22T20:09:56.231202879Z
 req_type: Task
 tags:
 - from-implementer:STORY-342
@@ -31,3 +31,10 @@ relationships:
 - rel_type: Child
   target_id: 019f8b17-0950-70d3-85ee-ce323bcf5ece
   created_at: 2026-07-22T18:47:38.177392687Z
+comments:
+- id: 019f8b72-fb07-7e12-94e6-63e70e37a557
+  author: joe
+  content: Enhancement idea (--all to read the rotated generation), not a defect. Park until someone actually wants it.
+  created_at: 2026-07-22T20:09:56.231202879Z
+  modified_at: 2026-07-22T20:09:56.231202879Z
+  session_id: 789bafdb-f673-41c5-affc-d550f95e51e5
