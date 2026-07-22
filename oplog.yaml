@@ -7981,5 +7981,31 @@ operations:
     req_type: Task
     status: Draft
     priority: Medium
-clock: 596
+- id: 019f8b28-e1bc-7f51-866d-9bb433b0b874
+  target_id: 019f8b28-df36-72f0-9bd5-3c89baebcb56
+  author: aida
+  node_id: ''
+  lamport: 597
+  timestamp: 2026-07-22T18:49:00.092095710Z
+  kind: !Create
+    title: 'Review PR-105: STORY-342: close the diagnostics loop — a log reader, safe rotation, the honest reminder'
+    description: |
+      Auto-filed by `aida pr auto-queue-review` (typically from /aida-pr) (session `019f8b17`) for branch `story-342`.
+
+      - PR: <https://github.com/joemooney/quizdom/pull/105>
+      - Branch: `story-342` → `main`
+
+      ## Covers
+
+      - STORY-342
+
+      ## Acceptance
+
+      - Generate a structured review prompt with `aida review prompt --pr 105` and verify each spec's acceptance criteria.
+      - Approve and merge, or request changes by spec id.
+      - Mark this story `completed` once the PR is merged.
+    req_type: Story
+    status: Approved
+    priority: Medium
+clock: 597
 node_id: ''
