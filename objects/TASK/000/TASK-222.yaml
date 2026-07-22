@@ -6,12 +6,12 @@ description: |
   dolt_store.rs:444 config_value compares keys exactly, while settings.rs::from_toml lowercases keys — `Store = dolt` in settings.toml is honored by the settings loader's convention but silently selects the aida backend. Also config_value uses trim_matches('"') (strips unmatched/repeated quotes) where settings.rs unquote requires a matched pair. Two parsers over the same file with different tolerance. Suggest reusing one parse helper.
 
   Raised in review of PR-85: https://github.com/joemooney/quizdom/pull/85#issuecomment-5017187770
-status: Approved
+status: Completed
 priority: Medium
 owner: ''
 feature: Uncategorized
 created_at: 2026-07-19T20:04:04.764483379Z
-modified_at: 2026-07-22T05:48:19.343182898Z
+modified_at: 2026-07-22T06:39:36.142295177Z
 req_type: Task
 tags:
 - from-review:PR-85
