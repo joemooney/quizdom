@@ -8758,5 +8758,41 @@ operations:
     req_type: Task
     status: Draft
     priority: Medium
-clock: 641
+- id: 019f8b6a-d873-79f3-8a6c-95194a0fc1e9
+  target_id: 019f8b6a-d5fd-76c0-8029-f97b8c3abc7b
+  author: aida
+  node_id: ''
+  lamport: 642
+  timestamp: 2026-07-22T20:01:03.091069183Z
+  kind: !Create
+    title: Control-character sanitizing landed on BOTH the write and the read side, not just the write side
+    description: |
+      TASK-349 was explicit that "the fix belongs on the WRITE side (widen
+      `format_entry` to collapse control characters)". I did that — `one_line` in
+      `diagnostics.rs` — and ALSO applied the same helper in `logs.rs` to every entry
+      it prints and to every path it displays.
+
+      Why the second pass is not redundant: STORY-352's acceptance is phrased as a
+      guarantee about the READER ("control characters and ANSI escapes in a recorded
+      entry cannot reach the terminal through quizdom logs"), and the write side alone
+      cannot deliver it. `quizdom logs --path <file>` reads whatever it is pointed at
+      — a rotated generation written by an older quizdom that predates `one_line`, a
+      log copied off another machine, a file that is not a quizdom log at all. The
+      resolved path itself is also attacker-adjacent input ($QUIZDOM_LOG_PATH,
+      settings.toml), so it goes through the same helper before being displayed.
+
+      So: one definition, applied at both ends, with `diagnostics` remaining the owner
+      of the property. The advisor may prefer the narrower reading (write side only,
+      accept that a foreign `--path` is the user's problem) — that would be a
+      one-line revert in `render_logs`.
+
+      crates/quizdom/src/diagnostics.rs (`one_line`, `skip_escape_sequence`);
+      crates/quizdom/src/logs.rs (`printable_path`, the entry loop).
+
+      Raised by the implementer while working STORY-352.
+      Branch: story-352  ·  Commit: f813a01  (PR link added on merge)
+    req_type: Task
+    status: Draft
+    priority: Medium
+clock: 642
 node_id: ''
