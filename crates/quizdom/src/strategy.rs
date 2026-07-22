@@ -389,11 +389,15 @@ where
     }
 }
 
+// trace:STORY-244 | ai:claude — the begets fan-out loads its successors in
+// one batched read instead of one store round trip per edge.
 fn successor_questions(current: &Question, bank: &dyn QuestionBank) -> Result<Vec<Question>> {
-    bank.begets(&current.id)?
+    let ids: Vec<String> = bank
+        .begets(&current.id)?
         .into_iter()
-        .map(|question_ref| bank.load_question(&question_ref.id))
-        .collect()
+        .map(|question_ref| question_ref.id)
+        .collect();
+    bank.load_questions(&ids)
 }
 
 // trace:STORY-53 | ai:codex

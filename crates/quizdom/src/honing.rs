@@ -144,11 +144,14 @@ pub(crate) fn load_probed_terms(
     current: &Question,
 ) -> Vec<TermDefinition> {
     // trace:STORY-41 | ai:codex
-    bank.probes(&current.id)
+    // trace:STORY-244 | ai:claude — one batched read for the probed terms.
+    let ids: Vec<String> = bank
+        .probes(&current.id)
         .unwrap_or_default()
         .into_iter()
-        .filter_map(|term_ref| bank.load_term(&term_ref.id).ok())
-        .collect()
+        .map(|term_ref| term_ref.id)
+        .collect();
+    bank.load_terms(&ids).unwrap_or_default()
 }
 
 pub(crate) fn definitions_for_loaded_terms(

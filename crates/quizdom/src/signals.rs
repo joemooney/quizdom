@@ -209,28 +209,37 @@ pub struct ReweightOutcome {
 /// would be pure churn against AIDA. Returns one [`ReweightOutcome`] per applied
 /// re-weight, in question-id order.
 // trace:STORY-68 | ai:claude
+// trace:STORY-244 | ai:claude — the whole applied set is loaded in one read
+// and persisted in one write; this loop used to be `quizdom curate`'s N+1.
 pub fn apply_log_signals(
     reader: impl Read,
     branch: Option<&str>,
     bank: &dyn QuestionBank,
     reweighter: &dyn QuestionReweighter,
 ) -> Result<Vec<ReweightOutcome>> {
-    let stats = analyze_session_log(reader, branch)?;
-    let mut outcomes = Vec::new();
-    for stat in stats {
-        let signal = stat.signal();
-        if signal == QualitySignal::Neutral {
-            continue;
-        }
-        let question = bank.load_question(&stat.question_ref)?;
-        let question = reweighter.reweight_question(&question, signal)?;
-        outcomes.push(ReweightOutcome {
-            question_ref: stat.question_ref,
+    let applied: Vec<(String, QualitySignal)> = analyze_session_log(reader, branch)?
+        .into_iter()
+        .map(|stat| (stat.question_ref.clone(), stat.signal()))
+        .filter(|(_, signal)| *signal != QualitySignal::Neutral)
+        .collect();
+
+    let ids: Vec<String> = applied.iter().map(|(id, _)| id.clone()).collect();
+    let batch: Vec<(Question, QualitySignal)> = bank
+        .load_questions(&ids)?
+        .into_iter()
+        .zip(applied.iter().map(|(_, signal)| *signal))
+        .collect();
+
+    Ok(reweighter
+        .reweight_questions(&batch)?
+        .into_iter()
+        .zip(applied)
+        .map(|(question, (question_ref, signal))| ReweightOutcome {
+            question_ref,
             signal,
             question,
-        });
-    }
-    Ok(outcomes)
+        })
+        .collect())
 }
 
 // --- `quizdom curate` command wiring (STORY-72) -----------------------------
@@ -594,6 +603,53 @@ mod tests {
         assert_eq!(q2.signal, QualitySignal::Insightful);
         assert_eq!(q2.question.weight, 62); // 50 + 12
         assert!(q2.question.tags.contains(&"quality:insightful".to_string()));
+    }
+
+    // trace:STORY-244 | ai:claude
+    /// The acceptance measurement in miniature: curation over the real Dolt
+    /// backend costs a fixed handful of `dolt` spawns, not the four per
+    /// re-weighted question that made `quizdom curate` a 264-spawn, 2m09s run.
+    #[test]
+    fn curation_over_the_dolt_backend_spawns_a_fixed_handful() {
+        use crate::bank::AidaCliQuestionBank;
+        use crate::dolt_store::{DoltDomainStore, ScriptedDoltRunner};
+        use crate::persist::AidaCliQuestionReweighter;
+
+        // Cloning the runner shares one call log and one response queue, so
+        // the bank's read and the reweighter's write are counted together.
+        let runner = ScriptedDoltRunner::new(vec![
+            (
+                0,
+                r#"{"rows":[
+                    {"id":"Q-1","title":"one","body":"","tags":"answer:yes-no","weight":50},
+                    {"id":"Q-2","title":"two","body":"","tags":"answer:yes-no","weight":50}]}"#,
+                "",
+            ),
+            (0, "", ""), // the one batched UPDATE
+            (0, "", ""), // dolt add -A
+            (0, "", ""), // dolt commit
+        ]);
+        let calls = runner.calls.clone();
+        let bank = AidaCliQuestionBank::with_store(DoltDomainStore::with_runner(
+            "/tmp/quizdom-dolt",
+            runner.clone(),
+        ));
+        let reweighter = AidaCliQuestionReweighter::with_store(DoltDomainStore::with_runner(
+            "/tmp/quizdom-dolt",
+            runner,
+        ));
+
+        let outcomes = apply_log_signals(SAMPLE_LOG.as_bytes(), Some("main"), &bank, &reweighter)
+            .expect("curation should succeed");
+
+        assert_eq!(outcomes.len(), 2, "Q-1 unhelpful, Q-2 insightful");
+        assert_eq!(outcomes[0].question.weight, 38);
+        assert_eq!(outcomes[1].question.weight, 62);
+        assert_eq!(
+            calls.borrow().len(),
+            4,
+            "one read + one write + add + commit, whatever the question count"
+        );
     }
 
     #[test]

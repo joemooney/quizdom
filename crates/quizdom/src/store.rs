@@ -16,6 +16,7 @@
 
 use crate::aida_cmd::aida_command;
 use crate::error::{QuizdomError, Result};
+use std::collections::BTreeMap;
 use std::process::Output;
 
 /// Runs an external command and captures its output. Abstracted so backends
@@ -139,6 +140,56 @@ pub trait DomainStore {
     /// The Dolt backend runs this as a single recursive CTE (STORY-208
     /// deleted the ADR-31 per-hop default that walked [`Self::neighbors`]).
     fn reachable(&self, root: &str, edge: EdgeKind) -> Result<Vec<String>>;
+
+    // trace:STORY-244 | ai:claude
+    /// Fetch many nodes at once.
+    ///
+    /// Contract parity with looping [`Self::fetch_node`]: one record per
+    /// requested id, in `ids` order, repeated ids repeated in the output, and
+    /// an id with no row is an error. An empty `ids` does no work at all.
+    ///
+    /// The default loops the per-item read; a backend overrides it with a
+    /// set-based query so the loop costs one round trip rather than `n`.
+    fn fetch_nodes(&self, ids: &[String]) -> Result<Vec<NodeRecord>> {
+        ids.iter().map(|id| self.fetch_node(id)).collect()
+    }
+
+    // trace:STORY-244 | ai:claude
+    /// Every node of `kind`, id-ordered — the set-based form of
+    /// [`Self::list_node_ids`] followed by a fetch per id, which is what the
+    /// default does.
+    fn list_nodes(&self, kind: NodeKind) -> Result<Vec<NodeRecord>> {
+        let ids = self.list_node_ids(kind)?;
+        self.fetch_nodes(&ids)
+    }
+
+    // trace:STORY-244 | ai:claude
+    /// The one-hop `edge` targets of many sources at once.
+    ///
+    /// The map is total over `ids` — a source with no such edges maps to an
+    /// empty vec — and each vec carries the ordering [`Self::neighbors`]
+    /// guarantees (TASK-221: `created_at`, ties broken by `to_id`).
+    fn neighbors_many(
+        &self,
+        ids: &[String],
+        edge: EdgeKind,
+    ) -> Result<BTreeMap<String, Vec<String>>> {
+        ids.iter()
+            .map(|id| Ok((id.clone(), self.neighbors(id, edge)?)))
+            .collect()
+    }
+
+    // trace:STORY-244 | ai:claude
+    /// Apply many `(id, weight, tags)` re-weights as one write.
+    ///
+    /// A repeated id takes its last entry, matching the last-write-wins of
+    /// looping [`Self::update_weight_and_tags`] — which is the default.
+    fn update_weights(&self, updates: &[(String, u32, Vec<String>)]) -> Result<()> {
+        for (id, weight, tags) in updates {
+            self.update_weight_and_tags(id, *weight, tags)?;
+        }
+        Ok(())
+    }
 }
 
 // trace:STORY-208 | ai:claude

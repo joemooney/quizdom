@@ -104,6 +104,17 @@ fn unordered_pair(left: String, right: String) -> (String, String) {
 /// can be unit-tested without shelling out to `aida`.
 pub trait ContradictsEdges {
     fn contradicts(&self, belief_id: &str) -> Result<Vec<String>>;
+
+    // trace:STORY-244 | ai:claude
+    /// The `contradicts` neighbours of many beliefs at once — the batched form
+    /// of the per-belief read detection used to do. Total over `belief_ids`,
+    /// with the same per-belief ordering [`Self::contradicts`] gives.
+    fn contradicts_many(&self, belief_ids: &[String]) -> Result<BTreeMap<String, Vec<String>>> {
+        belief_ids
+            .iter()
+            .map(|id| Ok((id.clone(), self.contradicts(id)?)))
+            .collect()
+    }
 }
 
 /// Resolves `contradicts` edges through the domain store — a one-hop read
@@ -127,6 +138,11 @@ where
     fn contradicts(&self, belief_id: &str) -> Result<Vec<String>> {
         self.store.neighbors(belief_id, EdgeKind::Contradicts)
     }
+
+    // trace:STORY-244 | ai:claude
+    fn contradicts_many(&self, belief_ids: &[String]) -> Result<BTreeMap<String, Vec<String>>> {
+        self.store.neighbors_many(belief_ids, EdgeKind::Contradicts)
+    }
 }
 
 /// Flags pairs of adopted beliefs joined by a `contradicts` edge in the bank.
@@ -143,11 +159,16 @@ pub fn detect_graph_contradictions(
         }
     }
 
+    // trace:STORY-244 | ai:claude — one batched edge read for every adopted
+    // belief, not a store round trip per belief.
+    let adopted_ids: Vec<String> = adopted.keys().cloned().collect();
+    let neighbours = edges.contradicts_many(&adopted_ids)?;
+
     let mut seen_pairs: BTreeSet<(String, String)> = BTreeSet::new();
     let mut contradictions = Vec::new();
     for (id, label) in &adopted {
-        for neighbour in edges.contradicts(id)? {
-            let Some(neighbour_label) = adopted.get(&neighbour) else {
+        for neighbour in neighbours.get(id).into_iter().flatten() {
+            let Some(neighbour_label) = adopted.get(neighbour) else {
                 continue;
             };
             let pair = unordered_pair(id.clone(), neighbour.clone());

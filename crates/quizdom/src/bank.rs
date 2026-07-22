@@ -21,6 +21,31 @@ pub trait QuestionBank {
     fn load_term(&self, id: &str) -> Result<TermDefinition> {
         Err(QuizdomError::Parse(format!("missing term {id}")))
     }
+
+    // trace:STORY-244 | ai:claude
+    /// Load many questions at once — the batched form of the `begets`/log
+    /// fan-outs, which used to cost one store read per id.
+    ///
+    /// Strict, mirroring the loop it replaces: one question per requested id,
+    /// in `ids` order, and a missing or unparseable node is an error.
+    fn load_questions(&self, ids: &[String]) -> Result<Vec<Question>> {
+        ids.iter().map(|id| self.load_question(id)).collect()
+    }
+
+    // trace:STORY-244 | ai:claude
+    /// Load many terms at once — the batched form of the `probes` fan-out.
+    ///
+    /// Lenient about *conversion*, mirroring the `filter_map(.ok())` that
+    /// fan-out has always used: a node carrying no `definition:` line is
+    /// skipped rather than failing the batch. Store errors still propagate;
+    /// the schema's `fk_edges_to` constraint means a `probes` target always
+    /// has a row, so there is no missing-node case to be lenient about.
+    fn load_terms(&self, ids: &[String]) -> Result<Vec<TermDefinition>> {
+        Ok(ids
+            .iter()
+            .filter_map(|id| self.load_term(id).ok())
+            .collect())
+    }
 }
 
 pub struct AidaCliQuestionBank<S = DoltDomainStore> {
@@ -32,6 +57,16 @@ impl Default for AidaCliQuestionBank {
         Self {
             store: domain_store_from_config(),
         }
+    }
+}
+
+#[cfg(test)]
+impl<S> AidaCliQuestionBank<S>
+where
+    S: DomainStore,
+{
+    pub(crate) fn with_store(store: S) -> Self {
+        Self { store }
     }
 }
 
@@ -54,13 +89,15 @@ where
 
     fn all_questions(&self) -> Result<Vec<Question>> {
         // trace:STORY-53 | ai:codex
-        let mut questions = Vec::new();
-        for id in self.store.list_node_ids(NodeKind::Question)? {
-            if let Ok(question) = self.load_question(&id) {
-                questions.push(question);
-            }
-        }
-        Ok(questions)
+        // trace:STORY-244 | ai:claude — one set-based read for the whole bank,
+        // not a list of ids followed by a fetch per id. A node that isn't a
+        // well-formed question is still skipped rather than failing the scan.
+        Ok(self
+            .store
+            .list_nodes(NodeKind::Question)?
+            .into_iter()
+            .filter_map(|record| question_from_node(record).ok())
+            .collect())
     }
 
     fn probes(&self, id: &str) -> Result<Vec<TermRef>> {
@@ -74,6 +111,25 @@ where
 
     fn load_term(&self, id: &str) -> Result<TermDefinition> {
         term_from_node(self.store.fetch_node(id)?)
+    }
+
+    // trace:STORY-244 | ai:claude
+    fn load_questions(&self, ids: &[String]) -> Result<Vec<Question>> {
+        self.store
+            .fetch_nodes(ids)?
+            .into_iter()
+            .map(question_from_node)
+            .collect()
+    }
+
+    // trace:STORY-244 | ai:claude
+    fn load_terms(&self, ids: &[String]) -> Result<Vec<TermDefinition>> {
+        Ok(self
+            .store
+            .fetch_nodes(ids)?
+            .into_iter()
+            .filter_map(|record| term_from_node(record).ok())
+            .collect())
     }
 }
 
