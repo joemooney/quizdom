@@ -19,5 +19,12 @@ priority: Medium
 owner: ''
 feature: Uncategorized
 created_at: 2026-07-22T19:01:32.628896531Z
-modified_at: 2026-07-22T19:53:07.004239249Z
+modified_at: 2026-07-22T20:00:21.122240966Z
 req_type: Story
+comments:
+- id: 019f8b6a-3482-7251-bd99-4c7c9a1fce37
+  author: joe
+  content: Commit f813a01 references this requirement
+  created_at: 2026-07-22T20:00:21.122240966Z
+  modified_at: 2026-07-22T20:00:21.122240966Z
+  session_id: 019f8b63-175f-7182-bc87-fb806fe3937b
