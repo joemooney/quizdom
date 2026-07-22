@@ -1,0 +1,33 @@
+id: 019f88de-2c5b-7e61-a9ee-85ce89d03b3b
+spec_id: TASK-286
+agreed_id: TASK-286
+title: 'Two genuinely-dead helpers survive behind #[allow(dead_code)] in persist.rs'
+description: |
+  While clearing STORY-260's stale `#[allow(dead_code)]` on
+  `StoreQuestionReweighter` (it had live call sites; the allow masked nothing),
+  two others in the same file turned out to be real:
+
+  - `QuestionLink::rel_endpoints` (crates/quizdom/src/persist.rs:~328)
+  - `user_authored_question_description` (crates/quizdom/src/persist.rs:~363)
+
+  Both are STORY-85-era helpers that nothing outside tests references. They were
+  left alone because deleting live-looking API is a judgement call, not hygiene,
+  and STORY-260's acceptance is scoped to renames / fixtures / lints.
+
+  Worth a small TASK to either delete them or document why they are kept — a
+  standing `#[allow(dead_code)]` on genuinely dead code is the same
+  "misleading to the next reader" shape TASK-226 and TASK-229 were filed against.
+
+  Raised by the implementer while working STORY-260.
+  Branch: story-260  ·  Commit: 0430e94  (PR link added on merge)
+status: Draft
+priority: Medium
+owner: ''
+feature: Uncategorized
+created_at: 2026-07-22T08:08:09.563330681Z
+modified_at: 2026-07-22T08:08:09.563330681Z
+req_type: Task
+tags:
+- from-implementer:STORY-260
+- kind:followup-suggestion
+- severity:minor
