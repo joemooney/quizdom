@@ -19,12 +19,12 @@ description: |-
   - weight:0 and weight:N round-trip symmetrically through fetch_node/fetch_nodes (test).
   - Exceeding CTE recursion depth produces a quizdom error naming the limit, not a raw engine string (test).
   - cargo test green; ignored real_dolt tests still green; no new clippy warnings.
-status: Approved
+status: InProgress
 priority: Medium
 owner: ''
 feature: Uncategorized
 created_at: 2026-07-22T06:19:03.054916312Z
-modified_at: 2026-07-22T06:19:03.054916312Z
+modified_at: 2026-07-22T06:39:44.868934137Z
 req_type: Story
 relationships:
 - rel_type: Child
