@@ -1,0 +1,40 @@
+id: 019f8a68-6a9a-7e11-a691-eda8ff5b8662
+spec_id: TASK-296
+agreed_id: TASK-296
+title: db-migrate commits its import before parity verifies it
+description: |
+  STORY-291 added the commit tail to db-migrate at crates/quizdom/src/db_migrate.rs:230
+  (`commit_all(dolt, &config.path, &message)?`), but the parity report, the
+  BUG-231 edge cross-check and the spot-check BFS all run afterwards, at
+  crates/quizdom/src/db_migrate.rs:242-300.
+
+  Consequence: a migration that FAILS parity still leaves a commit in Dolt
+  history whose message asserts the very counts parity just refuted
+  ("quizdom db-migrate: import N nodes / M edges"). Recovery now needs
+  `dolt reset --hard HEAD~1`; before STORY-291 the bad import sat in the
+  working set and `dolt checkout .` cleared it.
+
+  The rows were written to the database either way, so this is history hygiene
+  rather than data loss — hence non-blocking. Two candidate fixes:
+
+    1. Move `commit_all` below the parity/cross-check/spot-check block so the
+       commit is the last thing a successful migration does.
+    2. Keep the ordering and document why (e.g. "a committed bad import is
+       easier to revert than an uncommitted one"), so the next reader does not
+       re-litigate it.
+
+  Note that (1) shifts the RecordingDolt call indices in the db_migrate unit
+  tests again, the same way this PR shifted them from 5 to 7.
+
+  Raised in review of PR-98: https://github.com/joemooney/quizdom/pull/98
+status: Draft
+priority: Medium
+owner: ''
+feature: Uncategorized
+created_at: 2026-07-22T15:18:46.682830542Z
+modified_at: 2026-07-22T15:18:46.682830542Z
+req_type: Task
+tags:
+- dolt
+- from-review:PR-98
+- severity:minor
