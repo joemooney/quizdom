@@ -9477,5 +9477,49 @@ operations:
     req_type: Bug
     status: Approved
     priority: Medium
-clock: 679
+- id: 019f8bd0-4729-7b02-a6a5-29e926b07c63
+  target_id: 019f8bd0-2f16-7c11-a53b-be861afdd672
+  author: aida
+  node_id: ''
+  lamport: 680
+  timestamp: 2026-07-22T21:51:50.569171716Z
+  kind: !Create
+    title: TASK-368's fingerprint adds a dolt-version dependency (DOLT_HASHOF_DB) to every graph write
+    description: |
+      Closing the staged-provenance hole needed content identity, and the cheapest
+      source was `DOLT_HASHOF_DB('STAGED')`, appended as the last statement of
+      `db_init::staging_write`. That keeps the cost at zero extra spawns, but it puts
+      the function on the path of EVERY graph write: a dolt that does not have it
+      fails every write, not just the rare resume check.
+
+      Judged acceptable, and worth the advisor knowing it shipped that way:
+
+      - The crate already depends on `CALL DOLT_ADD`, the `dolt_status` system table
+        and recursive CTEs. This is a comparable interface, not a new class of
+        coupling.
+      - The failure is loud and immediate (a dolt error naming the function), not a
+        silent wrong answer.
+      - CI pins dolt and the `real_dolt` family exercises it; verified against 2.2.1.
+
+      The alternative considered was probing for the fingerprint separately, only
+      when something is staged. That keeps the write path free of the dependency but
+      leaves quizdom's own rows unfingerprinted between the write and the probe —
+      exactly the window BUG-366's "one spawn, not a following `dolt add`" reasoning
+      rejected. The READ side already takes that shape: `begin_write` asks for the
+      fingerprint only when `dolt_status` reports something staged, so the ordinary
+      write still pre-flights in a single spawn.
+
+      Related, and the reason this is `minor` rather than `cosmetic`: there is a
+      narrow window where a process dies after dolt applied a staging write but
+      before `record_staged` wrote the marker. The next run then refuses a resume
+      that was legitimately quizdom's. That is the safe direction (refuse, don't
+      absorb) and recoverable via `quizdom db-backup`, but it is a behaviour a user
+      could hit and the message will not mention the crash.
+
+      Raised by the implementer while working BUG-378.
+      Branch: bug-378  ·  Commit: 2278782  (PR link added on merge)
+    req_type: Task
+    status: Draft
+    priority: Medium
+clock: 680
 node_id: ''
