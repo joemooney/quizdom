@@ -7739,5 +7739,50 @@ operations:
     req_type: Task
     status: Draft
     priority: Medium
-clock: 581
+- id: 019f8b14-e14f-78e2-97be-50abf0542753
+  target_id: 019f8b14-df7a-7760-82fe-e6696891b23b
+  author: aida
+  node_id: ''
+  lamport: 582
+  timestamp: 2026-07-22T18:27:09.263682904Z
+  kind: !Create
+    title: check_absence_contract's strict-read leg accepts any error, looser than the test it generalizes
+    description: |
+      crates/quizdom/src/store.rs:312 (STORY-327 / TASK-318, PR-104).
+
+      check_absence_contract's third leg — "the strict batch read still fails on the
+      absent id" — is written as:
+
+          match store.fetch_nodes(&ids) {
+              Err(_) => Ok(()),
+              Ok(records) => Err(format!(...)),
+          }
+
+      Any error passes. The crate's own pre-existing single-backend test,
+      default_fetch_nodes_still_fails_the_batch_on_an_absent_id (store.rs:641), is
+      strictly stronger — it requires QuizdomError::NotFound AND that the message
+      names the absent id:
+
+          Err(QuizdomError::NotFound(message)) => assert!(message.contains("Q-404"))
+
+      So the shared conformance check that is meant to generalize that test is weaker
+      than it. A backend whose strict read fails an absent id with Dolt("connection
+      refused"), or with a message that never names which id was missing, passes
+      check_absence_contract while failing the standard the crate already holds
+      itself to — and the operator-facing "which id was missing?" signal, which is
+      the whole point of missing_node's wording parameter, goes unverified.
+
+      Suggested fix: tighten leg 3 to require NotFound and that the message contains
+      absent_id, mirroring leg 1's shape (return a descriptive String on mismatch so
+      the check stays non-panicking and testable). Consider also adding a negative
+      test — a backend whose fetch_nodes errors with the wrong variant should fail the
+      check — symmetric with the existing
+      a_backend_reporting_absence_as_the_wrong_variant_fails_the_check, which today
+      only exercises leg 1.
+
+      Raised in review of PR-104: https://github.com/joemooney/quizdom/pull/104#issuecomment-5049890681
+    req_type: Task
+    status: Draft
+    priority: Medium
+clock: 582
 node_id: ''
