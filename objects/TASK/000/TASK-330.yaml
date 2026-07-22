@@ -34,10 +34,17 @@ priority: Medium
 owner: ''
 feature: Uncategorized
 created_at: 2026-07-22T17:50:35.734460654Z
-modified_at: 2026-07-22T17:50:35.734460654Z
+modified_at: 2026-07-22T18:29:15.973874393Z
 req_type: Task
 tags:
 - from-implementer:STORY-326
 - kind:design-choice
 - severity:minor
 - testing
+comments:
+- id: 019f8b16-d045-7f10-b2a8-a6f68279603d
+  author: joe
+  content: 'Expected and correct: diagnostics.rs spawns no aida CLI, so adding it to BUG-200''s allowlist is the documented mechanism for a module that builds its own Command. No action.'
+  created_at: 2026-07-22T18:29:15.973874393Z
+  modified_at: 2026-07-22T18:29:15.973874393Z
+  session_id: 789bafdb-f673-41c5-affc-d550f95e51e5
