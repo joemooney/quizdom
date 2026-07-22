@@ -4254,5 +4254,31 @@ operations:
   timestamp: 2026-07-22T06:00:35.149850500Z
   kind: !SetStatus
     status: Completed
-clock: 414
+- id: 019f8873-6332-7a32-a28f-4b87d79e1154
+  target_id: 019f8873-5f77-7b80-96eb-00075e5354af
+  author: aida
+  node_id: ''
+  lamport: 415
+  timestamp: 2026-07-22T06:11:31.250672849Z
+  kind: !Create
+    title: 'Review PR-92: EPIC-249: load_terms is per-item lenient in every impl (TASK-247)'
+    description: |
+      Auto-filed by `aida pr auto-queue-review` (typically from /aida-pr) (session `019f8869`) for branch `epic-249`.
+
+      - PR: <https://github.com/joemooney/quizdom/pull/92>
+      - Branch: `epic-249` → `main`
+
+      ## Covers
+
+      - TASK-247
+
+      ## Acceptance
+
+      - Generate a structured review prompt with `aida review prompt --pr 92` and verify each spec's acceptance criteria.
+      - Approve and merge, or request changes by spec id.
+      - Mark this story `completed` once the PR is merged.
+    req_type: Story
+    status: Approved
+    priority: Medium
+clock: 415
 node_id: ''
