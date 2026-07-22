@@ -23,12 +23,12 @@ description: |
   exhaustive and the compiler enforces it.
 
   Raised in review of PR-93: https://github.com/joemooney/quizdom/pull/93#issuecomment-5042707911
-status: Draft
+status: Completed
 priority: Medium
 owner: ''
 feature: Uncategorized
 created_at: 2026-07-22T06:38:35.957512040Z
-modified_at: 2026-07-22T06:38:35.957512040Z
+modified_at: 2026-07-22T15:47:00.486504337Z
 req_type: Task
 tags:
 - config
