@@ -425,12 +425,10 @@ fn apply_reweight(question: &Question, signal: QualitySignal) -> Question {
     updated
 }
 
-#[allow(dead_code)]
 pub(crate) struct StoreQuestionReweighter<S = DoltDomainStore> {
     store: S,
 }
 
-#[allow(dead_code)]
 impl Default for StoreQuestionReweighter {
     fn default() -> Self {
         Self {
