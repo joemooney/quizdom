@@ -5001,5 +5001,40 @@ operations:
     req_type: Task
     status: Draft
     priority: Medium
-clock: 450
+- id: 019f88b4-388b-7eb0-8188-b98714315e25
+  target_id: 019f88b4-365b-7e53-a546-e4be30d05981
+  author: aida
+  node_id: ''
+  lamport: 451
+  timestamp: 2026-07-22T07:22:20.171959479Z
+  kind: !Create
+    title: Backups are explicit (db-backup), not an automatic push after session writes
+    description: |
+      TASK-243 offered two shapes: "a Dolt remote with a push after session writes, or
+      a scheduled dolt backup". STORY-261 shipped neither automatically — `quizdom
+      db-backup` is an explicit command, documented for cron / post-session use in
+      OVERVIEW.md § Durability and recovery.
+
+      Reasoning: a push is several dolt spawns (seconds), and ADR-203 already spawns
+      `dolt` per query with no daemon. Spending that on every session write would tax
+      the interactive loop for a guarantee the user hasn't asked for, and a silent
+      per-write push has no obvious failure surface when the backup directory is a
+      removable disk that isn't mounted.
+
+      Also chosen here, for the advisor's awareness:
+      - File remote (not DoltHub, not `dolt backup`), matching TASK-243's stated
+        preference for avoiding a hosted-account dependency.
+      - Default backup directory `~/.local/share/quizdom/dolt-backup` (env >
+        settings > default), deliberately outside the project tree.
+      - `db-restore` refuses to overwrite an existing repo rather than merging.
+
+      If unattended durability is wanted, the natural follow-up is a post-session
+      hook or a systemd timer rather than an in-loop push.
+
+      Raised by the implementer while working STORY-261.
+      Branch: story-261  ·  Commit: 31dcff3  (PR link added on merge)
+    req_type: Task
+    status: Draft
+    priority: Medium
+clock: 451
 node_id: ''
