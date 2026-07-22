@@ -16,12 +16,12 @@ description: |-
   - CI installs dolt and runs the previously-ignored real_dolt tests; the workflow passes on this PR.
   - session-log-promotion.md describes the Dolt substrate with no stale AIDA-store domain-data claims.
   - cargo test green.
-status: Done
+status: Completed
 priority: Medium
 owner: ''
 feature: Uncategorized
 created_at: 2026-07-22T06:19:25.233066008Z
-modified_at: 2026-07-22T07:23:47.940392225Z
+modified_at: 2026-07-22T07:35:11.649329198Z
 req_type: Story
 relationships:
 - rel_type: Child
