@@ -1,0 +1,26 @@
+id: 019f8af4-c557-74c2-a49b-6a2c0860342d
+spec_id: STORY-332
+agreed_id: STORY-332
+title: 'Review PR-103: STORY-326: finish the durability + logging surface — honest blind probes, a bounded log, a real terminal-safety capture'
+description: |
+  Auto-filed by `aida pr auto-queue-review` (typically from /aida-pr) (session `019f8ae5`) for branch `story-326`.
+
+  - PR: <https://github.com/joemooney/quizdom/pull/103>
+  - Branch: `story-326` → `main`
+
+  ## Covers
+
+  - STORY-326
+
+  ## Acceptance
+
+  - Generate a structured review prompt with `aida review prompt --pr 103` and verify each spec's acceptance criteria.
+  - Approve and merge, or request changes by spec id.
+  - Mark this story `completed` once the PR is merged.
+status: Approved
+priority: Medium
+owner: ''
+feature: Uncategorized
+created_at: 2026-07-22T17:52:04.951920892Z
+modified_at: 2026-07-22T17:52:04.951920892Z
+req_type: Story
