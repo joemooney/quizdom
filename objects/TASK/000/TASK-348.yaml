@@ -27,12 +27,12 @@ description: |
   reader and writer cannot disagree about which file the log IS.
 
   Raised in review of PR-105: https://github.com/joemooney/quizdom/pull/105#issuecomment-5050208191
-status: Draft
+status: Completed
 priority: Medium
 owner: ''
 feature: Uncategorized
 created_at: 2026-07-22T18:56:56.244148137Z
-modified_at: 2026-07-22T18:56:56.244148137Z
+modified_at: 2026-07-22T20:09:06.399838175Z
 req_type: Task
 tags:
 - diagnostics
