@@ -4883,5 +4883,43 @@ operations:
     req_type: Task
     status: Draft
     priority: Medium
-clock: 442
+- id: 019f88a3-23eb-74c1-af1a-a048f97d541f
+  target_id: 019f88a3-21bd-7660-a897-9b8df5c8b14d
+  author: aida
+  node_id: ''
+  lamport: 443
+  timestamp: 2026-07-22T07:03:40.779130896Z
+  kind: !Create
+    title: real_dolt same-second tie-break fixture is coupled to node-mint ordering; its assert_ne guard can fire spuriously
+    description: |
+      crates/quizdom/src/dolt_store.rs, real_dolt_full_trait_surface, the TASK-221
+      same-second block (~line 1385) (STORY-259, PR-94).
+
+      The comment says "Targets are chosen to straddle the lexical/numeric split",
+      but the 7 fan nodes are not chosen — they are minted sequentially by
+      create_node and land at Q-5..Q-11 only because exactly 4 chain questions are
+      created ahead of them. Lexical sort of Q-5..Q-11 is Q-10, Q-11, Q-5..Q-9,
+      which differs from insertion order, so the fixture is meaningful today.
+
+      The `assert_ne!(lexical, targets, "the fixture is only meaningful if lexical
+      != insertion order")` guard is the right defensive move — it fails loudly
+      rather than asserting something vacuous. But it is coupled to fixture
+      ordering: any future edit that creates more Question nodes earlier in the
+      test can push the fan into a decade-aligned run (e.g. Q-20..Q-26), where
+      lexical == insertion and the guard fires a failure that looks like a
+      regression in the ordering contract but is really fixture drift.
+
+      Options: mint the fan nodes with explicitly chosen ids rather than
+      sequential ones; or pick the fan count/offset so the straddle is structural;
+      or reword the comment to say the guard exists precisely because the ids are
+      NOT chosen, so the next reader knows what a failure there means.
+
+      Only affects the #[ignore]d real_dolt test, so CI never sees it — the cost is
+      a confusing local failure, not a broken build.
+
+      Raised in review of PR-94: https://github.com/joemooney/quizdom/pull/94#issuecomment-5042890190
+    req_type: Task
+    status: Draft
+    priority: Medium
+clock: 443
 node_id: ''
