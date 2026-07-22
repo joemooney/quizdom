@@ -1,0 +1,45 @@
+id: 019f8b48-3c8d-7311-b775-b72e75a84943
+spec_id: TASK-355
+agreed_id: TASK-355
+title: A resumed session's auto-continue frames one question with config.mode, not the seeded mode
+description: |
+  TASK-300 made the session loop seed its mode from `settings.toml` when nothing pinned one
+  (`starting_mode`, session.rs:1295-1301, called at session.rs:2813). One caller was not
+  updated to match.
+
+  The resume path's terminal-saved-path auto-continue builds a `StrategyContext` with
+  `mode: config.mode` (session.rs:4440) — the RAW config value, not the seeded one. It runs
+  BEFORE `run_session_from_current`, so nothing has applied `starting_mode` yet.
+
+  Reachable when `resolve_resume_config` skipped the metadata restore. That restore sits
+  inside `if !config.strategy_provided` (session.rs:513), so passing `--strategy` explicitly
+  on a resume leaves `mode_pinned` false and `config.mode` at the compiled Socratic default:
+
+      quizdom session resume <id> --strategy llm     # with mode = "debate" in settings.toml
+
+  The auto-continue generates its ONE successor question framed Socratic, then
+  `run_session_from_current` seeds Debate one line later and the rest of the session is a
+  debate. Before this PR the two agreed (both compiled-default Socratic), so the divergence
+  is new even though the underlying `--strategy`-skips-the-restore quirk is not.
+
+  Impact: one question framed in the wrong mode, on a narrow path. Nothing is persisted
+  wrongly and the `session_started` event already logs the live seeded mode (session.rs:2870).
+
+  Fix shape: either seed the mode before that `StrategyContext` is built (the front-end is
+  not constructed yet there, so it needs `settings::load_or_seed().mode` or a hoisted seed),
+  or move the mode restore out of the `!strategy_provided` guard so a resume always pins the
+  mode it logged — which is arguably the more correct reading of STORY-161 anyway.
+
+  Raised in review of PR-106: https://github.com/joemooney/quizdom/pull/106#issuecomment-5050483733
+status: Draft
+priority: Medium
+owner: ''
+feature: Uncategorized
+created_at: 2026-07-22T19:23:14.957347861Z
+modified_at: 2026-07-22T19:23:14.957347861Z
+req_type: Task
+tags:
+- from-review:PR-106
+- resume
+- session
+- severity:minor
