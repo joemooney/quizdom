@@ -6687,5 +6687,47 @@ operations:
     req_type: Task
     status: Draft
     priority: Medium
-clock: 535
+- id: 019f8abb-0d24-7e10-93f2-ed49a25be7ea
+  target_id: 019f8abb-0b4e-7fe3-abb1-ed2b7151e19a
+  author: aida
+  node_id: ''
+  lamport: 536
+  timestamp: 2026-07-22T16:49:02.244619665Z
+  kind: !Create
+    title: Seven pre-STORY-260 clippy::too_many_arguments allows remain on session.rs free functions
+    description: |
+      STORY-293's TASK-285 asked for "the refactor the lint was asking for" where
+      STORY-260 had reached for `#[allow]`. Scoped literally: `git blame` shows
+      STORY-260 (cc5ffc0) added exactly two `#[allow(clippy::too_many_arguments)]`,
+      both on `SessionLogger` writers. STORY-293 removed those two plus the two
+      pre-existing siblings in the same impl block, which the shared `EventScope`
+      payload struct made obsolete for free. Zero allows remain in the code
+      STORY-293 touched.
+
+      Still outstanding, untouched and out of scope:
+
+      - crates/quizdom/src/session.rs — 7 allows on session-loop FREE functions
+        (currently lines 1296, 1447, 1499, 1597, 1693, 2558, 3864), dating to
+        2026-06-01/06/07, all predating STORY-260.
+      - crates/quizdom/src/frontend.rs:100 and crates/quizdom/src/tui.rs:2347 — two
+        more; neither file is in STORY-293's stated file set.
+
+      These are a different shape from the logger writers. The logger's fifteen
+      methods shared one identity triple drawn from a single `CliConfig`, so the
+      payload struct was mechanical and provably behaviour-preserving (the emitted
+      JSON is byte-identical). The free functions take heterogeneous mutable borrows
+      (front-end, config, logger, turn, several pieces of loop state); bundling them
+      means restructuring how the session loop threads state, with real
+      borrow-checker and behaviour consequences — against STORY-293's own "no
+      behavior change beyond the stated contract fixes".
+
+      Worth its own spec if the project wants the lint fully retired rather than
+      scoped to STORY-260's debt.
+
+      Raised by the implementer while working STORY-293.
+      Branch: story-293  ·  Commit: 071d5ff  (PR link added on merge)
+    req_type: Task
+    status: Draft
+    priority: Medium
+clock: 536
 node_id: ''
