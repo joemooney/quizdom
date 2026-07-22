@@ -443,3 +443,69 @@ gating (`-D warnings`), which was TASK-233's stated follow-on.
 `real_dolt` acceptance tests pass against the local dolt (~60s). Behaviour is
 unchanged by construction — the whole story is renames, dead fixture data, and
 lint fixes.
+
+## 2026-07-22 — STORY-291: the Dolt commit lifecycle (db-init and db-migrate commit their own writes)
+
+**Request.** `/aida-pickup STORY-291` under a headless single-spec drain
+(`aida queue work STORY-291 --auto-complete --no-human=both`). The story bundles
+TASK-272 (the substantive one), TASK-270 and TASK-271.
+
+**TASK-272 — the writes now commit.** `db-init` applied the schema DDL and
+`db-migrate` bulk-imported the graph with plain `dolt sql -q`, neither followed
+by `dolt add -A` + `dolt commit`; only `DoltDomainStore` committed. So a freshly
+bootstrapped-and-migrated `data/dolt` had exactly one commit ("Initialize data
+repository") with the whole graph untracked in the working set, and the first
+`db-backup` pushed an EMPTY history and reported success. STORY-261 papered over
+it by snapshotting the working set before pushing; this fixes the root.
+
+Both commands now end with a commit tail, and the three copies of that tail
+collapsed into one: `db_init::commit_all` (stage everything, commit, return
+whether a commit was actually created) plus `db_init::is_nothing_to_commit` (the
+clean-tree predicate). `DoltDomainStore::commit` delegates to it, and
+`db_backup::snapshot_working_set` shares the predicate while keeping its own
+`clean_dolt_message` error path. Messages: `quizdom db-init: apply domain-graph
+schema` and `quizdom db-migrate: import N nodes / M edges`. Idempotency is
+preserved by construction — a second run changes nothing, dolt refuses the
+commit as "nothing to commit", and that refusal is the no-op path, so no empty
+commits accumulate. A commit that fails for a real reason (e.g. unknown author
+identity) still surfaces.
+
+`snapshot_working_set` stays, with its rationale rewritten: it is now a backstop
+for changes made *outside* quizdom (a hand-run `dolt sql -q` in the repo), not
+the thing that rescues a migration.
+
+**TASK-270 — reachable's depth-limit advice.** The error told the user to raise
+`cte_max_recursion_depth`, which ADR-203's per-spawn model makes impossible —
+a `SET SESSION` in the user's own shell never reaches quizdom's next `dolt sql`
+spawn. The message now says the limit is the engine's *default* (quizdom sets
+nothing, which also resolves the "1000 hops … aborted after 2001 iterations"
+self-contradiction), explains why a shell-set variable cannot reach it, and
+names two remedies that work: traverse from a node further down the chain, or
+raise the ceiling inside quizdom by sending the `SET` in the same statement
+batch as the CTE.
+
+**TASK-271 — the same-second tie-break fixture.** The seven fan nodes were
+minted by `create_node`, so the lexical-vs-insertion straddle the test depends
+on was an accident of how many questions the test happened to create first
+(Q-5..Q-11 straddles; a decade-aligned Q-20..Q-26 would not), and the
+`assert_ne!` guard could fire on unrelated fixture drift looking like an
+ordering regression. The targets are now written out (`Q-fan-3`, `Q-fan-1`,
+`Q-fan-7`, `Q-fan-5`, `Q-fan-2`) and inserted in one statement — the straddle is
+structural, and the `Q-fan-*` suffix does not parse as a number so
+`create_node`'s max-suffix mint ignores these rows entirely.
+
+**Tests.** New unit tests pin the commit tail on both commands, the
+nothing-to-commit no-op, and that a genuine commit failure still errors; the
+depth-limit test now also asserts the advice is reachable. Two `real_dolt`
+tests carry the acceptance: `real_dolt_migrate_is_idempotent_and_passes_parity`
+gained clean-working-set and commit-count assertions across its two runs, and a
+new `real_dolt_migrate_commits_its_import_so_the_backup_carries_history` runs
+bootstrap → migrate → backup → restore and asserts the CLONE holds every node,
+every edge, and the whole history — the regression the acceptance asked for.
+
+**Verified.** `cargo fmt --all --check` clean; `cargo clippy --workspace
+--all-targets -- -D warnings` exits 0; 610 quizdom + 7 llm tests green; all 6
+`real_dolt` acceptance tests pass against local dolt 2.2.1.
+
+**Docs.** `CLAUDE.md` and `OVERVIEW.md` § *Durability and recovery* no longer
+claim db-init / db-migrate leave their writes uncommitted.

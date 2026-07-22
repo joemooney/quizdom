@@ -156,36 +156,13 @@ where
         Ok(found)
     }
 
+    // trace:STORY-291 | ai:claude — one commit tail, shared with db-init /
+    // db-migrate now that they commit their own writes too.
     /// Stage and commit a completed write. A no-op write (e.g. an idempotent
     /// [`DomainStore::ensure_edge`] hitting an existing row) leaves nothing to
     /// commit — dolt's refusal for that case is success here.
     fn commit(&self, message: &str) -> Result<()> {
-        let add: Vec<String> = ["add", "-A"].into_iter().map(String::from).collect();
-        let output = self.runner.run(&self.path, &add)?;
-        if !output.status.success() {
-            return Err(QuizdomError::Dolt(format!(
-                "dolt add failed: {}",
-                String::from_utf8_lossy(&output.stderr)
-            )));
-        }
-        let commit: Vec<String> = ["commit", "-m", message]
-            .into_iter()
-            .map(String::from)
-            .collect();
-        let output = self.runner.run(&self.path, &commit)?;
-        if output.status.success() {
-            return Ok(());
-        }
-        let text = format!(
-            "{}{}",
-            String::from_utf8_lossy(&output.stdout),
-            String::from_utf8_lossy(&output.stderr)
-        )
-        .to_ascii_lowercase();
-        if text.contains("nothing to commit") || text.contains("no changes added") {
-            return Ok(());
-        }
-        Err(QuizdomError::Dolt(format!("dolt commit failed: {text}")))
+        crate::db_init::commit_all(&self.runner, &self.path, message).map(|_| ())
     }
 }
 
@@ -252,6 +229,9 @@ impl CaseArms {
 }
 
 // trace:TASK-224 | ai:claude
+// trace:STORY-291 | ai:claude — named "default" because that is all quizdom
+// knows: nothing here sets the variable, so this is the engine's own default
+// and the error says so rather than claiming a limit it configured.
 /// Dolt inherits MySQL's `cte_max_recursion_depth`, whose default is 1000
 /// iterations — the ceiling on how deep [`DomainStore::reachable`]'s recursive
 /// CTE can walk before the engine aborts it.
@@ -388,6 +368,8 @@ where
     }
 
     // trace:TASK-224 | ai:claude — name the depth limit instead of leaking it.
+    // trace:STORY-291 | ai:claude — and advise something the spawn model can
+    // actually do.
     /// The STORY-207 multi-hop read: one recursive CTE instead of a per-hop
     /// walk. `UNION` (not `UNION ALL`) deduplicates rows, so the walk
     /// terminates on cyclic graphs — visited-set semantics, sorted results.
@@ -395,8 +377,16 @@ where
     /// Pushing the walk into the engine means inheriting the engine's ceiling:
     /// a chain longer than [`CTE_MAX_RECURSION_DEPTH`] aborts mid-traversal.
     /// That is not reachable by the current domain graph, but when it happens
-    /// the caller gets a quizdom error naming the limit and how to raise it,
-    /// not a raw engine string about CTE iterations.
+    /// the caller gets a quizdom error naming the limit, not a raw engine
+    /// string about CTE iterations.
+    ///
+    /// What that error may *advise* is constrained by ADR-203: every query is
+    /// its own `dolt sql` spawn, so a `SET SESSION cte_max_recursion_depth` the
+    /// user runs in their own shell dies with that shell and never reaches
+    /// quizdom's next spawn. The remedies that do work are walking a shorter
+    /// chain, or quizdom sending the `SET` in the same statement batch as the
+    /// CTE — which is a change here, not something the user can do from
+    /// outside. The error says exactly that.
     fn reachable(&self, root: &str, edge: EdgeKind) -> Result<Vec<String>> {
         let kind = edge.as_str();
         let rows = self
@@ -412,10 +402,14 @@ where
             .map_err(|error| match &error {
                 QuizdomError::Dolt(message) if is_cte_depth_failure(message) => {
                     QuizdomError::Dolt(format!(
-                        "traversal from {root} over {kind} edges exceeded Dolt's recursive-CTE \
-                         depth limit of {CTE_MAX_RECURSION_DEPTH} hops \
-                         (cte_max_recursion_depth); raise that session variable to walk a \
-                         deeper chain. Engine detail: {message}"
+                        "traversal from {root} over {kind} edges exceeded Dolt's default \
+                         recursive-CTE depth limit of {CTE_MAX_RECURSION_DEPTH} hops \
+                         (cte_max_recursion_depth). quizdom runs each query in its own \
+                         `dolt sql` spawn (ADR-203), so setting that variable in your own \
+                         shell cannot reach it: traverse from a node further down the \
+                         chain, or raise the ceiling in quizdom itself by sending \
+                         `SET SESSION cte_max_recursion_depth = N` in the same statement \
+                         batch as the CTE. Engine detail: {message}"
                     ))
                 }
                 _ => error,
@@ -803,6 +797,23 @@ mod tests {
                 assert!(
                     message.contains(&CTE_MAX_RECURSION_DEPTH.to_string()),
                     "names the depth: {message}"
+                );
+                // trace:STORY-291 | ai:claude — the advice has to be reachable
+                // from where the user stands. Under ADR-203 each query is its
+                // own spawn, so "raise the session variable" was advice nobody
+                // could follow; the message must say so and name a remedy that
+                // works.
+                assert!(
+                    message.contains("default"),
+                    "the limit is the engine's default, not one quizdom set: {message}"
+                );
+                assert!(
+                    message.contains("spawn"),
+                    "explains why a shell-set variable cannot reach it: {message}"
+                );
+                assert!(
+                    message.contains("traverse from a node further down the chain"),
+                    "offers a remedy the per-spawn model allows: {message}"
                 );
             }
             other => panic!("expected a depth-limit error, got {other:?}"),
@@ -1388,22 +1399,30 @@ mod tests {
         // The edges go in as ONE statement so they share a created_at: that is
         // the case the 1-second TIMESTAMP cannot separate, and the case a
         // per-edge loop of create_edge (a dolt commit each) could not stage
-        // reliably. Targets are chosen to straddle the lexical/numeric split.
+        // reliably.
+        //
+        // trace:STORY-291 | ai:claude — the targets are named here rather than
+        // minted by create_node. Minted ids made the lexical/insertion straddle
+        // an accident of how many questions the test happened to create first
+        // (Q-5..Q-11 straddles; a decade-aligned Q-20..Q-26 would not), so
+        // unrelated fixture edits could turn the assert_ne guard below into a
+        // failure that looked like an ordering regression. Written out, the
+        // straddle is structural. The `Q-fan-*` suffix does not parse as a
+        // number, so create_node's max-suffix mint ignores these rows entirely.
         let fan_root = chain[0].clone();
-        let mut targets = Vec::new();
-        for index in 0..7 {
-            targets.push(
-                store
-                    .create_node(&NewNode {
-                        kind: NodeKind::Question,
-                        title: format!("fan {index}"),
-                        description: String::new(),
-                        tags: Vec::new(),
-                        weight: 0,
-                    })
-                    .expect("fan node create should succeed"),
-            );
-        }
+        let targets: Vec<String> = ["Q-fan-3", "Q-fan-1", "Q-fan-7", "Q-fan-5", "Q-fan-2"]
+            .map(String::from)
+            .to_vec();
+        let fan_rows: Vec<String> = targets
+            .iter()
+            .map(|id| format!("({}, 'question', 'fan', '', '', 0)", sql_quote(id)))
+            .collect();
+        store
+            .sql_json(&format!(
+                "INSERT INTO nodes (id, kind, title, body, tags, weight) VALUES {};",
+                fan_rows.join(", ")
+            ))
+            .expect("fan node insert should succeed");
         let values: Vec<String> = targets
             .iter()
             .map(|target| {
@@ -1424,7 +1443,9 @@ mod tests {
         lexical.sort();
         assert_ne!(
             lexical, targets,
-            "the fixture is only meaningful if lexical != insertion order"
+            "the fixture is only meaningful if lexical != insertion order — with \
+             the ids written out above, a failure here means someone reordered \
+             them into sorted order, not that the ordering contract regressed"
         );
         // A kind with no earlier edge from this root, so created_at cannot
         // separate anything and the assertion is purely about the tie-break.
