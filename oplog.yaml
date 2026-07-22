@@ -6439,5 +6439,40 @@ operations:
     req_type: Task
     status: Draft
     priority: Medium
-clock: 520
+- id: 019f8a95-d46d-7381-8625-484a095c077d
+  target_id: 019f8a95-d1c0-7e13-b6d9-219de3eced53
+  author: aida
+  node_id: ''
+  lamport: 521
+  timestamp: 2026-07-22T16:08:22.893761698Z
+  kind: !Create
+    title: db_init.rs is now the de-facto shared dolt module while still named for a subcommand
+    description: |
+      STORY-292 followed TASK-279's own suggestion — "the tidy version is to lift the
+      helper somewhere shared (db_init.rs already owns the DoltRunner trait these all
+      use)" — and put the shared pieces there. db_init.rs now hosts:
+
+        DoltRunner / SystemDoltRunner   (pre-existing)
+        commit_all, is_nothing_to_commit (STORY-291)
+        working_set_is_clean, is_clean_tree_refusal, PENDING_CHANGES_SQL (TASK-276)
+        clean_dolt_message              (TASK-279, lifted from db_backup.rs)
+        absolute, guard_test_path       (TASK-280, lifted from db_backup.rs)
+
+      ...while its module doc still opens "`quizdom db-init` — bootstrap the Dolt
+      repository". I added a "Shared dolt plumbing" section rather than move anything,
+      because a `dolt.rs` extraction touches the imports of every module in the crate
+      and STORY-292 is scoped to the backup surface.
+
+      Suggestion: extract `crates/quizdom/src/dolt.rs` holding the runner seam, the
+      commit tail, the clean-tree probe, the message scrub and the path tripwire,
+      leaving db_init.rs as just the subcommand. Mechanical, one commit, and it stops
+      `use crate::db_init::...` from appearing in files that have nothing to do with
+      bootstrapping.
+
+      Raised by the implementer while working STORY-292.
+      Branch: story-292  ·  Commit: aa43e69  (PR link added on merge)
+    req_type: Task
+    status: Draft
+    priority: Medium
+clock: 521
 node_id: ''
