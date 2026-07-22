@@ -122,18 +122,28 @@ pub(crate) trait FrontEnd {
     /// records + echoes the resolved choice; the TUI rebuilds + retags the box.
     fn set_editor_choice(&mut self, token: &str);
 
-    // trace:TASK-266 | ai:claude
-    /// The PERSISTED score-gauge preference this front-end loaded at startup, so
-    /// the ENGINE can SEED its `score_gauge_on` from it.
+    // trace:TASK-266 | ai:claude — widened from `persisted_score` to the whole
+    // struct by TASK-300.
+    /// The PERSISTED settings this front-end loaded at startup, so the ENGINE can
+    /// SEED the state it owns — `score_gauge_on` and the session `mode` — from
+    /// them.
     ///
     /// Without this the two halves of the STORY-194 bargain disagreed: the
     /// front-end loaded `score = true` off disk, the engine hardcoded
     /// `score_gauge_on = false`, and the first `/settings` pushed the engine's
     /// default across the seam ([`sync_score`](FrontEnd::sync_score)) and SAVED
     /// it — so a persisted score was both ignored on load and destroyed on the
-    /// next write. The default is `false` for a front-end that persists nothing.
-    fn persisted_score(&self) -> bool {
-        false
+    /// next write.
+    ///
+    /// TASK-266 fixed that for `score` alone, with a `persisted_score() -> bool`.
+    /// `mode` had the IDENTICAL defect and was not in the bundle, so it shipped
+    /// broken: a `mode = "debate"` in the file lost its value on the next save.
+    /// Hence ONE accessor for the whole [`Settings`] rather than a second
+    /// single-key one — the next engine-owned setting inherits the seed instead
+    /// of repeating the bug. The default is [`Settings::default`], for a
+    /// front-end that persists nothing.
+    fn persisted_settings(&self) -> Settings {
+        Settings::default()
     }
 
     // trace:STORY-194 | ai:claude
@@ -314,9 +324,9 @@ impl<R: Read, W: Write> FrontEnd for LineFrontEnd<R, W> {
         }
     }
 
-    // trace:TASK-266 | ai:claude
-    fn persisted_score(&self) -> bool {
-        self.settings.score
+    // trace:TASK-266 | ai:claude — widened by TASK-300.
+    fn persisted_settings(&self) -> Settings {
+        self.settings
     }
 
     // trace:STORY-194 | ai:claude
@@ -424,22 +434,37 @@ mod tests {
         }
     }
 
-    // trace:TASK-266 | ai:claude — the front-end EXPOSES the persisted score so the
-    // engine can seed `score_gauge_on` from it instead of hardcoding `false`.
+    // trace:TASK-266 | ai:claude — the front-end EXPOSES the persisted settings so
+    // the engine can seed `score_gauge_on` from it instead of hardcoding `false`.
     // Without this seam the engine's default flowed BACK across `sync_score` on the
     // first `/settings` and was SAVED over the user's file — the setting was ignored
     // on load and then destroyed on the next write.
+    // trace:TASK-300 | ai:claude — and `mode` rides the SAME accessor, because it
+    // had the same defect: one seam for every engine-owned setting, so the next one
+    // added inherits the seed rather than repeating the bug a third time.
     #[test]
-    fn the_persisted_score_crosses_the_seam_for_the_engine_to_seed_from() {
+    fn the_persisted_settings_cross_the_seam_for_the_engine_to_seed_from() {
         let mut fe = LineFrontEnd::new(Cursor::new(Vec::new()), Vec::new()).unwrap();
-        // Default settings: gauge off, so the seed is off (the common case).
-        assert!(!fe.persisted_score());
+        // Default settings: gauge off, Socratic — so the seeds are the defaults
+        // (the common case).
+        assert!(!fe.persisted_settings().score);
+        assert_eq!(
+            fe.persisted_settings().mode,
+            crate::strategy::SessionMode::Socratic
+        );
 
-        // A front-end that loaded `score = true` reports it, and the engine's
-        // matching `sync_score(true)` is then a no-op rather than a clobber.
+        // A front-end that loaded `score = true` / `mode = "debate"` reports both,
+        // and the engine's matching `sync_*` is then a no-op rather than a clobber.
         fe.sync_score(true);
-        assert!(fe.persisted_score());
-        assert!(fe.settings_surface("").score);
+        fe.sync_mode("debate");
+        assert!(fe.persisted_settings().score);
+        assert_eq!(
+            fe.persisted_settings().mode,
+            crate::strategy::SessionMode::Debate
+        );
+        let surfaced = fe.settings_surface("");
+        assert!(surfaced.score);
+        assert_eq!(surfaced.mode, crate::strategy::SessionMode::Debate);
     }
 
     // trace:STORY-194 | ai:claude — a bare `/editor` SHOWS the current model

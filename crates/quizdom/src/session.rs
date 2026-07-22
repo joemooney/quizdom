@@ -89,7 +89,11 @@ pub(crate) struct CliConfig {
     pub(crate) mode: SessionMode,
     // trace:STORY-161 | ai:claude — whether `--mode` was passed explicitly, so a
     // resume restores the logged mode only when the user did not override it.
-    pub(crate) mode_provided: bool,
+    // trace:TASK-300 | ai:claude — and, once a resume HAS restored one, the mode
+    // is pinned by this invocation's own history, so the engine must not then
+    // seed it from the user's saved default. The two writers of this flag are the
+    // only two sources that outrank `settings.toml`; see `starting_mode`.
+    pub(crate) mode_pinned: bool,
     // trace:STORY-169 | ai:claude
     /// Force the HEADLESS line front-end even on an interactive TTY (`--no-tui`).
     /// EPIC-167 / ADR-166 make the ratatui TUI the default for interactive
@@ -141,7 +145,7 @@ impl CliConfig {
         let mut goal = None;
         // trace:STORY-161 | ai:claude
         let mut mode = SessionMode::default();
-        let mut mode_provided = false;
+        let mut mode_pinned = false;
         // trace:STORY-169 | ai:claude — default off: interactive sessions get the TUI.
         let mut no_tui = false;
         let mut args = args.into_iter().peekable();
@@ -202,7 +206,7 @@ impl CliConfig {
                             "unknown mode: {value}; expected socratic or debate"
                         ))
                     })?;
-                    mode_provided = true;
+                    mode_pinned = true;
                 }
                 // trace:STORY-169 | ai:claude — `--no-tui` forces the headless line
                 // front-end even on a TTY (the TUI is otherwise the interactive
@@ -249,7 +253,7 @@ impl CliConfig {
             llm_backend,
             goal,
             mode,
-            mode_provided,
+            mode_pinned,
             // trace:STORY-169 | ai:claude
             no_tui,
         })
@@ -523,8 +527,12 @@ pub(crate) fn resolve_resume_config(mut config: CliConfig) -> Result<CliConfig> 
             // keeps the same questioning style (debate stays debate). An explicit
             // `--mode` on the resume command wins (it overrides the default before
             // restore, so only fall back when the user did not pass one).
-            if !config.mode_provided {
+            // trace:TASK-300 | ai:claude — a restored mode PINS the mode too: the
+            // session already has one, so the saved `settings.toml` default must
+            // not be seeded over it when the loop starts (`starting_mode`).
+            if !config.mode_pinned {
                 config.mode = metadata.mode;
+                config.mode_pinned = true;
             }
         }
     }
@@ -1267,6 +1275,79 @@ fn set_goal_in_session(
         "Goal set: {text}\n(Questions and the roundedness score now orient toward resolving it.)"
     )?;
     Ok(())
+}
+
+// trace:TASK-300 | ai:claude
+/// The mode the session loop STARTS in: `config.mode` when this invocation
+/// pinned one (`--mode`, or a resumed session's own log), otherwise the mode
+/// PERSISTED in `settings.toml`.
+///
+/// The full precedence, highest first — flag > resumed log > `settings.toml` >
+/// [`SessionMode::default`] — with the first two folded into `pinned` by
+/// `resolve_session_config`, since both mean "this session's mode is already
+/// decided".
+///
+/// **Why the persisted tier exists.** Without it the engine started every fresh
+/// session at the compiled default, and the first `/settings` pushed that
+/// default across the seam ([`crate::frontend::FrontEnd::sync_mode`]) and SAVED
+/// it — so `mode = "debate"` in the config file was ignored on load and then
+/// destroyed on the next write. That is score's TASK-266 defect exactly, on the
+/// key that was left out of the bundle.
+fn starting_mode(config_mode: SessionMode, pinned: bool, persisted: SessionMode) -> SessionMode {
+    if pinned {
+        config_mode
+    } else {
+        persisted
+    }
+}
+
+// trace:TASK-300 | ai:claude
+#[cfg(test)]
+mod starting_mode_tests {
+    use super::*;
+
+    /// The whole precedence in one table. The persisted tier is the NEW one, and
+    /// it sits BELOW both pinning sources on purpose: `--mode socratic` is a
+    /// choice about this session, and a resumed debate must stay a debate even
+    /// for a user whose saved default is Socratic.
+    #[test]
+    fn a_persisted_mode_seeds_only_what_nothing_else_pinned() {
+        // Nothing pinned → the saved default is honoured. This is the case that
+        // was broken: it used to start Socratic and then SAVE Socratic over the
+        // user's `mode = "debate"` on the first `/settings`.
+        assert_eq!(
+            starting_mode(SessionMode::Socratic, false, SessionMode::Debate),
+            SessionMode::Debate
+        );
+        // `--mode socratic` (or a resumed Socratic log) outranks a saved debate.
+        assert_eq!(
+            starting_mode(SessionMode::Socratic, true, SessionMode::Debate),
+            SessionMode::Socratic
+        );
+        // ...and the other way round.
+        assert_eq!(
+            starting_mode(SessionMode::Debate, true, SessionMode::Socratic),
+            SessionMode::Debate
+        );
+        // Nothing pinned and nothing saved → the compiled default, unchanged.
+        assert_eq!(
+            starting_mode(SessionMode::Socratic, false, SessionMode::default()),
+            SessionMode::default()
+        );
+    }
+
+    // trace:TASK-300 | ai:claude — a RESUME pins the mode it restored, so the
+    // saved default cannot overwrite a session already under way. Without the pin
+    // the restore at `resolve_session_config` would be undone one screen later by
+    // the seed.
+    #[test]
+    fn a_restored_mode_is_pinned_against_the_saved_default() {
+        assert_eq!(
+            starting_mode(SessionMode::Debate, true, SessionMode::Socratic),
+            SessionMode::Debate,
+            "a resumed debate stays a debate"
+        );
+    }
 }
 
 // trace:STORY-161 | ai:claude
@@ -2724,7 +2805,12 @@ fn run_session_from_current(
     // next-question prompt (via StrategyContext) and is logged so the verdict path
     // and resume read the same mode. Belief-neutral: debate argues craft, never
     // which belief is true.
-    let mut mode: SessionMode = config.mode;
+    //
+    // trace:TASK-300 | ai:claude — and from the front-end's PERSISTED `mode` when
+    // neither of those pinned one; see `starting_mode` for the precedence and the
+    // clobber it ends.
+    let persisted = fe.persisted_settings();
+    let mut mode: SessionMode = starting_mode(config.mode, config.mode_pinned, persisted.mode);
     // trace:STORY-174 | ai:claude
     // The persistent SCORE GAUGE state. `score_gauge_on` is the `/score` toggle —
     // DEFAULT OFF (even with a goal set), flipped only by `/score`. `last_gauge`
@@ -2739,7 +2825,7 @@ fn run_session_from_current(
     // gauge on now gets it back next launch instead of watching the engine push
     // its own default back across the seam (`fe.sync_score`) and SAVE it over
     // their file the first time they opened `/settings`.
-    let mut score_gauge_on = fe.persisted_score();
+    let mut score_gauge_on = persisted.score;
     let mut last_gauge: Option<ScoreGauge> = None;
     let mut turns_since_score: u64 = 0;
     // trace:STORY-175 | ai:claude
@@ -2779,7 +2865,10 @@ fn run_session_from_current(
             // trace:STORY-159 | ai:claude
             config.goal.as_deref(),
             // trace:STORY-161 | ai:claude
-            config.mode,
+            // trace:TASK-300 | ai:claude — the LIVE seeded mode, not `config.mode`:
+            // a persisted `mode = "debate"` now seeds the loop, and the start event
+            // is what the verdict framing and the next resume read back.
+            mode,
         )?;
     }
 
@@ -5456,7 +5545,7 @@ mod goal_request_tests {
             llm_backend: LlmBackendKind::ClaudeCli,
             goal: None,
             mode: SessionMode::Socratic,
-            mode_provided: false,
+            mode_pinned: false,
             no_tui: false,
         }
     }
@@ -5820,7 +5909,7 @@ mod objection_tests {
             llm_backend: LlmBackendKind::ClaudeCli,
             goal: None,
             mode: SessionMode::Socratic,
-            mode_provided: false,
+            mode_pinned: false,
             no_tui: false,
         }
     }

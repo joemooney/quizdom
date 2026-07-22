@@ -106,9 +106,36 @@ value with no surface has no discoverability and each of these is consequential:
 None is togglable there (no cursor stop, no cycle) — the settings file and the
 environment variables stay the way to change them, and the panel says so.
 
+<!-- trace:TASK-300 | ai:claude -->
+
+Two of the four `/settings` keys name state the **engine** owns rather than the
+front-end — `score` (the distance-to-goal gauge) and `mode` (Socratic / Debate)
+— and the engine **seeds** both from the loaded file at session start
+(`FrontEnd::persisted_settings`). It has to: a value the engine does not seed is
+a value the engine's own default overwrites the first time `/settings` pushes
+the live state back across the seam and saves it, so the setting is ignored on
+load *and* destroyed on the next write. The mode's full precedence, highest
+first: `--mode` > the mode a resumed session logged > `settings.toml` > Socratic.
+A resumed debate stays a debate even for a user whose saved default is Socratic.
+
 Values parse the way TOML would: double **and** single quotes come off, and an
 inline `# comment` ends the value. `dolt_path = "/mnt/data/dolt"  # the big disk`
 means `/mnt/data/dolt`.
+
+<!-- trace:TASK-307 | ai:claude -->
+
+Two more TOML rules, because the file is one a human hand-edits (STORY-350). A
+**double**-quoted value is a TOML *basic* string, so its backslash escapes are
+processed (`\t`, `\n`, `\\`, `\"`, `\uXXXX`) and the closing quote is the first
+*unescaped* one; a **single**-quoted value is a *literal* string taken verbatim,
+which is the spelling for a path full of backslashes (`dolt_path =
+'C:\graphs\main'`). An escape quizdom does not recognise is kept as written
+rather than dropped. And **a leading `~` expands to `$HOME`**, in every written
+tier — `dolt_path = "~/graphs/main"` is the value a user actually reaches for,
+and it used to name a *literal* `~` directory anchored under
+`~/.config/quizdom/`. Only a leading `~` alone or before a `/` expands;
+`~alice/x` needs a password database quizdom does not read, so it stays
+recognisable rather than half-translated.
 
 **The anchoring rule: a relative path in `settings.toml` resolves against the
 directory `settings.toml` lives in** — not against the process's current

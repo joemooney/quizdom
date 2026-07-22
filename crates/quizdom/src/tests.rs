@@ -2829,7 +2829,7 @@ fn start_end_resume_round_trip_replays_path_and_finishes() {
         goal: None,
         // trace:STORY-161 | ai:claude
         mode: SessionMode::Socratic,
-        mode_provided: false,
+        mode_pinned: false,
         // trace:STORY-169 | ai:claude
         no_tui: false,
     };
@@ -3136,7 +3136,7 @@ fn forked_agree_and_disagree_branches_are_recoverable_independently() {
         goal: None,
         // trace:STORY-161 | ai:claude
         mode: SessionMode::Socratic,
-        mode_provided: false,
+        mode_pinned: false,
         // trace:STORY-169 | ai:claude
         no_tui: false,
     };
@@ -3412,7 +3412,7 @@ fn test_config(path: &Path, seed: &str) -> CliConfig {
         goal: None,
         // trace:STORY-161 | ai:claude
         mode: SessionMode::Socratic,
-        mode_provided: false,
+        mode_pinned: false,
         // trace:STORY-169 | ai:claude
         no_tui: false,
     }
@@ -4708,7 +4708,7 @@ fn mode_flag_sets_debate_at_start() {
     ])
     .unwrap();
     assert_eq!(config.mode, SessionMode::Debate);
-    assert!(config.mode_provided);
+    assert!(config.mode_pinned);
 }
 
 // trace:STORY-161 | ai:claude — default mode is unchanged (Socratic) and not
@@ -4717,7 +4717,7 @@ fn mode_flag_sets_debate_at_start() {
 fn default_mode_is_socratic() {
     let config = CliConfig::parse(["session".to_string(), "start".to_string()]).unwrap();
     assert_eq!(config.mode, SessionMode::Socratic);
-    assert!(!config.mode_provided);
+    assert!(!config.mode_pinned);
 }
 
 // trace:STORY-161 | ai:claude — an unknown `--mode` value is a usage error (a
@@ -4770,6 +4770,9 @@ fn start_records_the_mode_on_the_session_started_event() {
     )]);
     let mut config = test_config(&path, "Q-1");
     config.mode = SessionMode::Debate;
+    // trace:TASK-300 | ai:claude — stand in for `--mode debate`: the mode is PINNED
+    // by this invocation, so the saved `settings.toml` default does not seed over it.
+    config.mode_pinned = true;
     let mut output = Vec::new();
 
     run_session(
@@ -4916,6 +4919,9 @@ fn debate_mode_verdict_judges_argument_structure_not_truth() {
     )]);
     let mut config = test_config(&path, "Q-1");
     config.mode = SessionMode::Debate;
+    // trace:TASK-300 | ai:claude — stand in for `--mode debate`: the mode is PINNED
+    // by this invocation, so the saved `settings.toml` default does not seed over it.
+    config.mode_pinned = true;
     let mut output = Vec::new();
 
     // Go straight to the verdict from the frontier prompt.
