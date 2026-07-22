@@ -17,9 +17,16 @@ priority: Medium
 owner: ''
 feature: Uncategorized
 created_at: 2026-07-19T21:43:52.724869002Z
-modified_at: 2026-07-19T21:43:52.724869002Z
+modified_at: 2026-07-22T05:43:00.899481229Z
 req_type: Task
 tags:
 - from-review:PR-88
 - kind:reviewer-fix-forward
 - severity:cosmetic
+comments:
+- id: 019f8859-4a23-7fe2-a09e-f63cffe8b0ea
+  author: joe
+  content: Already actioned — the reviewer's fix-forward landed in PR-88. Historical record only.
+  created_at: 2026-07-22T05:43:00.899481229Z
+  modified_at: 2026-07-22T05:43:00.899481229Z
+  session_id: 789bafdb-f673-41c5-affc-d550f95e51e5
