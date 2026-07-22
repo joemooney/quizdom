@@ -21,9 +21,40 @@ priority: Medium
 owner: ''
 feature: Uncategorized
 created_at: 2026-07-22T06:19:09.009925608Z
-modified_at: 2026-07-22T07:59:36.808842113Z
+modified_at: 2026-07-22T08:08:42.525092105Z
 req_type: Story
 relationships:
 - rel_type: Child
   target_id: 019f885d-96af-7591-80ec-cb27a5e08351
   created_at: 2026-07-22T06:19:10.268530880Z
+comments:
+- id: 019f88de-ad1d-7801-9472-a30ee38ebbe2
+  author: joe
+  content: |-
+    Implemented on branch story-260 (commits fe42479, 0430e94):
+
+    - TASK-226: renamed all seven AidaCli* types to a backend-neutral Store*
+      prefix (83 references). AidaIntentStore kept its name — it genuinely
+      shells out to aida, and StoreContradictionResolutionPersister still holds
+      one for ADR-201 intent writes. Stale doc comments describing the
+      pre-STORY-208 aida write path corrected alongside.
+    - TASK-229: stripped decorative weight:N tags from test fixtures and the two
+      helpers that fabricated them. Kept the load-bearing ones (parse_node_show's
+      exporter tests, db_migrate's fixtures) where the tag IS the legacy input
+      under conversion. Four stale doc comments describing weight as a tag
+      reworded to describe the column.
+    - TASK-233: cleared all six clippy lints (4 mechanical; 2 too_many_arguments
+      resolved with #[allow] matching the precedent already on session_started
+      in the same impl). CI's clippy step switched from informational to gating
+      with -D warnings.
+    - Bonus: dropped two stale #[allow(dead_code)] on StoreQuestionReweighter,
+      which has live call sites.
+
+    Test status: 607/607 quizdom + 7/7 llm green; 5/5 real_dolt acceptance tests
+    pass against dolt 2.2.1; fmt clean; clippy clean under -D warnings.
+    Follow-up: TASK-285 (design-choice: the #[allow] over a payload-struct
+    refactor) and TASK-286 (two genuinely-dead helpers still behind
+    #[allow(dead_code)] in persist.rs) filed as draft findings.
+  created_at: 2026-07-22T08:08:42.525092105Z
+  modified_at: 2026-07-22T08:08:42.525092105Z
+  session_id: 019f88d6-0757-7633-acd6-04d48cc0c5ec
