@@ -208,6 +208,11 @@ pub struct ReweightOutcome {
 /// signals are skipped: they leave the weight unchanged, so writing them back
 /// would be pure churn against AIDA. Returns one [`ReweightOutcome`] per applied
 /// re-weight, in question-id order.
+///
+/// A `bank` or `reweighter` whose batch result omits a requested id is an error
+/// (`QuizdomError::Parse`), not a silently shortened result: the signal and the
+/// question it belongs to are matched by id, so a partial batch can never
+/// persist a re-weight against the wrong question (TASK-246).
 // trace:STORY-68 | ai:claude
 // trace:STORY-244 | ai:claude — the whole applied set is loaded in one read
 // and persisted in one write; this loop used to be `quizdom curate`'s N+1.
@@ -224,22 +229,59 @@ pub fn apply_log_signals(
         .collect();
 
     let ids: Vec<String> = applied.iter().map(|(id, _)| id.clone()).collect();
-    let batch: Vec<(Question, QualitySignal)> = bank
-        .load_questions(&ids)?
-        .into_iter()
-        .zip(applied.iter().map(|(_, signal)| *signal))
-        .collect();
-
-    Ok(reweighter
-        .reweight_questions(&batch)?
-        .into_iter()
-        .zip(applied)
-        .map(|(question, (question_ref, signal))| ReweightOutcome {
-            question_ref,
-            signal,
-            question,
+    // trace:TASK-246 | ai:claude — pair by question id, never by position. Both
+    // batch seams below are contractually "one entry per input, in input order",
+    // but that is a convention (`load_questions` is a default trait method any
+    // bank may override, and its lenient neighbour `load_terms` is the
+    // counterexample). A positional `zip` would truncate silently and pair every
+    // question past the drop point with the wrong signal; looking each id up by
+    // name turns that into an error at the seam instead.
+    let mut loaded = index_by_id(bank.load_questions(&ids)?);
+    let batch: Vec<(Question, QualitySignal)> = applied
+        .iter()
+        .map(|(question_ref, signal)| {
+            take_by_id(&mut loaded, question_ref, "load_questions")
+                .map(|question| (question, *signal))
         })
-        .collect())
+        .collect::<Result<_>>()?;
+
+    let mut reweighted = index_by_id(reweighter.reweight_questions(&batch)?);
+    applied
+        .into_iter()
+        .map(|(question_ref, signal)| {
+            let question = take_by_id(&mut reweighted, &question_ref, "reweight_questions")?;
+            Ok(ReweightOutcome {
+                question_ref,
+                signal,
+                question,
+            })
+        })
+        .collect()
+}
+
+// trace:TASK-246 | ai:claude
+/// Key a batch result by question id so callers can pair it up by name.
+fn index_by_id(questions: Vec<Question>) -> BTreeMap<String, Question> {
+    questions
+        .into_iter()
+        .map(|question| (question.id.clone(), question))
+        .collect()
+}
+
+// trace:TASK-246 | ai:claude
+/// Claim the question `id` from a batch result, or fail loudly naming the
+/// seam that dropped it. Removing rather than borrowing means a batch that
+/// returned one id twice can't satisfy two requests with the same entry.
+fn take_by_id(
+    questions: &mut BTreeMap<String, Question>,
+    id: &str,
+    source: &str,
+) -> Result<Question> {
+    questions.remove(id).ok_or_else(|| {
+        QuizdomError::Parse(format!(
+            "{source} returned no question for {id}: a batch load must return one entry per requested id"
+        ))
+    })
 }
 
 // --- `quizdom curate` command wiring (STORY-72) -----------------------------
@@ -650,6 +692,138 @@ mod tests {
             4,
             "one read + one write + add + commit, whatever the question count"
         );
+    }
+
+    // --- TASK-246: batch results are paired by id, never by position ------
+
+    /// How a bank's batch load misbehaves relative to the strict convention.
+    enum Quirk {
+        /// Returns fewer questions than ids asked for — the `zip`-truncation
+        /// case that used to misattribute every question past the drop point.
+        DropFirst,
+        /// Returns every question, in the wrong order.
+        Reverse,
+    }
+
+    struct QuirkyBank {
+        inner: FakeBank,
+        quirk: Quirk,
+    }
+
+    impl QuestionBank for QuirkyBank {
+        fn load_question(&self, id: &str) -> Result<Question> {
+            self.inner.load_question(id)
+        }
+        fn begets(&self, _id: &str) -> Result<Vec<QuestionRef>> {
+            Ok(Vec::new())
+        }
+        fn load_questions(&self, ids: &[String]) -> Result<Vec<Question>> {
+            let mut loaded: Vec<Question> = ids
+                .iter()
+                .map(|id| self.inner.load_question(id))
+                .collect::<Result<_>>()?;
+            match self.quirk {
+                Quirk::DropFirst => {
+                    loaded.remove(0);
+                }
+                Quirk::Reverse => loaded.reverse(),
+            }
+            Ok(loaded)
+        }
+    }
+
+    fn two_question_bank() -> FakeBank {
+        let mut questions = BTreeMap::new();
+        questions.insert("Q-1".to_string(), question("Q-1", 50));
+        questions.insert("Q-2".to_string(), question("Q-2", 50));
+        FakeBank { questions }
+    }
+
+    // trace:TASK-246 | ai:claude
+    #[test]
+    fn apply_errors_when_the_bank_batch_drops_a_question() {
+        let bank = QuirkyBank {
+            inner: two_question_bank(),
+            quirk: Quirk::DropFirst,
+        };
+        let reweighter = RecordingReweighter::default();
+
+        let error = apply_log_signals(SAMPLE_LOG.as_bytes(), Some("main"), &bank, &reweighter)
+            .expect_err("a short batch load must fail, not misattribute");
+
+        let message = error.to_string();
+        assert!(message.contains("load_questions"), "{message}");
+        assert!(message.contains("Q-1"), "{message}");
+        // Nothing was persisted: the seam failed before any re-weight ran.
+        assert!(reweighter.applied.borrow().is_empty());
+    }
+
+    // trace:TASK-246 | ai:claude
+    #[test]
+    fn apply_pairs_by_id_when_the_bank_batch_reorders() {
+        let bank = QuirkyBank {
+            inner: two_question_bank(),
+            quirk: Quirk::Reverse,
+        };
+        let reweighter = RecordingReweighter::default();
+
+        let outcomes = apply_log_signals(SAMPLE_LOG.as_bytes(), Some("main"), &bank, &reweighter)
+            .expect("a reordered batch load is still fully answerable");
+
+        // Q-1 is Unhelpful and Q-2 Insightful whatever order the bank hands
+        // them back in — positional pairing would have swapped the two.
+        assert_eq!(outcomes.len(), 2);
+        assert_eq!(outcomes[0].question_ref, "Q-1");
+        assert_eq!(outcomes[0].signal, QualitySignal::Unhelpful);
+        assert_eq!(outcomes[0].question.id, "Q-1");
+        assert_eq!(outcomes[0].question.weight, 38); // 50 - 12
+        assert_eq!(outcomes[1].question_ref, "Q-2");
+        assert_eq!(outcomes[1].signal, QualitySignal::Insightful);
+        assert_eq!(outcomes[1].question.id, "Q-2");
+        assert_eq!(outcomes[1].question.weight, 62); // 50 + 12
+    }
+
+    /// A reweighter whose batch write returns one fewer question than it was
+    /// given — the second positional `zip` TASK-246 removed.
+    struct TruncatingReweighter;
+
+    impl QuestionReweighter for TruncatingReweighter {
+        fn reweight_question(
+            &self,
+            question: &Question,
+            signal: QualitySignal,
+        ) -> Result<Question> {
+            let mut updated = question.clone();
+            updated.tags = rewrite_quality_tags(&question.tags, signal);
+            updated.weight = reweight(question.weight, signal);
+            Ok(updated)
+        }
+        fn reweight_questions(&self, batch: &[(Question, QualitySignal)]) -> Result<Vec<Question>> {
+            let mut updated: Vec<Question> = batch
+                .iter()
+                .map(|(question, signal)| self.reweight_question(question, *signal))
+                .collect::<Result<_>>()?;
+            updated.pop();
+            Ok(updated)
+        }
+    }
+
+    // trace:TASK-246 | ai:claude
+    #[test]
+    fn apply_errors_when_the_reweighter_batch_truncates() {
+        let bank = two_question_bank();
+
+        let error = apply_log_signals(
+            SAMPLE_LOG.as_bytes(),
+            Some("main"),
+            &bank,
+            &TruncatingReweighter,
+        )
+        .expect_err("a short batch write must fail, not drop an outcome");
+
+        let message = error.to_string();
+        assert!(message.contains("reweight_questions"), "{message}");
+        assert!(message.contains("Q-2"), "{message}");
     }
 
     #[test]
