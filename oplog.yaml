@@ -7224,5 +7224,49 @@ operations:
   timestamp: 2026-07-22T17:35:11.406778481Z
   kind: !SetStatus
     status: Completed
-clock: 561
+- id: 019f8af2-f1fe-7f52-9176-a62845dab6d4
+  target_id: 019f8af2-eb6e-7e11-8022-6d85cf3193a4
+  author: aida
+  node_id: ''
+  lamport: 562
+  timestamp: 2026-07-22T17:50:05.310880013Z
+  kind: !Create
+    title: Unknown + auto_backup now PUSHES; the reminder half still stays silent
+    description: |
+      STORY-326's acceptance left TASK-325's fork open on purpose ("Decide
+      explicitly: attempt the push, or skip and SAY SO"). This is which way it
+      went, so the advisor is not reading it out of a diff.
+
+      `durability_footer` (crates/quizdom/src/db_backup.rs) now treats the two
+      halves of a blind probe differently:
+
+      * REMINDER — unchanged. `Unknown` says nothing. A probe that failed is not
+        evidence of drift, and nagging on a broken probe trains users to ignore the
+        line.
+      * PUSH — reversed. `Unknown` + `auto_backup = true` attempts the push and
+        reports it ("Could not tell whether the domain graph was backed up, so
+        pushed it to <dir> anyway."), degrading to the usual reminder if it fails.
+
+      The argument: a redundant push costs seconds against a directory the user
+      already nominated; a skipped one costs the graph. Setting `auto_backup = true`
+      is someone saying which of those they prefer.
+
+      The cost, stated plainly: a user whose dolt is broken in a way that makes the
+      probe blind now gets a dolt push attempt at the end of every writing session
+      rather than a silent no-op. It cannot fail loudly (the failure degrades to the
+      reminder, session still exits 0), but it is seconds of spawns per session in a
+      state that may persist. If the advisor would rather that case stay quiet, the
+      alternative shape is "skip, but SAY so in the footer" — also permitted by the
+      acceptance, and a one-branch change to the same match arm.
+
+      `Unknown` + auto_backup OFF now records to the diagnostic log either way; that
+      half was not a fork (it was the only path through the function leaving no
+      trace anywhere).
+
+      Raised by the implementer while working STORY-326.
+      Branch: story-326  ·  Commit: 99956f4  (PR link added on merge)
+    req_type: Task
+    status: Draft
+    priority: Medium
+clock: 562
 node_id: ''
