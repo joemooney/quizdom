@@ -4985,3 +4985,34 @@ fn load_probed_terms_keeps_the_definitions_that_do_exist() {
     );
     assert_eq!(terms[0].definition, "the capacity to choose otherwise");
 }
+
+// trace:STORY-299 | ai:claude
+// A store failure in the probes read still degrades to "no definitions" — the
+// session must not die because one query failed, and TASK-247 already made the
+// batched node read lenient. What TASK-257 named is that the degrade is
+// INDISTINGUISHABLE on screen from a question that genuinely probes no terms,
+// so the reason has to land somewhere. It cannot land on the terminal (the TUI
+// owns the alternate screen), so it lands in the diagnostic log.
+#[test]
+fn a_failed_probes_read_leaves_a_breadcrumb_instead_of_looking_like_an_empty_graph() {
+    crate::diagnostics::clear_captured();
+    let runner = ScriptedDoltRunner::new(vec![
+        // probes(Q-23) — the query itself fails.
+        (1 << 8, "", "dolt sql failed: connection refused"),
+    ]);
+    let bank = StoreQuestionBank::with_store(DoltDomainStore::with_runner(
+        "/tmp/quizdom-dolt-tests",
+        runner,
+    ));
+    let current = question_with_tags("Q-23", 70, AnswerKind::YesNo, ["answer:yes-no"]);
+
+    let terms = load_probed_terms(&bank, &current);
+
+    assert!(terms.is_empty(), "the read degrades, as it always has");
+    let logged = crate::diagnostics::captured();
+    assert_eq!(logged.len(), 1, "{logged:?}");
+    // Which read, on which question, and why — none of which the empty list
+    // carries.
+    assert!(logged[0].contains("probes(Q-23)"), "{logged:?}");
+    assert!(logged[0].contains("connection refused"), "{logged:?}");
+}

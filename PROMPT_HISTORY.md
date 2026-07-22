@@ -509,3 +509,83 @@ every edge, and the whole history — the regression the acceptance asked for.
 
 **Docs.** `CLAUDE.md` and `OVERVIEW.md` § *Durability and recovery* no longer
 claim db-init / db-migrate leave their writes uncommitted.
+
+## 2026-07-22 — STORY-299: durability ergonomics + an observability seam for the TUI
+
+**Request.** `/aida-pickup STORY-299` under a headless `--auto-complete
+--no-human=both` drain. The story takes on the two EPIC-289 items that were
+parked because they needed a human design call — TASK-273 (should backups be
+automatic after session writes, or stay explicit?) and TASK-257 (where should a
+TUI app log, given the alternate screen makes stderr invisible?) — with the
+decisions recorded in the spec so they are reviewable rather than implicit.
+
+**TASK-273 — backups stay explicit; the ergonomics close instead.** An implicit
+push at the end of every writing session spends seconds of dolt spawns on a
+directory that may be an unmounted removable disk, and can fail in ways that
+muddy the end of a session, so `quizdom db-backup` remains the primitive. What
+that leaves is the real gap — "explicit" quietly coming to mean "forgotten" —
+and three things now close it:
+
+* **A reminder that fires on the session that caused the drift.** Both halves
+  must hold: this process committed a graph write, *and* the working copy is
+  ahead of its backup. A read-only session says nothing even when the graph has
+  been unbacked-up for a week; a session whose writes are already backed up says
+  nothing either. The write half is a process-wide flag set at
+  `DoltDomainStore::commit`, which is the choke point every write already passes
+  through — set only when a commit was actually created, so an idempotent
+  `ensure_edge` that changed nothing does not trigger it.
+* **The ahead-of-backup probe is local and read-only.** One `dolt sql` comparing
+  `dolt_branches`' `main` hash against the `remotes/backup/main` tracking ref,
+  plus `dolt_status` for a hand-edited working set that `snapshot_working_set`
+  would carry. It never touches the backup directory, so a session end cannot
+  block on an unmounted disk. A missing tracking ref reads as *ahead* ("you have
+  never backed this up" is the case the reminder exists for); a probe that
+  cannot answer at all reads as *unknown* and stays silent, because nagging on a
+  broken probe trains users to ignore the line.
+* **`auto_backup` (off by default, `$QUIZDOM_AUTO_BACKUP` > settings.toml).** On,
+  it pushes instead of reminding. A failed auto-backup never takes the session
+  down — it degrades to the reminder, with dolt's complaint in the diagnostic
+  log. The cron recipe is documented next to the setting.
+
+**TASK-257 — a file-backed diagnostic seam.** `crates/quizdom/src/diagnostics.rs`
+is one append-only file, one line per event, no levels and no dependency. It
+takes no writer and returns nothing, so no caller can aim it at the terminal the
+TUI owns, and a write failure is dropped rather than reported. Path resolution
+matches every other quizdom path (`$QUIZDOM_LOG_PATH` > `log_path` >
+`~/.local/share/quizdom/quizdom.log`), including TASK-263's anchoring. Under
+`cfg(test)` the sink is a thread-local buffer (the TASK-266 pattern) so the
+in-crate tests never append to the developer's real log and parallel tests
+cannot see each other's entries.
+
+`load_probed_terms`' two `unwrap_or_default()`s now route through it. The
+degrade itself was always right — the session must not die because one read
+failed — but it rendered identically to a question that genuinely probes no
+terms, so a store failure looked like an empty graph. The log now says which
+read, on which question, failed how.
+
+**Tests.** 18 new: the position probe's five cases (up to date / a commit / a
+dirty tree at an unchanged hash / never pushed / unanswerable) and that the
+remote name is SQL-quoted; the footer decision under every combination of
+position and `auto_backup`, including the failed-push degrade; `auto_backup`'s
+tier resolution, where an unparseable value falls through rather than reading as
+`false`; the log path's default and its anchoring; the seam's
+never-touches-the-terminal invariant, asserted against its own source so it
+covers paths no test exercises; and a forced store failure in a probes read
+leaving a breadcrumb. A new `real_dolt` acceptance test pins the two dolt system
+tables the whole reminder rests on, so a release that renames a column cannot
+turn the reminder into permanent silence with the unit tests green.
+
+**Verified.** `cargo fmt --all --check` clean; `cargo clippy --workspace
+--all-targets -- -D warnings` exits 0; 664 quizdom + 7 llm tests green; all 8
+`real_dolt` acceptance tests pass against local dolt 2.2.1. Also smoke-run
+against the release binary in a sandboxed `XDG_*`: a writing session prints the
+reminder naming the exact command and destination; a read-only session while
+ahead prints nothing; a backed-up graph prints nothing; `auto_backup = true`
+pushes and reports it in one line with the dolt narration in the log; a broken
+backup destination degrades to the reminder with the session still exiting 0;
+and renaming the `edges` table out from under a session put the real cause in
+the log while the terminal stayed uncorrupted.
+
+**Docs.** `OVERVIEW.md` gains § *Explicit backups, and the three ways not to
+forget one* and § *The diagnostic log*, and its settings table lists the two new
+keys; `CLAUDE.md` summarizes both.

@@ -9,6 +9,10 @@ mod db_init;
 mod db_migrate;
 // trace:STORY-261 | ai:claude — the file-remote durability path for the Dolt graph (TASK-243).
 mod db_backup;
+// trace:STORY-299 | ai:claude — the file-backed diagnostic seam (TASK-257): the
+// TUI owns the terminal, so a swallowed failure has to leave its breadcrumb
+// somewhere that is not the screen.
+mod diagnostics;
 // trace:STORY-207 | ai:claude — the Dolt-backed DomainStore + backend selection (EPIC-202).
 mod dolt_store;
 // trace:STORY-180 | ai:claude — the capable TUI free-text editor (tui-textarea).
