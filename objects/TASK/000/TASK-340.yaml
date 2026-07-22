@@ -1,0 +1,43 @@
+id: 019f8b14-a639-7f23-9ab8-1dc001ac2149
+spec_id: TASK-340
+agreed_id: TASK-340
+title: Absent-node invariant's rationale cites a dependency the Dolt backend doesn't have (it overrides fetch_nodes_present)
+description: |
+  docs/architecture/graph-schema.md § "The absent-node invariant" and CLAUDE.md's
+  storage-seam bullet both justify the rule with:
+
+      fetch_nodes_present keys its skip off exactly that variant
+
+  That is true of the DEFAULT fetch_nodes_present (store.rs:201+), which matches
+  on Err(QuizdomError::NotFound(_)). It is NOT true of the only shipped backend:
+  DoltDomainStore overrides fetch_nodes_present (crates/quizdom/src/dolt_store.rs:494-500)
+  and derives the skip from presence in the IN (...) result set — it never inspects
+  the error variant at all.
+
+  So the prose names a dependency that does not hold for the backend it is
+  addressed to. Nothing is broken: check_absence_contract pins observable behavior
+  for overriding and default-using backends alike, and rightly still requires
+  fetch_node to report NotFound. The risk is purely discoverability, and it cuts
+  against STORY-327's own goal — a second-backend author who also overrides the
+  lenient read may read the rationale, see it doesn't apply to their design, and
+  skip the invariant, only to be failed by assert_absence_contract later without
+  understanding why.
+
+  Suggested fix (docs only): state the invariant unconditionally ("fetch_node
+  reports absence as NotFound, and nothing else uses that variant"), then give the
+  default's skip as ONE consumer rather than as the reason. Add a sentence noting
+  that a backend overriding fetch_nodes_present still owes the same skip behavior
+  — which is exactly what the conformance check verifies.
+
+  Raised in review of PR-104: https://github.com/joemooney/quizdom/pull/104#issuecomment-5049890681
+status: Draft
+priority: Medium
+owner: ''
+feature: Uncategorized
+created_at: 2026-07-22T18:26:54.137267413Z
+modified_at: 2026-07-22T18:26:54.137267413Z
+req_type: Task
+tags:
+- from-review:PR-104
+- kind:docs
+- severity:cosmetic
