@@ -20,12 +20,12 @@ description: |-
   - A missing directory reports the missing directory, not a PATH problem.
   - The no-op/empty-import messages are distinguishable.
   - cargo test green; real_dolt green; clippy clean.
-status: InProgress
+status: Completed
 priority: Medium
 owner: ''
 feature: Uncategorized
 created_at: 2026-07-22T19:01:18.096313799Z
-modified_at: 2026-07-22T19:44:28.339437741Z
+modified_at: 2026-07-22T19:52:03.972022824Z
 req_type: Story
 relationships:
 - rel_type: !Custom implemented-by
