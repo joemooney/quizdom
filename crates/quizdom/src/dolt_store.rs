@@ -20,7 +20,14 @@ use crate::db_init::{DoltRunner, SystemDoltRunner, DEFAULT_DOLT_DB_PATH};
 use crate::db_migrate::sql_quote;
 use crate::error::{QuizdomError, Result};
 use crate::store::{DomainStore, EdgeKind, NewNode, NodeKind, NodeRecord};
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::PathBuf;
+
+// trace:STORY-244 | ai:claude
+/// How many ids ride in one `IN (...)` list or one batched `UPDATE`. Bounds
+/// the SQL text handed to a single `dolt` spawn, so a bank far larger than
+/// this costs one extra spawn per chunk rather than one per row.
+const MAX_BATCH_IDS: usize = 500;
 
 /// The Dolt backend: every operation spawns `dolt` in the domain-graph repo.
 pub struct DoltDomainStore<R = SystemDoltRunner> {
@@ -141,31 +148,55 @@ fn u32_column(row: &serde_json::Map<String, serde_json::Value>, name: &str) -> u
         .unwrap_or(0) as u32
 }
 
+// trace:STORY-244 | ai:claude
+/// Materialise one `nodes` row. Shared by the per-item and set-based reads so
+/// the two cannot drift in how they decode a node.
+fn node_from_row(row: &serde_json::Map<String, serde_json::Value>) -> NodeRecord {
+    NodeRecord {
+        id: string_column(row, "id"),
+        title: string_column(row, "title"),
+        tags: string_column(row, "tags")
+            .split(',')
+            .map(str::trim)
+            .filter(|tag| !tag.is_empty())
+            .map(str::to_string)
+            .collect(),
+        weight: u32_column(row, "weight"),
+        body: string_column(row, "body"),
+    }
+}
+
+// trace:STORY-244 | ai:claude
+/// The `'a', 'b', 'c'` body of an `IN (...)` list.
+fn sql_id_list(ids: &[&str]) -> String {
+    ids.iter()
+        .map(|id| sql_quote(id))
+        .collect::<Vec<_>>()
+        .join(", ")
+}
+
+/// The column list every node read selects, kept in one place so the per-item
+/// and set-based reads stay decodable by [`node_from_row`].
+const NODE_COLUMNS: &str = "id, title, body, tags, weight";
+
+/// The one "no such node" error text, shared so [`DomainStore::fetch_nodes`]
+/// fails exactly the way looping [`DomainStore::fetch_node`] does.
+fn missing_node(id: &str) -> QuizdomError {
+    QuizdomError::Dolt(format!("node {id} not found in the Dolt store"))
+}
+
 impl<R> DomainStore for DoltDomainStore<R>
 where
     R: DoltRunner,
 {
     fn fetch_node(&self, id: &str) -> Result<NodeRecord> {
         let rows = self.sql_json(&format!(
-            "SELECT id, title, body, tags, weight FROM nodes WHERE id = {};",
+            "SELECT {NODE_COLUMNS} FROM nodes WHERE id = {};",
             sql_quote(id)
         ))?;
-        let row = rows
-            .first()
-            .ok_or_else(|| QuizdomError::Dolt(format!("node {id} not found in the Dolt store")))?;
-        let tags: Vec<String> = string_column(row, "tags")
-            .split(',')
-            .map(str::trim)
-            .filter(|tag| !tag.is_empty())
-            .map(str::to_string)
-            .collect();
-        Ok(NodeRecord {
-            id: string_column(row, "id"),
-            title: string_column(row, "title"),
-            tags,
-            weight: u32_column(row, "weight"),
-            body: string_column(row, "body"),
-        })
+        rows.first()
+            .map(node_from_row)
+            .ok_or_else(|| missing_node(id))
     }
 
     fn list_node_ids(&self, kind: NodeKind) -> Result<Vec<String>> {
@@ -272,6 +303,113 @@ where
             .iter()
             .map(|row| string_column(row, "id"))
             .collect())
+    }
+
+    // trace:STORY-244 | ai:claude
+    /// One `IN (...)` SELECT per [`MAX_BATCH_IDS`] distinct ids, replacing the
+    /// default's spawn-per-id. Rows come back unordered, so the requested
+    /// order is restored from the id index.
+    fn fetch_nodes(&self, ids: &[String]) -> Result<Vec<NodeRecord>> {
+        if ids.is_empty() {
+            return Ok(Vec::new());
+        }
+        let distinct: Vec<&str> = ids
+            .iter()
+            .map(String::as_str)
+            .collect::<BTreeSet<_>>()
+            .into_iter()
+            .collect();
+        let mut found: BTreeMap<String, NodeRecord> = BTreeMap::new();
+        for chunk in distinct.chunks(MAX_BATCH_IDS) {
+            for row in self.sql_json(&format!(
+                "SELECT {NODE_COLUMNS} FROM nodes WHERE id IN ({});",
+                sql_id_list(chunk)
+            ))? {
+                let record = node_from_row(&row);
+                found.insert(record.id.clone(), record);
+            }
+        }
+        ids.iter()
+            .map(|id| found.get(id).cloned().ok_or_else(|| missing_node(id)))
+            .collect()
+    }
+
+    // trace:STORY-244 | ai:claude
+    /// One kind-filtered SELECT of whole rows — the default's `list_node_ids`
+    /// plus a fetch per id collapses to this.
+    fn list_nodes(&self, kind: NodeKind) -> Result<Vec<NodeRecord>> {
+        let (kind_value, _) = dolt_kind(kind);
+        Ok(self
+            .sql_json(&format!(
+                "SELECT {NODE_COLUMNS} FROM nodes WHERE kind = '{kind_value}' ORDER BY id;"
+            ))?
+            .iter()
+            .map(node_from_row)
+            .collect())
+    }
+
+    // trace:STORY-244 | ai:claude
+    /// One SELECT over the edge table for every source. `ORDER BY from_id`
+    /// first groups the rows; within a group the trailing `created_at, to_id`
+    /// is exactly [`DomainStore::neighbors`]' ordering.
+    fn neighbors_many(
+        &self,
+        ids: &[String],
+        edge: EdgeKind,
+    ) -> Result<BTreeMap<String, Vec<String>>> {
+        let kind = edge.as_str();
+        // Seeding from `ids` makes the map total over them (and de-duplicates
+        // the id list the queries chunk over).
+        let mut targets: BTreeMap<String, Vec<String>> =
+            ids.iter().map(|id| (id.clone(), Vec::new())).collect();
+        let distinct: Vec<String> = targets.keys().cloned().collect();
+        for chunk in distinct.chunks(MAX_BATCH_IDS) {
+            for row in self.sql_json(&format!(
+                "SELECT from_id, to_id FROM edges WHERE from_id IN ({}) AND kind = '{kind}' \
+                 ORDER BY from_id, created_at, to_id;",
+                sql_id_list(&chunk.iter().map(String::as_str).collect::<Vec<_>>())
+            ))? {
+                if let Some(entry) = targets.get_mut(&string_column(&row, "from_id")) {
+                    entry.push(string_column(&row, "to_id"));
+                }
+            }
+        }
+        Ok(targets)
+    }
+
+    // trace:STORY-244 | ai:claude
+    /// One multi-row `UPDATE ... CASE id WHEN ...` per [`MAX_BATCH_IDS`] ids,
+    /// then a single add + commit — so re-weighting a whole bank costs three
+    /// spawns instead of three per question. A `CASE` arm per id keeps this a
+    /// single statement, which `dolt sql -r json -q` renders as one document.
+    fn update_weights(&self, updates: &[(String, u32, Vec<String>)]) -> Result<()> {
+        // Last entry per id wins, matching a loop over update_weight_and_tags.
+        let mut latest: BTreeMap<&str, (u32, String)> = BTreeMap::new();
+        for (id, weight, tags) in updates {
+            latest.insert(id.as_str(), (*weight, tags.join(",")));
+        }
+        if latest.is_empty() {
+            return Ok(());
+        }
+        let count = latest.len();
+        let rows: Vec<(&str, (u32, String))> = latest.into_iter().collect();
+        for chunk in rows.chunks(MAX_BATCH_IDS) {
+            let mut tag_arms = String::new();
+            let mut weight_arms = String::new();
+            let mut ids = Vec::with_capacity(chunk.len());
+            for (id, (weight, tags)) in chunk {
+                let quoted = sql_quote(id);
+                tag_arms.push_str(&format!(" WHEN {quoted} THEN {}", sql_quote(tags)));
+                weight_arms.push_str(&format!(" WHEN {quoted} THEN {weight}"));
+                ids.push(*id);
+            }
+            self.sql_json(&format!(
+                "UPDATE nodes SET tags = CASE id{tag_arms} END, \
+                 weight = CASE id{weight_arms} END WHERE id IN ({});",
+                sql_id_list(&ids)
+            ))?;
+        }
+        self.commit(&format!("quizdom: reweight {count} node(s)"))
     }
 }
 
@@ -551,6 +689,225 @@ mod tests {
         assert!(update.contains("WHERE id = 'Q-1'"));
     }
 
+    // trace:STORY-244 | ai:claude — the set-based reads and writes: each one
+    // is checked against the per-item method it batches, so the two paths
+    // cannot drift, and against the spawn count that motivated the story.
+
+    /// Two `nodes` rows as a set-based read yields them — deliberately *not*
+    /// in requested-id order, so a test can prove who restores the order.
+    const TWO_NODE_ROWS: &str = r#"{"rows":[
+        {"id":"Q-2","title":"two","body":"b2","tags":"answer:yes-no","weight":40},
+        {"id":"Q-1","title":"one","body":"b1","tags":"topic:x, answer:yes-no","weight":70}]}"#;
+
+    #[test]
+    fn fetch_nodes_matches_looping_fetch_node_in_one_spawn() {
+        let ids = ["Q-1", "Q-2"].map(String::from).to_vec();
+        let looping = store_with(vec![
+            (
+                0,
+                r#"{"rows":[{"id":"Q-1","title":"one","body":"b1","tags":"topic:x, answer:yes-no","weight":70}]}"#,
+                "",
+            ),
+            (
+                0,
+                r#"{"rows":[{"id":"Q-2","title":"two","body":"b2","tags":"answer:yes-no","weight":40}]}"#,
+                "",
+            ),
+        ]);
+        let expected: Vec<NodeRecord> = ids
+            .iter()
+            .map(|id| looping.fetch_node(id).expect("per-item fetch"))
+            .collect();
+
+        let batched = store_with(vec![(0, TWO_NODE_ROWS, "")]);
+        let records = batched
+            .fetch_nodes(&ids)
+            .expect("batch fetch should succeed");
+
+        assert_eq!(records, expected, "same records, in requested-id order");
+        assert_eq!(
+            looping.runner.calls.borrow().len(),
+            2,
+            "the loop it replaces"
+        );
+        let calls = batched.runner.calls.borrow();
+        assert_eq!(calls.len(), 1, "one IN(...) spawn, not one per id");
+        assert!(
+            sql_of(&calls[0]).contains("id IN ('Q-1', 'Q-2')"),
+            "{}",
+            sql_of(&calls[0])
+        );
+    }
+
+    #[test]
+    fn fetch_nodes_errors_on_a_missing_id_like_fetch_node_does() {
+        let store = store_with(vec![(
+            0,
+            r#"{"rows":[{"id":"Q-1","title":"one","body":"","tags":"","weight":1}]}"#,
+            "",
+        )]);
+        match store.fetch_nodes(&["Q-1".to_string(), "Q-404".to_string()]) {
+            Err(QuizdomError::Dolt(message)) => {
+                assert!(message.contains("Q-404"), "{message}");
+                assert!(message.contains("not found"), "{message}");
+            }
+            other => panic!("expected Dolt error, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn empty_batches_do_no_work_at_all() {
+        let store = store_with(Vec::new());
+
+        assert!(store.fetch_nodes(&[]).expect("empty fetch").is_empty());
+        assert!(store
+            .neighbors_many(&[], EdgeKind::Begets)
+            .expect("empty neighbors")
+            .is_empty());
+        store.update_weights(&[]).expect("empty write");
+
+        assert!(
+            store.runner.calls.borrow().is_empty(),
+            "no ids, no spawns — matching a loop over an empty slice"
+        );
+    }
+
+    #[test]
+    fn list_nodes_reads_whole_rows_in_one_select() {
+        let store = store_with(vec![(0, TWO_NODE_ROWS, "")]);
+
+        let nodes = store
+            .list_nodes(NodeKind::Question)
+            .expect("listing should succeed");
+
+        // Decoding is shared with fetch_node, so the records are complete.
+        assert_eq!(nodes[1].id, "Q-1");
+        assert_eq!(nodes[1].title, "one");
+        assert_eq!(nodes[1].body, "b1");
+        assert_eq!(nodes[1].weight, 70);
+        assert_eq!(
+            nodes[1].tags,
+            ["topic:x", "answer:yes-no"].map(String::from)
+        );
+        let calls = store.runner.calls.borrow();
+        assert_eq!(calls.len(), 1, "one select, no fetch per id");
+        let sql = sql_of(&calls[0]);
+        assert!(sql.contains("kind = 'question'"), "{sql}");
+        assert!(sql.contains("ORDER BY id"), "{sql}");
+    }
+
+    #[test]
+    fn neighbors_many_matches_looping_neighbors_in_one_spawn() {
+        let ids = ["Q-1", "Q-2", "Q-3"].map(String::from).to_vec();
+        // TASK-221: same-second edges come back in to_id order, so Q-10
+        // follows Q-9 — the batched read must preserve that per source.
+        let looping = store_with(vec![
+            (0, r#"{"rows":[{"to_id":"Q-9"},{"to_id":"Q-10"}]}"#, ""),
+            (0, r#"{"rows":[]}"#, ""),
+            (0, r#"{"rows":[{"to_id":"Q-4"}]}"#, ""),
+        ]);
+        let expected: BTreeMap<String, Vec<String>> = ids
+            .iter()
+            .map(|id| {
+                (
+                    id.clone(),
+                    looping.neighbors(id, EdgeKind::Begets).expect("per-item"),
+                )
+            })
+            .collect();
+
+        let batched = store_with(vec![(
+            0,
+            r#"{"rows":[
+                {"from_id":"Q-1","to_id":"Q-9"},
+                {"from_id":"Q-1","to_id":"Q-10"},
+                {"from_id":"Q-3","to_id":"Q-4"}]}"#,
+            "",
+        )]);
+        let targets = batched
+            .neighbors_many(&ids, EdgeKind::Begets)
+            .expect("batch neighbors should succeed");
+
+        assert_eq!(targets, expected);
+        assert!(
+            targets["Q-2"].is_empty(),
+            "the map is total over its inputs"
+        );
+        let calls = batched.runner.calls.borrow();
+        assert_eq!(calls.len(), 1, "one spawn, not one per source");
+        let sql = sql_of(&calls[0]);
+        assert!(sql.contains("from_id IN ('Q-1', 'Q-2', 'Q-3')"), "{sql}");
+        assert!(sql.contains("kind = 'begets'"), "{sql}");
+        assert!(sql.contains("ORDER BY from_id, created_at, to_id"), "{sql}");
+    }
+
+    #[test]
+    fn update_weights_writes_every_row_in_one_update_and_one_commit() {
+        let store = store_with(vec![(0, "", ""), (0, "", ""), (0, "", "")]);
+        let updates = vec![
+            (
+                "Q-1".to_string(),
+                62,
+                ["topic:x", "quality:insightful"].map(String::from).to_vec(),
+            ),
+            (
+                "Q-2".to_string(),
+                30,
+                ["quality:unhelpful"].map(String::from).to_vec(),
+            ),
+        ];
+
+        store
+            .update_weights(&updates)
+            .expect("batch reweight should succeed");
+
+        let calls = store.runner.calls.borrow();
+        assert_eq!(
+            calls.len(),
+            3,
+            "one UPDATE + one add + one commit, not three per row"
+        );
+        let update = sql_of(&calls[0]);
+        assert!(
+            update.contains(
+                "tags = CASE id WHEN 'Q-1' THEN 'topic:x,quality:insightful' \
+                 WHEN 'Q-2' THEN 'quality:unhelpful' END"
+            ),
+            "{update}"
+        );
+        assert!(
+            update.contains("weight = CASE id WHEN 'Q-1' THEN 62 WHEN 'Q-2' THEN 30 END"),
+            "{update}"
+        );
+        assert!(update.contains("WHERE id IN ('Q-1', 'Q-2')"), "{update}");
+        assert_eq!(calls[1], ["add", "-A"]);
+        assert_eq!(&calls[2][0..2], &["commit", "-m"]);
+    }
+
+    #[test]
+    fn update_weights_takes_the_last_entry_for_a_repeated_id() {
+        let store = store_with(vec![(0, "", ""), (0, "", ""), (0, "", "")]);
+        let updates = vec![
+            (
+                "Q-1".to_string(),
+                10,
+                ["quality:unhelpful"].map(String::from).to_vec(),
+            ),
+            (
+                "Q-1".to_string(),
+                90,
+                ["quality:insightful"].map(String::from).to_vec(),
+            ),
+        ];
+
+        store.update_weights(&updates).expect("reweight");
+
+        let calls = store.runner.calls.borrow();
+        let update = sql_of(&calls[0]);
+        assert!(update.contains("THEN 90"), "last write wins: {update}");
+        assert!(!update.contains("THEN 10"), "{update}");
+    }
+
     #[test]
     fn dolt_path_defaults_and_env_wins_over_config() {
         assert_eq!(dolt_path_from(None, ""), DEFAULT_DOLT_DB_PATH);
@@ -658,6 +1015,45 @@ mod tests {
         expected.sort();
         assert_eq!(reached, expected);
         assert!(!reached.contains(&term), "probes spur not walked");
+
+        // trace:STORY-244 — against a real dolt, every set-based method agrees
+        // with the loop over the per-item method it replaces.
+        let ids = store.list_node_ids(NodeKind::Question).unwrap();
+        let looped: Vec<NodeRecord> = ids
+            .iter()
+            .map(|id| store.fetch_node(id).expect("per-item fetch"))
+            .collect();
+        assert_eq!(store.fetch_nodes(&ids).unwrap(), looped, "batch fetch");
+        assert_eq!(
+            store.list_nodes(NodeKind::Question).unwrap(),
+            looped,
+            "one-query listing"
+        );
+        let looped_edges: BTreeMap<String, Vec<String>> = ids
+            .iter()
+            .map(|id| (id.clone(), store.neighbors(id, EdgeKind::Begets).unwrap()))
+            .collect();
+        assert_eq!(
+            store.neighbors_many(&ids, EdgeKind::Begets).unwrap(),
+            looped_edges,
+            "batch neighbors, per-source ordering intact"
+        );
+
+        // The batched write lands on every row it names.
+        store
+            .update_weights(&[
+                (chain[1].clone(), 12, ["batched".to_string()].to_vec()),
+                (chain[2].clone(), 88, ["batched".to_string()].to_vec()),
+            ])
+            .expect("batched reweight should succeed");
+        let after = store
+            .fetch_nodes(&[chain[1].clone(), chain[2].clone()])
+            .unwrap();
+        assert_eq!(
+            after.iter().map(|node| node.weight).collect::<Vec<_>>(),
+            [12, 88]
+        );
+        assert_eq!(after[0].tags, ["batched".to_string()]);
 
         let _ = std::fs::remove_dir_all(&dir);
     }

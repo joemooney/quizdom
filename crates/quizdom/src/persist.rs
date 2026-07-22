@@ -388,6 +388,19 @@ fn user_authored_question_description(
 /// invoke it.
 pub trait QuestionReweighter {
     fn reweight_question(&self, question: &Question, signal: QualitySignal) -> Result<Question>;
+
+    // trace:STORY-244 | ai:claude
+    /// Re-weight many questions in one batched write — the curation hot path,
+    /// which used to cost a write (and a commit) per question.
+    ///
+    /// Returns the updated questions in `batch` order, identical to looping
+    /// [`Self::reweight_question`] — which is exactly what the default does.
+    fn reweight_questions(&self, batch: &[(Question, QualitySignal)]) -> Result<Vec<Question>> {
+        batch
+            .iter()
+            .map(|(question, signal)| self.reweight_question(question, *signal))
+            .collect()
+    }
 }
 
 /// Compute the re-weighted question in memory without touching AIDA.
@@ -446,6 +459,21 @@ where
         // to the numeric column, the rewritten quality tag to the tag list.
         self.store
             .update_weight_and_tags(&question.id, updated.weight, &updated.tags)?;
+        Ok(updated)
+    }
+
+    // trace:STORY-244 | ai:claude — the whole batch is computed in memory,
+    // then persisted as one store write.
+    fn reweight_questions(&self, batch: &[(Question, QualitySignal)]) -> Result<Vec<Question>> {
+        let updated: Vec<Question> = batch
+            .iter()
+            .map(|(question, signal)| apply_reweight(question, *signal))
+            .collect();
+        let updates: Vec<(String, u32, Vec<String>)> = updated
+            .iter()
+            .map(|question| (question.id.clone(), question.weight, question.tags.clone()))
+            .collect();
+        self.store.update_weights(&updates)?;
         Ok(updated)
     }
 }
