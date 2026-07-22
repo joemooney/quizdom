@@ -36,6 +36,30 @@
 //! not — on a freshly migrated repo the whole graph sits untracked in the
 //! working set, and pushing it without a snapshot would upload an empty history
 //! and call that a backup.
+//!
+//! ## A backup directory belongs to exactly one lineage (BUG-277)
+//!
+//! A file remote is a directory, and a directory has no idea which repo is
+//! entitled to it. Push two repos with unrelated roots at the same directory
+//! and the second is refused — dolt has no ancestor to reconcile against. That
+//! is the correct engine behaviour and a terrible user experience, so two
+//! guards live here:
+//!
+//! * [`guard_test_paths`] — a `#[cfg(test)]` tripwire. No test may aim
+//!   `db-backup` / `db-restore` at anything outside the system temp directory.
+//! * [`unrelated_history_message`] — when dolt *does* refuse, say why in
+//!   quizdom's vocabulary and name the ways out, instead of forwarding
+//!   `unknown push error; no common ancestor`.
+//!
+//! Both exist because of one real incident. During the STORY-261 drive an
+//! acceptance run executed `db-backup` with no `--to`, so a throwaway
+//! two-commit fixture claimed the DEFAULT backup path
+//! (`~/.local/share/quizdom/dolt-backup`). Every subsequent backup of the real
+//! 195-commit graph then failed on that opaque string, and the round-trip test
+//! stayed green throughout — it pins its own fixture and so never observes a
+//! pre-existing foreign remote. **Verification runs are the hazard**: when
+//! exercising these commands by hand, always pass `--to` / `--from` (or export
+//! `QUIZDOM_DOLT_BACKUP_PATH`) into a scratch directory.
 
 use crate::db_init::{DoltRunner, SystemDoltRunner};
 use crate::error::{QuizdomError, Result};
@@ -169,6 +193,7 @@ fn db_backup(
     runner: &dyn DoltRunner,
     output: &mut impl Write,
 ) -> Result<()> {
+    guard_test_paths(config);
     if !config.path.join(".dolt").exists() {
         return Err(QuizdomError::Dolt(format!(
             "no Dolt repo at {} — run `quizdom db-init` first",
@@ -219,11 +244,7 @@ fn db_backup(
         )?;
     }
 
-    run_dolt(
-        runner,
-        &config.path,
-        &["push", &config.remote, BACKUP_BRANCH],
-    )?;
+    push_to_backup(runner, config)?;
     writeln!(
         output,
         "Pushed {} ({BACKUP_BRANCH}) to {url}.\n\
@@ -243,6 +264,7 @@ fn db_restore(
     runner: &dyn DoltRunner,
     output: &mut impl Write,
 ) -> Result<()> {
+    guard_test_paths(config);
     if config.path.join(".dolt").exists() {
         return Err(QuizdomError::Dolt(format!(
             "{} is already a Dolt repo — restore refuses to overwrite it; \
@@ -330,9 +352,166 @@ fn snapshot_working_set(runner: &dyn DoltRunner, repo: &Path) -> Result<bool> {
     }
     Err(QuizdomError::Dolt(format!(
         "dolt commit failed: {}",
-        reported.trim()
+        clean_dolt_message(&reported)
     )))
 }
+
+// trace:BUG-277 | ai:claude
+/// What dolt prints when the remote's history shares no commit with the repo
+/// being pushed. `no common ancestor` is verbatim what the engine emitted in
+/// BUG-277 (`unknown push error; no common ancestor`, dolt 2.2.1, reproduced
+/// against two `dolt init` repos sharing one file remote); the other two are
+/// the neighbouring spellings, matched so a reworded dolt release degrades to
+/// a near-miss rather than silently dropping users back to the raw string.
+const UNRELATED_HISTORY_MARKERS: [&str; 3] = [
+    "no common ancestor",
+    "unrelated histories",
+    "refusing to merge unrelated",
+];
+
+fn is_unrelated_history(reported: &str) -> bool {
+    let lowered = reported.to_ascii_lowercase();
+    UNRELATED_HISTORY_MARKERS
+        .iter()
+        .any(|marker| lowered.contains(marker))
+}
+
+// trace:BUG-277 | ai:claude
+/// Push `main` to the backup remote, translating dolt's unrelated-history
+/// refusal into [`unrelated_history_message`]. Every other push failure keeps
+/// [`run_dolt`]'s plain shape — this is a targeted translation, not a blanket
+/// rewrite of the engine's diagnostics.
+fn push_to_backup(runner: &dyn DoltRunner, config: &DbBackupConfig) -> Result<()> {
+    let args = ["push", config.remote.as_str(), BACKUP_BRANCH].map(String::from);
+    let output = runner.run(&config.path, &args)?;
+    if output.status.success() {
+        return Ok(());
+    }
+
+    let stderr = String::from_utf8_lossy(&output.stderr).to_string();
+    let stdout = String::from_utf8_lossy(&output.stdout).to_string();
+    // Dolt puts the diagnosis on stderr and an `- Uploading...` spinner on
+    // stdout. Scan BOTH for the marker (a future release could move it), but
+    // report only the stream carrying the message, so the spinner never lands
+    // in a user-facing error.
+    let reported = if stderr.trim().is_empty() {
+        clean_dolt_message(&stdout)
+    } else {
+        clean_dolt_message(&stderr)
+    };
+
+    if is_unrelated_history(&format!("{stderr}{stdout}")) {
+        return Err(QuizdomError::Dolt(unrelated_history_message(
+            config, &reported,
+        )));
+    }
+    Err(QuizdomError::Dolt(format!(
+        "dolt {} failed: {reported}",
+        args.join(" ")
+    )))
+}
+
+// trace:BUG-277 | ai:claude
+/// Dolt decorates its terminal output with backspace runs that erase the
+/// `- Uploading...` spinner in place, and `\x08` is not whitespace — so
+/// `str::trim` leaves it behind and a forwarded stream trails a line of
+/// control characters through the error. Strip the control characters, drop
+/// the lines that were nothing but spinner, and join what is left.
+fn clean_dolt_message(raw: &str) -> String {
+    raw.lines()
+        .map(|line| {
+            line.chars()
+                .filter(|character| !character.is_control())
+                .collect::<String>()
+                .trim()
+                .to_string()
+        })
+        .filter(|line| !line.is_empty())
+        .collect::<Vec<_>>()
+        .join("; ")
+}
+
+// trace:BUG-277 | ai:claude
+/// The actionable replacement for `unknown push error; no common ancestor`:
+/// name the directory, say what is wrong with it in quizdom's vocabulary, and
+/// list the ways out. A durability command whose failure mode is an opaque
+/// engine string is a durability command people learn to ignore — and the way
+/// out is genuinely not obvious, because nothing here is broken: the backup is
+/// intact, the graph is intact, they simply belong to different lineages.
+///
+/// None of the offered options destroy anything. The move-aside preserves the
+/// foreign copy under a suffix rather than deleting it, which is exactly what
+/// the advisor did by hand when BUG-277 was found.
+fn unrelated_history_message(config: &DbBackupConfig, reported: &str) -> String {
+    let backup = config.backup.display();
+    let repo = config.path.display();
+    format!(
+        "the backup directory {backup} already holds an UNRELATED Dolt \
+         repository: its history shares no commit with {repo}, so the push was \
+         refused. These are two separate lineages, not a diverged branch — \
+         there is no ancestor to reconcile them against, and quizdom will not \
+         overwrite one backup with another to force it.\n\
+         \n\
+         Nothing reached the backup: {backup} still holds only the other \
+         lineage, and {repo} is intact — a push transfers or it does not. The \
+         usual cause is that the directory was claimed by a different repo — a \
+         throwaway fixture from a test or verification run, or another \
+         project's graph.\n\
+         \n\
+         Pick one:\n\
+         \x20 * back this graph up somewhere else:\n\
+         \x20     quizdom db-backup --to <fresh-empty-directory>\n\
+         \x20 * see what is in there first (clones it out, writes nothing):\n\
+         \x20     quizdom db-restore --path /tmp/quizdom-foreign-check --from {backup}\n\
+         \x20 * retire the foreign copy, then back up here again (a move, \
+         never a delete —\n\
+         \x20   the other lineage stays recoverable):\n\
+         \x20     mv {backup} {backup}.foreign-lineage\n\
+         \x20     quizdom db-backup\n\
+         \n\
+         (dolt reported: {reported})"
+    )
+}
+
+// trace:BUG-277 | ai:claude
+/// A test that writes to the REAL backup directory destroys the developer's
+/// only off-repo copy of the domain graph. That is not hypothetical — it is
+/// BUG-277: a verification run with no `--to` pushed a throwaway fixture to
+/// the default backup path, and every later backup of the real graph failed.
+///
+/// So under `cargo test` both directories must live under the system temp
+/// directory. A whitelist, deliberately, not a blacklist of known-real paths:
+/// a test that forgets to pin cannot reach `data/dolt`, the platform data
+/// dir, or anywhere else that matters by any route. Every test in this crate
+/// is an in-crate `#[cfg(test)]` unit test — there is no `tests/` directory
+/// compiling the lib without `cfg(test)` — so this covers the whole suite.
+///
+/// It compiles out entirely in a real build: the CLI is *supposed* to write
+/// to the real paths.
+#[cfg(test)]
+fn guard_test_paths(config: &DbBackupConfig) {
+    for (flag, path) in [("--path", &config.path), ("--to/--from", &config.backup)] {
+        let resolved = absolute(path);
+        let temp = std::env::temp_dir();
+        let under_temp = resolved.starts_with(&temp)
+            || std::fs::canonicalize(&temp)
+                .map(|canonical| resolved.starts_with(canonical))
+                .unwrap_or(false);
+        assert!(
+            under_temp,
+            "BUG-277 tripwire: a test aimed {flag} at {}, outside {}. Tests \
+             must pin every db-backup / db-restore path into a temp directory \
+             — writing to the resolved real paths poisons the developer's \
+             actual domain graph and its backup.",
+            resolved.display(),
+            temp.display()
+        );
+    }
+}
+
+#[cfg(not(test))]
+#[inline]
+fn guard_test_paths(_config: &DbBackupConfig) {}
 
 /// The `file://` URL for a backup directory. Dolt requires an ABSOLUTE path
 /// after the scheme, so a relative `--to data/backup` is resolved against the
@@ -371,7 +550,7 @@ fn run_dolt(runner: &dyn DoltRunner, cwd: &Path, args: &[&str]) -> Result<Output
         return Err(QuizdomError::Dolt(format!(
             "dolt {} failed: {}",
             args.join(" "),
-            String::from_utf8_lossy(&output.stderr)
+            clean_dolt_message(&String::from_utf8_lossy(&output.stderr))
         )));
     }
     Ok(output)
@@ -585,6 +764,108 @@ mod tests {
         assert!(runner.call_names().is_empty(), "no dolt spawned");
     }
 
+    // trace:BUG-277 | ai:claude
+    /// BUG-277's second defect: a backup directory holding a foreign lineage
+    /// must produce quizdom's guidance, not dolt's `unknown push error; no
+    /// common ancestor`. The stderr here is verbatim what dolt 2.2.1 emits.
+    #[test]
+    fn backup_translates_an_unrelated_history_refusal() {
+        let repo = temp_dir("foreign");
+        std::fs::create_dir_all(repo.join(".dolt")).unwrap();
+        let backup = temp_dir("foreign-dest");
+        let runner = RecordingDoltRunner::new(vec![
+            (0, "", ""), // remote -v
+            (0, "", ""), // remote add
+            (0, "", ""), // add -A
+            (0, "", ""), // commit
+            (
+                1 << 8,
+                "- Uploading...",
+                "unknown push error; no common ancestor",
+            ),
+        ]);
+
+        match db_backup(&config(&repo, &backup), &runner, &mut Vec::new()) {
+            Err(QuizdomError::Dolt(message)) => {
+                assert!(
+                    message.contains(&backup.display().to_string()),
+                    "names the backup directory: {message}"
+                );
+                assert!(
+                    message.contains(&repo.display().to_string()),
+                    "names the repo it refused to push: {message}"
+                );
+                assert!(
+                    message.contains("UNRELATED"),
+                    "says what is wrong: {message}"
+                );
+                assert!(
+                    message.contains("--to <fresh-empty-directory>")
+                        && message.contains(".foreign-lineage"),
+                    "offers the ways out: {message}"
+                );
+                assert!(
+                    !message.starts_with("dolt push"),
+                    "not the raw engine string: {message}"
+                );
+                assert!(
+                    !message.contains("Uploading"),
+                    "the upload spinner is not a diagnosis: {message}"
+                );
+            }
+            other => panic!("expected a Dolt error, got {other:?}"),
+        }
+
+        let _ = std::fs::remove_dir_all(&repo);
+        let _ = std::fs::remove_dir_all(&backup);
+    }
+
+    // trace:BUG-277 | ai:claude
+    /// The translation is targeted: an ordinary push failure keeps `run_dolt`'s
+    /// plain shape rather than being mis-diagnosed as a foreign lineage.
+    #[test]
+    fn backup_leaves_other_push_failures_in_their_plain_shape() {
+        let repo = temp_dir("pushfail");
+        std::fs::create_dir_all(repo.join(".dolt")).unwrap();
+        let backup = temp_dir("pushfail-dest");
+        let runner = RecordingDoltRunner::new(vec![
+            (0, "", ""), // remote -v
+            (0, "", ""), // remote add
+            (0, "", ""), // add -A
+            (0, "", ""), // commit
+            (1 << 8, "", "permission denied"),
+        ]);
+
+        match db_backup(&config(&repo, &backup), &runner, &mut Vec::new()) {
+            Err(QuizdomError::Dolt(message)) => assert_eq!(
+                message, "dolt push backup main failed: permission denied",
+                "unrelated failures are not rewritten"
+            ),
+            other => panic!("expected a Dolt error, got {other:?}"),
+        }
+
+        let _ = std::fs::remove_dir_all(&repo);
+        let _ = std::fs::remove_dir_all(&backup);
+    }
+
+    // trace:BUG-277 | ai:claude
+    /// BUG-277's first defect, as a test of the guard itself: any test aiming
+    /// these commands outside the temp directory fails loudly instead of
+    /// quietly writing to the developer's real graph or its backup.
+    #[test]
+    #[should_panic(expected = "BUG-277 tripwire")]
+    fn aiming_a_test_outside_the_temp_directory_trips_the_guard() {
+        let runner = RecordingDoltRunner::new(vec![]);
+        let _ = db_backup(
+            &config(
+                Path::new("/var/lib/quizdom-must-never-be-touched"),
+                Path::new("/var/lib/quizdom-must-never-be-touched-backup"),
+            ),
+            &runner,
+            &mut Vec::new(),
+        );
+    }
+
     #[test]
     fn restore_clones_into_a_missing_path() {
         let repo = temp_dir("restore");
@@ -760,6 +1041,62 @@ mod tests {
         );
 
         let _ = std::fs::remove_dir_all(&repo);
+        let _ = std::fs::remove_dir_all(&backup);
+    }
+
+    // trace:BUG-277 | ai:claude
+    /// BUG-277's acceptance, replayed against the real engine: a backup
+    /// directory pre-populated with an UNRELATED repo must produce quizdom's
+    /// guidance, not dolt's raw refusal.
+    ///
+    /// The mock test above pins the translation; this one pins the trigger —
+    /// that dolt still refuses in the way [`UNRELATED_HISTORY_MARKERS`]
+    /// detects. Without it a dolt release could reword the message and the
+    /// translation would silently stop firing, with every unit test green.
+    #[test]
+    #[ignore = "requires the dolt binary on PATH"]
+    fn real_dolt_backup_refuses_a_foreign_lineage_backup() {
+        let claimed = temp_dir("lineage-throwaway"); // the fixture that claims the dir
+        let genuine = temp_dir("lineage-genuine"); // the graph we actually want backed up
+        let backup = temp_dir("lineage-dest");
+        let runner = SystemDoltRunner::new("dolt".to_string());
+
+        for repo in [&claimed, &genuine] {
+            crate::db_init::run_db_init(
+                [
+                    "db-init".to_string(),
+                    "--path".to_string(),
+                    repo.display().to_string(),
+                ],
+                &mut Vec::new(),
+            )
+            .expect("bootstrap should succeed");
+        }
+
+        // The BUG-277 sequence, exactly: a throwaway run claims the backup
+        // directory first...
+        db_backup(&config(&claimed, &backup), &runner, &mut Vec::new())
+            .expect("the first push into an empty directory succeeds");
+
+        // ...and now the graph that directory was meant to protect cannot be
+        // backed up there at all.
+        match db_backup(&config(&genuine, &backup), &runner, &mut Vec::new()) {
+            Err(QuizdomError::Dolt(message)) => {
+                assert!(
+                    message.contains("UNRELATED")
+                        && message.contains(&backup.display().to_string()),
+                    "expected the actionable foreign-lineage message: {message}"
+                );
+                assert!(
+                    !message.starts_with("dolt push"),
+                    "must not forward the raw engine string: {message}"
+                );
+            }
+            other => panic!("a foreign-lineage backup must be refused, got {other:?}"),
+        }
+
+        let _ = std::fs::remove_dir_all(&claimed);
+        let _ = std::fs::remove_dir_all(&genuine);
         let _ = std::fs::remove_dir_all(&backup);
     }
 }
