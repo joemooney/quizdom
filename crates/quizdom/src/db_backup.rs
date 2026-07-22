@@ -123,10 +123,14 @@ impl DbBackupConfig {
         subcommand: &str,
         default_path: PathBuf,
         default_backup: PathBuf,
+        default_remote: String,
     ) -> Result<Self> {
         let mut path = default_path.clone();
         let mut backup = default_backup;
-        let mut remote = BACKUP_REMOTE_NAME.to_string();
+        // trace:TASK-324 | ai:claude — the remote name is a resolved default
+        // now, not a constant, so a `backup_remote` in settings.toml reaches
+        // both this command and the end-of-session probe.
+        let mut remote = default_remote;
         let mut dolt_command = "dolt".to_string();
         let mut force = false;
         let mut path_is_explicit = false;
@@ -230,10 +234,12 @@ fn usage(subcommand: &str) -> String {
     };
     format!(
         "usage: quizdom {subcommand} [--path <dir>] [{direction}] \
-         [--remote {BACKUP_REMOTE_NAME}] [--dolt dolt]{force}\n\
+         [--remote <name>] [--dolt dolt]{force}\n\
          (--path defaults to $QUIZDOM_DOLT_PATH, else dolt_path in settings.toml;\n\
          the backup directory defaults to $QUIZDOM_DOLT_BACKUP_PATH, else \
          dolt_backup_path in settings.toml, else the platform data dir;\n\
+         --remote defaults to $QUIZDOM_BACKUP_REMOTE, else backup_remote in \
+         settings.toml, else `{BACKUP_REMOTE_NAME}`;\n\
          --path away from that default requires an explicit --to;\n\
          --force retires a foreign lineage already in the backup directory \
          (a move, never a delete))"
@@ -270,6 +276,7 @@ pub fn run_db_backup(
         "db-backup",
         crate::settings::resolve_dolt_path(),
         crate::settings::resolve_dolt_backup_path(),
+        crate::settings::resolve_backup_remote(),
     )?;
     let runner = SystemDoltRunner::new(config.dolt_command.clone());
     db_backup(&config, &runner, output)
@@ -285,6 +292,7 @@ pub fn run_db_restore(
         "db-restore",
         crate::settings::resolve_dolt_path(),
         crate::settings::resolve_dolt_backup_path(),
+        crate::settings::resolve_backup_remote(),
     )?;
     let runner = SystemDoltRunner::new(config.dolt_command.clone());
     db_restore(&config, &runner, output)
@@ -711,6 +719,12 @@ pub(crate) enum BackupPosition {
     /// without the system tables, unparseable output. Deliberately distinct
     /// from [`Self::Ahead`]: a probe that failed is not evidence of drift, and
     /// nagging on a broken probe trains users to ignore the line.
+    ///
+    /// That reasoning governs the REMINDER only. What it does to an opted-in
+    /// `auto_backup` push is a separate call, decided in
+    /// [`durability_footer`] (TASK-325): the push runs anyway, because a
+    /// redundant push is cheaper than a skipped one for someone who asked for
+    /// the push. Either way the blind probe is recorded.
     Unknown,
 }
 
@@ -821,32 +835,75 @@ pub(crate) fn backup_reminder(backup: &Path) -> String {
 /// than surfacing an error, which is the STORY-299 rule: a backup that did not
 /// happen must never be the thing that ends a session badly. The user who opted
 /// in still learns the graph is unbacked-up, and still gets the command.
+///
+/// # `Unknown` — DECIDED (TASK-325)
+///
+/// A probe that could not answer is not evidence of drift, so `Unknown` stays
+/// SILENT for the reminder: nagging on a broken probe trains users to ignore
+/// the line. That half was always the intent. What was never decided is what
+/// `Unknown` should do to the PUSH, and reading it as "nothing to do" turned an
+/// `auto_backup = true` a user explicitly opted into into a silent no-op — the
+/// exact failure `auto_backup` exists to prevent, with no breadcrumb anywhere.
+///
+/// The decision: **`Unknown` + auto-backup ON attempts the push anyway.** The
+/// reminder and the push have different costs when the probe is blind. A
+/// spurious reminder costs the user's trust in every later reminder; a
+/// redundant push costs seconds against a directory the user already told us to
+/// push to. Someone who set `auto_backup = true` has said which of those they
+/// would rather have. `Unknown` + auto-backup OFF stays silent as before, but
+/// now RECORDS the blind probe, so the silence is explicable after the fact
+/// instead of being the one path through this function that leaves no trace.
 fn durability_footer(
     position: BackupPosition,
     auto_backup: bool,
     backup: &Path,
     push: impl FnOnce() -> Result<()>,
 ) -> Option<String> {
-    match position {
-        BackupPosition::UpToDate | BackupPosition::Unknown => None,
-        BackupPosition::Ahead if !auto_backup => Some(backup_reminder(backup)),
-        BackupPosition::Ahead => match push() {
-            Ok(()) => Some(format!(
-                "Backed up the domain graph to {}.",
+    // trace:TASK-325 | ai:claude
+    let report = |result: Result<()>, blind: bool| match result {
+        Ok(()) if blind => Some(format!(
+            "Could not tell whether the domain graph was backed up, so pushed it to {} anyway.",
+            backup.display()
+        )),
+        Ok(()) => Some(format!(
+            "Backed up the domain graph to {}.",
+            backup.display()
+        )),
+        Err(error) => {
+            // The cause goes where diagnostics go. The footer stays one line:
+            // the user's next move is the same either way, and a dolt stack of
+            // prose at the end of a session is not it.
+            crate::diagnostics::record(&format!("auto_backup push failed: {error}"));
+            Some(format!(
+                "Auto-backup failed; the graph is still unbacked-up — run \
+                 `quizdom db-backup` to push it to {}.",
                 backup.display()
-            )),
-            Err(error) => {
-                // The cause goes where diagnostics go. The footer stays one
-                // line: the user's next move is the same either way, and a
-                // dolt stack of prose at the end of a session is not it.
-                crate::diagnostics::record(&format!("auto_backup push failed: {error}"));
-                Some(format!(
-                    "Auto-backup failed; the graph is still unbacked-up — run \
-                     `quizdom db-backup` to push it to {}.",
-                    backup.display()
-                ))
-            }
-        },
+            ))
+        }
+    };
+
+    match position {
+        BackupPosition::UpToDate => None,
+        // trace:TASK-325 | ai:claude — the blind probe never silently cancels
+        // an opted-in push, and never passes without a breadcrumb.
+        BackupPosition::Unknown if !auto_backup => {
+            crate::diagnostics::record(
+                "backup position unknown: could not determine whether the domain graph is \
+                 backed up; auto_backup is off, so nothing was pushed and no reminder was \
+                 shown (a probe that failed is not evidence of drift)",
+            );
+            None
+        }
+        BackupPosition::Unknown => {
+            crate::diagnostics::record(
+                "backup position unknown: could not determine whether the domain graph is \
+                 backed up; auto_backup is on, so pushing anyway rather than skipping a \
+                 backup the user opted into",
+            );
+            report(push(), true)
+        }
+        BackupPosition::Ahead if !auto_backup => Some(backup_reminder(backup)),
+        BackupPosition::Ahead => report(push(), false),
     }
 }
 
@@ -871,8 +928,13 @@ pub(crate) fn session_end_durability() -> Option<String> {
     }
     let path = crate::settings::resolve_dolt_path();
     let backup = crate::settings::resolve_dolt_backup_path();
+    // trace:TASK-324 | ai:claude — ONE resolution, used by BOTH the probe and
+    // the push below. Reading the tracking ref for a remote the push would not
+    // use is how the reminder came to fire seconds after a successful
+    // `db-backup --remote archive`.
+    let remote = crate::settings::resolve_backup_remote();
     let runner = SystemDoltRunner::new("dolt".to_string());
-    let position = backup_position(&runner, &path, BACKUP_REMOTE_NAME);
+    let position = backup_position(&runner, &path, &remote);
     durability_footer(
         position,
         crate::settings::resolve_auto_backup(),
@@ -881,7 +943,7 @@ pub(crate) fn session_end_durability() -> Option<String> {
             let config = DbBackupConfig {
                 path: path.clone(),
                 backup: backup.clone(),
-                remote: BACKUP_REMOTE_NAME.to_string(),
+                remote: remote.clone(),
                 dolt_command: "dolt".to_string(),
                 // NEVER force from an automatic path: `--force` retires whatever
                 // lineage is in the backup directory, which is a decision an
@@ -1444,6 +1506,7 @@ mod tests {
             "db-backup",
             PathBuf::from("/from/env"),
             PathBuf::from("/from/env-backup"),
+            BACKUP_REMOTE_NAME.to_string(),
         )
         .unwrap();
         assert_eq!(config.path, PathBuf::from("/tmp/x"));
@@ -1455,6 +1518,7 @@ mod tests {
             "db-backup",
             PathBuf::from("/from/env"),
             PathBuf::from("/from/env-backup"),
+            BACKUP_REMOTE_NAME.to_string(),
         )
         .unwrap();
         assert_eq!(defaulted.path, PathBuf::from("/from/env"));
@@ -1467,6 +1531,7 @@ mod tests {
             "db-restore",
             PathBuf::from("/from/env"),
             PathBuf::from("/from/env-backup"),
+            BACKUP_REMOTE_NAME.to_string(),
         )
         .unwrap();
         assert_eq!(restore.backup, PathBuf::from("/tmp/b"));
@@ -1479,6 +1544,7 @@ mod tests {
             "db-backup",
             PathBuf::from("data/dolt"),
             PathBuf::from("/tmp/backup"),
+            BACKUP_REMOTE_NAME.to_string(),
         );
         assert!(matches!(result, Err(QuizdomError::Usage(_))));
     }
@@ -1495,6 +1561,7 @@ mod tests {
             "db-backup",
             PathBuf::from("/home/dev/quizdom/data/dolt"),
             PathBuf::from("/home/dev/.local/share/quizdom/dolt-backup"),
+            BACKUP_REMOTE_NAME.to_string(),
         );
         match refused {
             Err(QuizdomError::Usage(message)) => {
@@ -1523,6 +1590,7 @@ mod tests {
                 "db-backup",
                 default_path.clone(),
                 default_backup.clone(),
+                BACKUP_REMOTE_NAME.to_string(),
             )
             .unwrap_or_else(|error| panic!("{args:?} should parse, got {error:?}"))
         };
@@ -1551,6 +1619,7 @@ mod tests {
             "db-restore",
             default_path,
             default_backup,
+            BACKUP_REMOTE_NAME.to_string(),
         )
         .is_ok());
     }
@@ -1564,6 +1633,7 @@ mod tests {
                 "db-backup",
                 PathBuf::from("/tmp/x"),
                 PathBuf::from("/tmp/b"),
+                BACKUP_REMOTE_NAME.to_string(),
             )
             .unwrap()
             .force
@@ -1576,6 +1646,7 @@ mod tests {
                 "db-restore",
                 PathBuf::from("/tmp/x"),
                 PathBuf::from("/tmp/b"),
+                BACKUP_REMOTE_NAME.to_string(),
             ),
             Err(QuizdomError::Usage(_))
         ));
@@ -1996,6 +2067,99 @@ mod tests {
         );
     }
 
+    // trace:TASK-325 | ai:claude
+    /// The reminder half of the `Unknown` rule is unchanged — a blind probe is
+    /// not evidence of drift, so an auto-backup-OFF session says nothing. What
+    /// changes is that the silence is now EXPLICABLE: it was the only path
+    /// through `durability_footer` that left no trace anywhere, in the module
+    /// that exists to leave traces.
+    #[test]
+    fn a_blind_probe_stays_silent_but_records_why() {
+        crate::diagnostics::clear_captured();
+
+        let footer = durability_footer(
+            BackupPosition::Unknown,
+            false,
+            Path::new("/backups/qz"),
+            || panic!("auto_backup is off; nothing may push"),
+        );
+
+        assert_eq!(footer, None, "a failed probe must not nag");
+        let recorded = crate::diagnostics::captured();
+        assert_eq!(recorded.len(), 1, "{recorded:?}");
+        assert!(
+            recorded[0].contains("backup position unknown"),
+            "{recorded:?}"
+        );
+        assert!(
+            recorded[0].contains("auto_backup is off"),
+            "the log says which branch was taken: {recorded:?}"
+        );
+    }
+
+    // trace:TASK-325 | ai:claude
+    /// The decided half. `Unknown` used to be matched alongside `UpToDate`
+    /// BEFORE `auto_backup` was consulted, so a probe that could not answer
+    /// silently cancelled a push the user explicitly opted into — no push, no
+    /// reminder, no log line. An opted-in user would rather have a redundant
+    /// push than a skipped one, so the push runs.
+    #[test]
+    fn a_blind_probe_never_cancels_an_opted_in_push() {
+        crate::diagnostics::clear_captured();
+        let pushed = RefCell::new(false);
+
+        let footer = durability_footer(
+            BackupPosition::Unknown,
+            true,
+            Path::new("/backups/qz"),
+            || {
+                *pushed.borrow_mut() = true;
+                Ok(())
+            },
+        )
+        .expect("an opted-in push reports itself");
+
+        assert!(*pushed.borrow(), "the push ran despite the blind probe");
+        assert!(footer.contains("/backups/qz"), "{footer}");
+        assert!(
+            footer.contains("Could not tell"),
+            "the line is honest about WHY it pushed: {footer}"
+        );
+        assert_eq!(footer.lines().count(), 1, "one line, not a lecture");
+        assert!(
+            crate::diagnostics::captured()[0].contains("auto_backup is on"),
+            "{:?}",
+            crate::diagnostics::captured()
+        );
+    }
+
+    // trace:TASK-325 | ai:claude — and a blind push that FAILS degrades exactly
+    // as the `Ahead` one does: the reminder, the command, the cause in the log.
+    // A backup that did not happen must never be the thing that ends a session
+    // badly (the STORY-299 rule).
+    #[test]
+    fn a_failed_blind_push_degrades_to_the_reminder() {
+        crate::diagnostics::clear_captured();
+
+        let footer = durability_footer(
+            BackupPosition::Unknown,
+            true,
+            Path::new("/backups/qz"),
+            || Err(QuizdomError::Dolt("remote unreachable".to_string())),
+        )
+        .expect("a failed push still tells the user the graph is unbacked-up");
+
+        assert!(footer.contains("quizdom db-backup"), "{footer}");
+        assert!(footer.contains("/backups/qz"), "{footer}");
+        let recorded = crate::diagnostics::captured();
+        assert!(
+            recorded
+                .iter()
+                .any(|entry| entry.contains("remote unreachable")),
+            "the cause goes to the log, not the session tail: {recorded:?}"
+        );
+    }
+
     #[test]
     fn the_probe_reads_the_tracking_ref_for_the_configured_remote() {
         let sql = backup_position_sql("backup");
@@ -2009,6 +2173,72 @@ mod tests {
             backup_position_sql("it's").contains("'remotes/it''s/main'"),
             "{}",
             backup_position_sql("it's")
+        );
+    }
+
+    // trace:TASK-324 | ai:claude
+    /// The probe and the push have to name the SAME remote. When the probe
+    /// hardcoded `backup`, an operator working under another name never
+    /// populated `remotes/backup/main`; the probe read that missing tracking
+    /// ref as "never backed up" (the right call for the default name) and the
+    /// reminder then fired after every writing session — including seconds
+    /// after a successful `db-backup --remote archive`.
+    #[test]
+    fn a_non_default_remote_is_probed_under_its_own_name() {
+        let repo = temp_dir("position-remote");
+        std::fs::create_dir_all(repo.join(".dolt")).unwrap();
+        // The tracking ref for `archive` matches, so this graph IS backed up.
+        let runner = RecordingDoltRunner::new(vec![(
+            0,
+            r#"{"rows":[{"local_hash":"abc","backup_hash":"abc","pending":0}]}"#,
+            "",
+        )]);
+
+        assert_eq!(
+            backup_position(&runner, &repo, "archive"),
+            BackupPosition::UpToDate
+        );
+        let calls = runner.call_names();
+        assert!(
+            calls[0].contains("remotes/archive/main"),
+            "the probe reads the CONFIGURED remote's tracking ref: {calls:?}"
+        );
+        assert!(
+            !calls[0].contains(&format!("remotes/{BACKUP_REMOTE_NAME}/main")),
+            "and not the default's: {calls:?}"
+        );
+
+        let _ = std::fs::remove_dir_all(&repo);
+    }
+
+    // trace:TASK-324 | ai:claude — `--remote` still sits on top of the resolved
+    // default, exactly as `--path` sits on top of the resolved graph path.
+    #[test]
+    fn the_remote_name_defaults_from_the_settings_chain_and_a_flag_overrides_it() {
+        let resolved = DbBackupConfig::parse(
+            ["db-backup".to_string()],
+            "db-backup",
+            PathBuf::from("/from/env"),
+            PathBuf::from("/from/env-backup"),
+            "archive".to_string(),
+        )
+        .unwrap();
+        assert_eq!(
+            resolved.remote, "archive",
+            "the chain's answer is the default"
+        );
+
+        let flagged = DbBackupConfig::parse(
+            ["db-backup", "--remote", "offsite"].map(String::from),
+            "db-backup",
+            PathBuf::from("/from/env"),
+            PathBuf::from("/from/env-backup"),
+            "archive".to_string(),
+        )
+        .unwrap();
+        assert_eq!(
+            flagged.remote, "offsite",
+            "--flag > env > settings > default"
         );
     }
 

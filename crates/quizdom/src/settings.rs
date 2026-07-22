@@ -35,9 +35,12 @@
 //!
 //! Keys outside the `/settings` surface live in the same file — `dolt_path`
 //! selects the Dolt domain-graph repo, `dolt_backup_path` its file-remote
-//! backup directory (STORY-261), `auto_backup` opts into pushing to that
-//! backup when a writing session ends and `log_path` names the diagnostic log
-//! (both STORY-299). Two consequences, both handled here so no second
+//! backup directory (STORY-261), `backup_remote` the name of the Dolt remote
+//! pointed at it (STORY-326), `auto_backup` opts into pushing to that backup
+//! when a writing session ends and `log_path` names the diagnostic log (both
+//! STORY-299). Three of them — the graph, the auto-backup switch and the log —
+//! are DISPLAYED read-only by `/settings` (TASK-262, TASK-320); see
+//! [`ReadOnlyRows`]. Two consequences, both handled here so no second
 //! reader/writer of the file can drift from this one:
 //!
 //! * **Foreign keys survive a save.** [`Settings::to_toml_merged`] rewrites the
@@ -190,10 +193,68 @@ const CONFIG_HEADER: &str =
 /// single most consequential value in the file had no surface at all.
 pub(crate) const DOLT_PATH_ROW_LABEL: &str = "Domain graph:";
 
-/// The `/settings` row for the resolved domain-graph path, shared by the
-/// headless value list and the TUI panel so the two cannot drift.
-pub(crate) fn dolt_path_row(dolt_path: &Path) -> String {
-    format!("  {DOLT_PATH_ROW_LABEL:<14}{}\n", dolt_path.display())
+// trace:TASK-320 | ai:claude
+/// The label of the read-only `auto_backup` row. A durability control is the
+/// worst category of setting to hide: a user who believes the push is on and a
+/// user who believes it is off behave identically until the disk dies.
+pub(crate) const AUTO_BACKUP_ROW_LABEL: &str = "Auto-backup:";
+
+// trace:TASK-320 | ai:claude
+/// The label of the read-only `log_path` row. Doubles as the answer to "where
+/// do I look when something degraded?" — until now that answer lived only in
+/// `OVERVIEW.md` prose, which is not where someone mid-session looks.
+pub(crate) const LOG_PATH_ROW_LABEL: &str = "Diagnostics:";
+
+// trace:TASK-320 | ai:claude
+/// The values `/settings` DISPLAYS but cannot change — each one resolved
+/// through its own env > settings > default chain, each one consequential
+/// enough that an invisible value is a bug (which graph am I reading? will my
+/// work be pushed? where does a failure get recorded?).
+///
+/// Passed in rather than resolved by the renderers so both surfaces — the
+/// headless value list and the TUI panel — draw the SAME rows from ONE
+/// computation, and so the rendering stays pure and testable without the
+/// ambient environment leaking in (the TASK-262 pattern, widened).
+#[derive(Debug, Clone)]
+pub(crate) struct ReadOnlyRows {
+    /// The resolved domain-graph repo (`dolt_path`).
+    pub(crate) dolt_path: PathBuf,
+    /// Whether a writing session pushes to its backup on the way out
+    /// (`auto_backup`).
+    pub(crate) auto_backup: bool,
+    /// The resolved diagnostic log (`log_path`).
+    pub(crate) log_path: PathBuf,
+}
+
+impl ReadOnlyRows {
+    /// Resolve all three through the live env > settings > default chains.
+    pub(crate) fn resolved() -> Self {
+        Self {
+            dolt_path: resolve_dolt_path(),
+            auto_backup: resolve_auto_backup(),
+            log_path: resolve_log_path(),
+        }
+    }
+
+    /// The rows as `label` + `value` pairs, in display order. The TUI draws
+    /// them as `Line`s and the headless list joins them, so the two surfaces
+    /// cannot drift in content or order.
+    pub(crate) fn rows(&self) -> [(&'static str, String); 3] {
+        [
+            (DOLT_PATH_ROW_LABEL, self.dolt_path.display().to_string()),
+            (AUTO_BACKUP_ROW_LABEL, on_off(self.auto_backup).to_string()),
+            (LOG_PATH_ROW_LABEL, self.log_path.display().to_string()),
+        ]
+    }
+
+    /// The rows rendered one per line, at the same column as the toggle rows
+    /// above them.
+    pub(crate) fn lines(&self) -> Vec<String> {
+        self.rows()
+            .into_iter()
+            .map(|(label, value)| format!("  {label:<14}{value}"))
+            .collect()
+    }
 }
 
 /// The four settings the `/settings` panel rows toggle/cycle in place.
@@ -304,16 +365,17 @@ impl Settings {
 
     /// Render the panel as a printed list of `label: value` rows (the HEADLESS
     /// degradation of the TUI panel, and the body of the `/settings` line echo),
-    /// followed by the read-only [`DOLT_PATH_ROW_LABEL`] row (TASK-262).
+    /// followed by the read-only [`ReadOnlyRows`] (TASK-262, TASK-320).
     pub(crate) fn render_list(&self) -> String {
-        self.render_list_showing(&resolve_dolt_path())
+        self.render_list_showing(&ReadOnlyRows::resolved())
     }
 
-    // trace:TASK-262 | ai:claude
-    /// [`Settings::render_list`] with the domain-graph path passed IN, so the
+    // trace:TASK-262 | ai:claude — widened to all three read-only rows by
+    // TASK-320.
+    /// [`Settings::render_list`] with the read-only values passed IN, so the
     /// rendering stays pure and testable while the public entry point resolves
-    /// the live one.
-    fn render_list_showing(&self, dolt_path: &Path) -> String {
+    /// the live ones.
+    fn render_list_showing(&self, read_only: &ReadOnlyRows) -> String {
         let mut out = String::from("Settings\n");
         for key in SettingKey::order() {
             out.push_str(&format!(
@@ -322,11 +384,14 @@ impl Settings {
                 self.value_label(key)
             ));
         }
-        out.push_str(&dolt_path_row(dolt_path));
+        for line in read_only.lines() {
+            out.push_str(&line);
+            out.push('\n');
+        }
         out.push_str(
             "  (toggle with /editor, /mouse, /score, /mode — or /settings set <key> <value>;\n   \
-             the domain graph is read-only here — set dolt_path in settings.toml or \
-             $QUIZDOM_DOLT_PATH)\n",
+             the three rows above are read-only here — set dolt_path / auto_backup / log_path\n   \
+             in settings.toml, or $QUIZDOM_DOLT_PATH / $QUIZDOM_AUTO_BACKUP / $QUIZDOM_LOG_PATH)\n",
         );
         out
     }
@@ -629,6 +694,45 @@ pub(crate) fn resolve_auto_backup() -> bool {
         env::var("QUIZDOM_AUTO_BACKUP").ok().as_deref(),
         &config_text(),
     )
+}
+
+// trace:TASK-324 | ai:claude
+/// THE resolution chain for the NAME of the Dolt remote `db-backup` pushes to:
+/// `QUIZDOM_BACKUP_REMOTE` (env) > `backup_remote` (settings.toml) >
+/// [`crate::db_backup::BACKUP_REMOTE_NAME`]. `--remote` sits on top, exactly as
+/// `--path` does over [`resolve_dolt_path`].
+///
+/// The chain exists because the PROBE and the PUSH have to agree. `db-backup`
+/// has always accepted `--remote <name>`, but the end-of-session probe read the
+/// tracking ref for the hardcoded default — so an operator who backs up under
+/// another name never populates `remotes/backup/main`, the probe reads the
+/// missing ref as "never backed up" (the right call for a default-named
+/// remote), and the reminder then fires after every writing session including
+/// seconds after a successful backup. A reminder that is always wrong is worse
+/// than no reminder: it trains the user to skip the line that matters.
+pub(crate) fn resolve_backup_remote() -> String {
+    backup_remote_from(
+        env::var("QUIZDOM_BACKUP_REMOTE").ok().as_deref(),
+        &config_text(),
+    )
+}
+
+/// The pure tier selection behind [`resolve_backup_remote`]. Blank values fall
+/// through to the next tier, matching [`tiered_path`] — an exported-but-empty
+/// variable must not name the empty remote.
+fn backup_remote_from(env_value: Option<&str>, config: &str) -> String {
+    fn non_blank(value: &str) -> Option<String> {
+        let trimmed = value.trim();
+        (!trimmed.is_empty()).then(|| trimmed.to_string())
+    }
+    env_value
+        .and_then(non_blank)
+        .or_else(|| {
+            config_value(config, "backup_remote")
+                .as_deref()
+                .and_then(non_blank)
+        })
+        .unwrap_or_else(|| crate::db_backup::BACKUP_REMOTE_NAME.to_string())
 }
 
 /// The pure tier selection behind [`resolve_auto_backup`], split from the env
@@ -1372,8 +1476,7 @@ mod tests {
     // env var stay the way to change it).
     #[test]
     fn settings_list_shows_the_domain_graph_path() {
-        let list =
-            Settings::default().render_list_showing(Path::new("/home/someone/graphs/quizdom"));
+        let list = Settings::default().render_list_showing(&test_read_only_rows());
         assert!(list.contains(DOLT_PATH_ROW_LABEL), "{list}");
         assert!(list.contains("/home/someone/graphs/quizdom"), "{list}");
         // Read-only is stated, so nobody hunts for a toggle that is not there.
@@ -1381,6 +1484,97 @@ mod tests {
         assert!(list.contains("QUIZDOM_DOLT_PATH"), "{list}");
         // The four toggles are still the rows above it.
         assert!(list.contains("Editor mode"), "{list}");
+    }
+
+    /// The read-only trio with recognisable values, for the row tests.
+    fn test_read_only_rows() -> ReadOnlyRows {
+        ReadOnlyRows {
+            dolt_path: PathBuf::from("/home/someone/graphs/quizdom"),
+            auto_backup: true,
+            log_path: PathBuf::from("/home/someone/logs/quizdom.log"),
+        }
+    }
+
+    // trace:TASK-320 | ai:claude — STORY-299 added `auto_backup` and `log_path`
+    // and gave neither a surface. `auto_backup` is a DURABILITY control (the
+    // worst category to hide: believing it is on and believing it is off look
+    // identical until the disk dies) and `log_path` is the answer to "where do I
+    // look when something degraded?", which otherwise lived only in prose.
+    #[test]
+    fn settings_list_shows_auto_backup_and_the_diagnostic_log() {
+        let list = Settings::default().render_list_showing(&test_read_only_rows());
+
+        assert!(list.contains(AUTO_BACKUP_ROW_LABEL), "{list}");
+        assert!(list.contains(LOG_PATH_ROW_LABEL), "{list}");
+        assert!(list.contains("/home/someone/logs/quizdom.log"), "{list}");
+        // The VALUE is shown, not just the label — On, because these rows exist
+        // to answer "is it on?".
+        let auto_row = list
+            .lines()
+            .find(|line| line.contains(AUTO_BACKUP_ROW_LABEL))
+            .unwrap_or_default()
+            .to_string();
+        assert!(auto_row.contains("On"), "{list}");
+        // Each row names the settings key and the env var that DO change it,
+        // since none of the three is togglable here.
+        for lever in [
+            "auto_backup",
+            "QUIZDOM_AUTO_BACKUP",
+            "log_path",
+            "QUIZDOM_LOG_PATH",
+        ] {
+            assert!(list.contains(lever), "list missing {lever}:\n{list}");
+        }
+    }
+
+    // trace:TASK-320 | ai:claude — an OFF auto-backup must read as Off rather
+    // than as an absent row: "no row" and "row saying Off" are the same pixels
+    // to a user who does not know the row exists.
+    #[test]
+    fn an_off_auto_backup_still_gets_a_row() {
+        let list = Settings::default().render_list_showing(&ReadOnlyRows {
+            auto_backup: false,
+            ..test_read_only_rows()
+        });
+
+        let auto_row = list
+            .lines()
+            .find(|line| line.contains(AUTO_BACKUP_ROW_LABEL))
+            .expect("the auto-backup row is unconditional");
+        assert!(auto_row.contains("Off"), "{auto_row}");
+    }
+
+    // trace:TASK-324 | ai:claude — the remote NAME resolves through the same
+    // env > settings > default chain as every other quizdom value, so the
+    // end-of-session probe and `db-backup`'s push cannot disagree about which
+    // remote they mean.
+    #[test]
+    fn the_backup_remote_name_resolves_env_then_settings_then_default() {
+        assert_eq!(
+            backup_remote_from(Some("archive"), "backup_remote = \"from-file\"\n"),
+            "archive",
+            "env wins"
+        );
+        assert_eq!(
+            backup_remote_from(None, "backup_remote = \"from-file\"\n"),
+            "from-file",
+            "settings is the middle tier"
+        );
+        assert_eq!(
+            backup_remote_from(None, ""),
+            crate::db_backup::BACKUP_REMOTE_NAME,
+            "the compiled default is the floor"
+        );
+        // An exported-but-empty variable must not name the empty remote — same
+        // fall-through rule as `tiered_path`.
+        assert_eq!(
+            backup_remote_from(Some("   "), "backup_remote = \"from-file\"\n"),
+            "from-file",
+        );
+        assert_eq!(
+            backup_remote_from(Some(""), ""),
+            crate::db_backup::BACKUP_REMOTE_NAME,
+        );
     }
 
     // trace:TASK-266 | ai:claude — a persisted `score` survives a load/save round

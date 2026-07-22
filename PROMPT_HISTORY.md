@@ -589,3 +589,96 @@ the log while the terminal stayed uncorrupted.
 **Docs.** `OVERVIEW.md` gains § *Explicit backups, and the three ways not to
 forget one* and § *The diagnostic log*, and its settings table lists the two new
 keys; `CLAUDE.md` summarizes both.
+
+## 2026-07-22 — STORY-326: finishing the durability + logging surface
+
+**Request.** `/aida-pickup STORY-326` under a headless `aida queue work
+STORY-326 --auto-complete --no-human=both` drain. Third-generation follow-ups on
+what STORY-299 shipped — five TASKs, all in `db_backup.rs`, the logging seam and
+`settings.rs`. Two of them (TASK-325, TASK-322) were filed *precisely* because
+the earlier implementer wanted the trade-off visible rather than assumed, so the
+work here is mostly deciding, then pinning the decision with a test.
+
+**TASK-325 — a blind probe no longer cancels an opted-in push (the decision).**
+`durability_footer` matched `UpToDate | Unknown => None` *before* consulting
+`auto_backup`, so a probe that could not answer silently skipped a push the user
+explicitly asked for: no push, no reminder, no log line — the only path through
+the function that left no trace, in the module built to leave traces. The two
+halves of the rule now differ because their costs differ. For the **reminder**,
+silence stays right: a failed probe is not evidence of drift, and nagging on a
+broken probe costs trust in every later reminder. For the **push**, silence was
+wrong: a redundant push costs seconds against a directory the user already
+nominated, a skipped one costs the graph, and setting `auto_backup = true` is
+someone saying which they would rather have. So `Unknown` + auto-backup on now
+pushes and says why (*"Could not tell whether the domain graph was backed up, so
+pushed it to … anyway."*), degrading to the usual reminder if the push fails;
+`Unknown` + auto-backup off stays silent but records the blind probe.
+
+**TASK-324 — the probe and the push now name the same remote.** The end-of-
+session probe hardcoded `BACKUP_REMOTE_NAME` while `db-backup` accepted
+`--remote <name>`, so an operator working under another name never populated
+`remotes/backup/main`; a missing tracking ref deliberately reads as *"you have
+never backed this graph up"*, and the reminder then fired after every writing
+session — including seconds after a successful `db-backup --remote archive`. A
+reminder that is always wrong is exactly what the Unknown-stays-silent rule was
+written to avoid. Added `settings::resolve_backup_remote` in the shape every
+other quizdom value already has (`$QUIZDOM_BACKUP_REMOTE` > `backup_remote` >
+`backup`), made it the parsed default so `--remote` still sits on top, and
+resolved it **once** in `session_end_durability` for both the probe and the push.
+Chose the resolution chain over "read the repo's remote list and find whichever
+points at the backup directory" because one rule for every quizdom value beats a
+second, cleverer rule for this one.
+
+**TASK-321 — the diagnostic log is bounded.** A healthy install writes nothing at
+all, but a persistently broken store (a graph missing its `edges` table) writes a
+line per probed read per turn, unbounded, in the situation the user is least
+likely to be watching. At 1 MiB `append_entry` renames the file to
+`quizdom.log.1` and opens a fresh one with a line saying so. Rotation rather than
+truncate-on-open, which TASK-321 also offered: truncating discards the run of
+entries that *explains* the breakage that filled the file, which is the only
+reason the file exists. One generation, one `rename`, no rotation state that can
+be wrong; worst case is ~2 MiB.
+
+**TASK-322 — terminal safety is now proven behaviourally, not just lexically.**
+The source scan stays (it covers every path through the module, including
+branches no test exercises — a print on a rare error branch is what would corrupt
+a frame in the field). Beside it, a real capture: a child process re-runs the
+test binary for one `#[ignore]`d test with `--test-threads=1 --nocapture`, enters
+the alternate screen, drives `record` / `degraded_read` / a successful file write
+/ a write that **fails**, and the parent asserts the bytes between crossterm's
+enter and leave sequences are zero. The child is what makes the assertion
+possible: the `dup2`-this-process approach TASK-322 proposed was implemented
+first and failed, because the capture then also contains libtest's `test … ok`
+lines from every concurrent test. `--nocapture` is load-bearing — it is what lets
+a stray `println!` reach the pipe instead of being swallowed. Verified by
+mutation: adding a `println!` to `emit` fails the test. No new dependency (the
+`libc` dev-dependency the fd approach needed was dropped with it); `diagnostics.rs`
+joins the BUG-200 allowlist, which already models "this file spawns something
+that is not `aida`".
+
+**TASK-320 — `auto_backup` and the log path are visible.** STORY-299 added both
+keys and gave neither a surface. Generalised TASK-262's single `dolt_path_row`
+into `settings::ReadOnlyRows` (resolve once, render everywhere), so the TUI panel
+and the headless value list draw the same three rows from one computation and
+cannot drift. `Auto-backup:` reads On/Off — a durability control is the worst
+category to hide, since believing it is on and believing it is off look identical
+until the disk dies — and `Diagnostics:` shows the resolved log path, which
+doubles as the answer to "something degraded, where do I look?".
+
+**Tests.** 12 new: the two `Unknown` branches (pushes and reports vs stays silent
+and records) plus the failed blind push degrading to the reminder; the probe
+reading a non-default remote's tracking ref and the flag-over-chain precedence;
+the remote name's tier resolution including blank-value fall-through; rotation at
+the bound, the previous generation being kept, a second rotation replacing rather
+than accumulating it, and a small log left untouched; the alternate-screen
+capture and its child; and the three read-only rows on both surfaces, including
+an `Off` auto-backup still getting a row.
+
+**Verified.** `cargo fmt --all` applied; `cargo clippy --workspace --all-targets
+-- -D warnings` exits 0; 675 quizdom + 7 llm tests green; all 8 `real_dolt`
+acceptance tests pass against local dolt 2.2.1.
+
+**Docs.** `OVERVIEW.md` gains the read-only-rows table in § *Settings*, the
+configured-remote and blind-probe rules in § *Durability and recovery*, and the
+log bound + the two-test rationale in § *The diagnostic log*; `CLAUDE.md`
+summarizes all five.

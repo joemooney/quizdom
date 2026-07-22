@@ -415,6 +415,11 @@ mod tests {
             // `dolt_path` decides which graph the session reads, so it is visible
             // here even though `/settings` cannot change it.
             crate::settings::DOLT_PATH_ROW_LABEL,
+            // trace:TASK-320 | ai:claude — and the durability control plus the
+            // diagnostic log path, which the headless surface needs at least as
+            // much as the TUI: there is no panel to go looking in.
+            crate::settings::AUTO_BACKUP_ROW_LABEL,
+            crate::settings::LOG_PATH_ROW_LABEL,
         ] {
             assert!(out.contains(label), "list missing {label}:\n{out}");
         }
