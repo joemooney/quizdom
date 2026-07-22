@@ -30,12 +30,12 @@ description: |
   was recorded" is a property worth stating deliberately rather than inheriting.
 
   Raised in review of PR-105: https://github.com/joemooney/quizdom/pull/105#issuecomment-5050208191
-status: Draft
+status: Completed
 priority: Medium
 owner: ''
 feature: Uncategorized
 created_at: 2026-07-22T18:57:10.391325260Z
-modified_at: 2026-07-22T18:57:10.391325260Z
+modified_at: 2026-07-22T20:09:05.281498766Z
 req_type: Task
 tags:
 - diagnostics
