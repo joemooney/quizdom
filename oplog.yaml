@@ -8820,5 +8820,45 @@ operations:
     req_type: Story
     status: Approved
     priority: Medium
-clock: 643
+- id: 019f8b70-d83b-71c0-a22e-c883323532ae
+  target_id: 019f8b70-d5a3-7a73-956a-345e5cdba01c
+  author: aida
+  node_id: ''
+  lamport: 644
+  timestamp: 2026-07-22T20:07:36.251962685Z
+  kind: !Create
+    title: one_line lets bidi format characters (Cf) through — narrower than logs.rs claims
+    description: |
+      `diagnostics::one_line` (crates/quizdom/src/diagnostics.rs:137-152) keys its
+      "every other control character becomes a space" arm off `char::is_control()`,
+      which is Unicode category **Cc** only (U+0000-U+001F, U+007F-U+009F).
+
+      Category **Cf** is not covered: U+202E RIGHT-TO-LEFT OVERRIDE, U+2066-U+2069
+      bidi isolates, U+200B ZERO WIDTH SPACE. None is a control character and none is
+      an ANSI escape sequence, so all pass through both the write-side pass in
+      `format_entry` and the read-side pass at `logs.rs:183`.
+
+      Verified against the built binary: a log line carrying a raw RLO prints it
+      verbatim (bytes `e2 80 ae` on stdout) and the terminal renders everything after
+      it reversed.
+
+      Why it matters: STORY-352's acceptance bullet names control characters and ANSI
+      escapes, and both ARE handled — this does not miss the bullet. But `logs.rs`'s
+      own module docs (lines 49-56) make the stronger claim that this module "is the
+      one place that guarantees what it prints cannot rearrange the terminal it prints
+      to", and a bidi override rearranges it. Entries quote subprocess output
+      (`degraded_read`, the auto-backup footer), and displayed paths come from
+      `$QUIZDOM_LOG_PATH` / `settings.toml` / `--path`, so the input is not all
+      quizdom's own prose.
+
+      Not a regression: before this PR every byte of an entry reached the terminal.
+
+      Possible fix: extend the filter arm from `is_control()` to also drop or replace
+      Cf, or narrow the module docstring to the claim the code actually makes.
+
+      Raised in review of PR-108: https://github.com/joemooney/quizdom/pull/108#issuecomment-5050918360
+    req_type: Task
+    status: Draft
+    priority: Medium
+clock: 644
 node_id: ''
