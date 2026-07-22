@@ -16,12 +16,12 @@ description: |
   branching on `nodes.is_empty() && kept.is_empty()` before the message.
 
   Raised in review of PR-98: https://github.com/joemooney/quizdom/pull/98
-status: Draft
+status: Completed
 priority: Medium
 owner: ''
 feature: Uncategorized
 created_at: 2026-07-22T15:19:02.931791983Z
-modified_at: 2026-07-22T15:19:02.931791983Z
+modified_at: 2026-07-22T19:40:36.785528459Z
 req_type: Task
 tags:
 - dolt
