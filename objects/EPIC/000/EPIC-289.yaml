@@ -1,0 +1,12 @@
+id: 019f8a50-db6d-7742-9398-5dca3c6179f5
+spec_id: EPIC-289
+agreed_id: EPIC-289
+title: 'Second-generation cleanup: settings correctness, Dolt commit lifecycle, backup hardening, trait follow-through'
+description: 'Umbrella for the findings the EPIC-249 PRs (#91-#97) generated during their own reviews. Grouped into file-disjoint clusters so drains do not collide: settings.rs correctness; the db-init/db-migrate commit gap; db_backup.rs hardening; the DomainStore/signals contract follow-through; and dead-code hygiene. Two items are deliberately NOT in scope because they need a human design decision first — TASK-273 (should backups be automatic after session writes, or stay explicit?) and TASK-257 (where should a TUI app log, given the alternate screen makes eprintln invisible or corrupting?).'
+status: Approved
+priority: Medium
+owner: ''
+feature: Uncategorized
+created_at: 2026-07-22T14:53:02.701665242Z
+modified_at: 2026-07-22T14:53:02.701665242Z
+req_type: Epic
