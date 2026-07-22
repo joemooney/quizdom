@@ -20,9 +20,16 @@ priority: Medium
 owner: ''
 feature: Uncategorized
 created_at: 2026-07-22T19:51:02.884710814Z
-modified_at: 2026-07-22T19:51:02.884710814Z
+modified_at: 2026-07-22T20:09:54.551710059Z
 req_type: Task
 tags:
 - docs
 - from-review:PR-107
 - severity:cosmetic
+comments:
+- id: 019f8b72-f477-7f12-9bbb-3587d5dc552c
+  author: joe
+  content: Trivial doc-fragment tidy; will be swept by the next edit to that module (TASK-310/294 rename).
+  created_at: 2026-07-22T20:09:54.551710059Z
+  modified_at: 2026-07-22T20:09:54.551710059Z
+  session_id: 789bafdb-f673-41c5-affc-d550f95e51e5
