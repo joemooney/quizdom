@@ -23,9 +23,25 @@ priority: Medium
 owner: ''
 feature: Uncategorized
 created_at: 2026-07-22T14:53:35.261170619Z
-modified_at: 2026-07-22T14:54:25.948991798Z
+modified_at: 2026-07-22T15:12:06.907279782Z
 req_type: Story
 relationships:
 - rel_type: Child
   target_id: 019f8a50-db6d-7742-9398-5dca3c6179f5
   created_at: 2026-07-22T14:53:36.781159484Z
+comments:
+- id: 019f8a62-50fb-7292-a36d-79a773afb139
+  author: joe
+  content: |-
+    Implemented on branch story-291 (commit 8c374fa):
+
+    - TASK-272: db-init commits the schema DDL and db-migrate commits its import; the three copies of the add+commit tail collapsed into one shared `db_init::commit_all` / `is_nothing_to_commit` that DoltDomainStore and db-backup's snapshot also use. Idempotent by construction — a re-run leaves the tree clean, dolt refuses the commit, and no empty commit lands.
+    - TASK-270: reachable's depth-limit error names the engine *default*, explains why a shell-set `cte_max_recursion_depth` cannot reach a per-query spawn (ADR-203), and offers two remedies that work.
+    - TASK-271: the same-second tie-break fixture names its fan-node ids instead of relying on create_node mint ordering, so the assert_ne guard can no longer fire on unrelated fixture drift.
+    - Acceptance regression: `real_dolt_migrate_commits_its_import_so_the_backup_carries_history` runs bootstrap → migrate → backup → restore and asserts the clone holds every node, every edge, and the whole history; `real_dolt_migrate_is_idempotent_and_passes_parity` gained clean-working-set + commit-count assertions across its two runs.
+
+    Test status: 610 quizdom + 7 llm tests green; all 6 real_dolt acceptance tests pass against local dolt 2.2.1; clippy -D warnings clean.
+    Follow-up: TASK-294 (draft) — the shared commit tail lives in db_init.rs; the DoltRunner seam may deserve its own module.
+  created_at: 2026-07-22T15:12:06.907279782Z
+  modified_at: 2026-07-22T15:12:06.907279782Z
+  session_id: 019f8a52-2259-7302-99e5-e3d1ecbeb2dc
