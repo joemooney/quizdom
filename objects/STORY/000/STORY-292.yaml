@@ -27,9 +27,29 @@ priority: Medium
 owner: ''
 feature: Uncategorized
 created_at: 2026-07-22T14:53:52.335563751Z
-modified_at: 2026-07-22T15:47:53.094879266Z
+modified_at: 2026-07-22T16:09:07.552759268Z
 req_type: Story
 relationships:
 - rel_type: Child
   target_id: 019f8a50-db6d-7742-9398-5dca3c6179f5
   created_at: 2026-07-22T14:53:53.770747128Z
+comments:
+- id: 019f8a96-82e0-76e2-a8d5-5fc044cb47a5
+  author: joe
+  content: |-
+    Implemented on branch story-292 (commit aa43e69):
+
+    - TASK-283: db-backup refuses a `--path` the settings chain did not choose unless `--to` is given too — the first push is what claims a backup directory, so the guard is at the parser, before the push. Bare runs and `--path <resolved-default>` unchanged.
+    - TASK-278: `--force` retires the occupying lineage to `<backup>.foreign-lineage` and pushes; a second force lands on `.foreign-lineage.2`. Moves, never deletes. The error message now names the flag with the run's actual `--path`/`--to`, not an `mv` recipe.
+    - TASK-276: clean-tree detection asks the `dolt_status` system table (`is_clean_tree_refusal`); the prose match survives only as a fallback for when the probe cannot run.
+    - TASK-280/282: `guard_test_path` lifted into db_init.rs and applied to db-init, db-migrate and the store's dolt spawns; `domain_store_from_config()` redirected to a temp path under cfg(test); a guard test fails the build if tests/, benches/ or examples/ appears.
+    - TASK-284: stderr/stdout separated with a newline before marker matching.
+    - TASK-275: printed paths shell-quoted; a path with a space round-trips.
+    - TASK-279: `clean_dolt_message` applied to the remaining dolt error surfaces.
+
+    Test status: 634/634 workspace tests green; 7/7 real_dolt acceptance tests green against dolt 2.2.1; clippy `-D warnings` clean; fmt clean. Refusal and `--force` also exercised by hand against real dolt end-to-end.
+
+    Follow-up: TASK-308 (the new `--path`-requires-`--to` refusal is a design call worth advisor eyes), TASK-309 (~40 session tests were reaching the config-resolved graph path — TASK-280's "nothing is broken today" premise was wrong), TASK-310, TASK-311.
+  created_at: 2026-07-22T16:09:07.552759268Z
+  modified_at: 2026-07-22T16:09:07.552759268Z
+  session_id: 019f8a82-9f8c-7530-a381-666e9e1d6f93
