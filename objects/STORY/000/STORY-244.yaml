@@ -28,10 +28,25 @@ priority: Medium
 owner: ''
 feature: Uncategorized
 created_at: 2026-07-22T04:15:17.114492740Z
-modified_at: 2026-07-22T04:15:50.203898159Z
+modified_at: 2026-07-22T04:29:05.791363808Z
 req_type: Story
 relationships:
 - rel_type: References
   target_id: 019f7bb1-4f0e-70b1-81ad-30f35cb71eae
   created_at: 2026-07-22T04:15:32.086680180Z
   created_by: joe
+comments:
+- id: 019f8815-9d7f-7132-b930-18cc1975dab9
+  author: joe
+  content: |-
+    Measured on branch story-244 with a PATH shim logging every dolt invocation, against a copy of the real data/dolt bank (71 questions) and a session log that punts every question twice (all 71 earn an Unhelpful re-weight):
+
+    - before (main sources, same bank + log): 207 spawns and still running when killed at 120s — the full run is 4 spawns/question = 284, matching the story's 264/2m09s baseline.
+    - after: 4 spawns (one IN(...) SELECT, one multi-row UPDATE ... CASE, dolt add -A, dolt commit), 1.94s wall.
+
+    Verified the batched write is correct, not just fast: every one of the 71 rows moved -12 (50->38, 70->58, 65->53) with quality:unhelpful appended, recorded as a single Dolt commit 'quizdom: reweight 71 node(s)'.
+
+    cargo test 578 green (8 new), the 3 ignored real_dolt tests green (they now assert fetch_nodes/list_nodes/neighbors_many agree with the per-item loops against a real dolt, and that update_weights lands on every row), no new clippy warnings.
+  created_at: 2026-07-22T04:29:05.791363808Z
+  modified_at: 2026-07-22T04:29:05.791363808Z
+  session_id: 019f8809-7b78-7d03-87f9-a9f8f3049c97
