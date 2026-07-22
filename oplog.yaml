@@ -4103,5 +4103,36 @@ operations:
     req_type: Task
     status: Draft
     priority: Medium
-clock: 407
+- id: 019f8860-e289-75f3-a3f0-7f0ac4676a55
+  target_id: 019f8860-df89-70c2-b087-6ae2f7e5c373
+  author: aida
+  node_id: ''
+  lamport: 408
+  timestamp: 2026-07-22T05:51:18.665399732Z
+  kind: !Create
+    title: cargo clippy -D warnings fails on 6 pre-existing lints in input.rs / session.rs
+    description: |
+      Spotted incidentally while verifying TASK-246. `cargo clippy --workspace
+      --all-targets -- -D warnings` fails on six pre-existing lints, none of them
+      in TASK-246's blast radius:
+
+        crates/quizdom/src/input.rs:368,398,610  — `io::Error::new(ErrorKind::Other, _)`
+                                                   should be `io::Error::other(_)`
+        crates/quizdom/src/input.rs:657          — `write!()` with a format string
+                                                   ending in a single newline
+        crates/quizdom/src/session.rs:5045,5124  — function has too many arguments (8/7)
+
+      Not currently breaking anything: `.github/workflows/ci.yml:30` runs
+      `cargo clippy --workspace --all-targets` WITHOUT `-D warnings`, so these
+      are warnings in CI, not failures. Worth knowing if anyone ever tightens
+      that CI step — the tightening would need these six cleaned up first.
+      The three `io::Error::other` ones are mechanical; the two
+      `too_many_arguments` ones need a params struct or an `#[allow]`.
+
+      Raised by the implementer while working TASK-246.
+      Branch: task-246  ·  Commit: a5724a6  (PR link added on merge)
+    req_type: Task
+    status: Draft
+    priority: Medium
+clock: 408
 node_id: ''
