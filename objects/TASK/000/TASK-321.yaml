@@ -1,0 +1,37 @@
+id: 019f8ad9-1b65-7510-9777-cb5467163838
+spec_id: TASK-321
+agreed_id: TASK-321
+title: The diagnostic log has no rotation or size bound
+description: |
+  `crates/quizdom/src/diagnostics.rs` appends to one file forever. That is
+  deliberate for a breadcrumb trail — rotation is state, state is a thing that can
+  be wrong, and STORY-299's brief was explicitly "dependency-light, a diagnostic
+  breadcrumb, not a logging framework". In practice the seam only fires on a
+  degraded read or a failed auto-backup, so a healthy install writes nothing at
+  all and the file stays empty.
+
+  The case it does not cover is a persistently broken store: a graph whose
+  `edges` table is missing writes one line per probes read per turn, which grows
+  without bound and is exactly the situation where the user is least likely to be
+  watching. There is no reader of the file yet either — no `quizdom logs` /
+  `--tail` — so today the answer to "something degraded, where do I look?" is
+  prose in OVERVIEW.md.
+
+  Two cheap bounds if the advisor wants one: truncate-on-open when the file
+  exceeds N MB (one `metadata()` call, no rotation state), or de-duplicate
+  consecutive identical events with a repeat count. Either is a small change to
+  `append_entry`.
+
+  Raised by the implementer while working STORY-299.
+  Branch: story-299  ·  Commit: c14f75b  (PR link added on merge)
+status: Draft
+priority: Medium
+owner: ''
+feature: Uncategorized
+created_at: 2026-07-22T17:21:51.973691907Z
+modified_at: 2026-07-22T17:21:51.973691907Z
+req_type: Task
+tags:
+- from-implementer:STORY-299
+- kind:design-choice
+- severity:minor
