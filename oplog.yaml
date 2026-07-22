@@ -4589,5 +4589,54 @@ operations:
   timestamp: 2026-07-22T06:31:36.944752467Z
   kind: !SetStatus
     status: In Progress
-clock: 427
+- id: 019f888b-d9d1-7590-bc66-453602e59ac3
+  target_id: 019f888b-d7fc-73d3-8cc1-f532ed753e39
+  author: aida
+  node_id: ''
+  lamport: 428
+  timestamp: 2026-07-22T06:38:14.481182886Z
+  kind: !Create
+    title: 'settings.toml: an inline comment or single-quoted dolt_path yields a garbage path, and db-init now creates a repo there'
+    description: |
+      `unquote` (crates/quizdom/src/settings.rs:578) strips only a MATCHED pair of
+      double quotes and has no notion of a trailing `# comment` — both of which the
+      file's own `.toml` extension implies are legal. So a valid-TOML value is
+      mangled by `config_entry` (settings.rs:408):
+
+          dolt_path = "/tmp/x/inline"  # the big disk
+          -> resolves to the literal string: "/tmp/x/inline"  # the big disk
+          dolt_path = '/tmp/x/single'
+          -> resolves to the literal string: '/tmp/x/single'
+
+      The value-mangling half is PRE-EXISTING — the old `dolt_store::config_value`
+      used `trim_matches('"')` and was equally broken. What STORY-258 changes is the
+      blast radius: before TASK-228, `db-init` ignored the settings file entirely, so
+      a malformed `dolt_path` produced only a runtime "no Dolt repo at ..." read
+      error. Now `db-init` acts on it and silently CREATES a repo at the garbage
+      path, reporting success:
+
+          $ quizdom db-init          # dolt_path has an inline comment
+          Initialised Dolt repo at "/tmp/x/inline"  # the big disk.
+          Applied domain-graph schema (nodes, edges) — DDL is idempotent.
+          $ find .
+          ./"
+          ./"/tmp
+          ./"/tmp/x/inline"  # the big disk      <- a real Dolt repo nested under cwd
+
+      The user then has a bootstrapped-looking repo in the wrong place and an
+      unhelpful path in every subsequent error message.
+
+      Fix shape: in `config_entry`, strip an unquoted trailing `# ...` before
+      unquoting, and accept `'...'` as well as `"..."` in `unquote`. Both readers go
+      through `config_entry` since TASK-222, so one change covers the runtime store,
+      db-init and db-migrate.
+
+      Out of scope for STORY-258's acceptance, which asked the two readers to AGREE
+      on the same input — and they now do, identically.
+
+      Raised in review of PR-93: https://github.com/joemooney/quizdom/pull/93#issuecomment-5042707911
+    req_type: Task
+    status: Draft
+    priority: Medium
+clock: 428
 node_id: ''
