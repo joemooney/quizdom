@@ -27,9 +27,31 @@ priority: Medium
 owner: ''
 feature: Uncategorized
 created_at: 2026-07-22T14:53:19.415682342Z
-modified_at: 2026-07-22T15:19:50.802735282Z
+modified_at: 2026-07-22T15:37:32.355841554Z
 req_type: Story
 relationships:
 - rel_type: Child
   target_id: 019f8a50-db6d-7742-9398-5dca3c6179f5
   created_at: 2026-07-22T14:53:20.432761707Z
+comments:
+- id: 019f8a79-97c3-7e60-8aed-7b3b5eb65b08
+  author: joe
+  content: |-
+    Implemented on branch story-290 (commit cf4c24c):
+
+    - TASK-265 — `parse_value` reads values the way TOML does: double AND single quotes unwrap, an unquoted value ends at an inline `#`. Malformed input still degrades to the old tolerant matched-pair strip rather than becoming fatal.
+    - TASK-263 — a relative `dolt_path` / `dolt_backup_path` now anchors to the settings file's own directory. The env var, the `--path` flag and the compiled `data/dolt` default deliberately stay cwd-relative; rule + rationale documented in OVERVIEW.md § "Settings, and how a relative path resolves" and summarised in CLAUDE.md.
+    - TASK-266 — the engine seeds `score_gauge_on` from the new `FrontEnd::persisted_score` instead of hardcoding `false` and then saving that default over the user's file on the first `/settings`.
+    - TASK-267 — `rendered_line` returns `Option`; `modelled_line` debug-asserts on `None` and `every_modelled_key_renders_a_line` fails on an unrendered MODELLED_KEYS entry.
+    - TASK-268 — `merged_body` splits the refuse-vs-preserve decision from the IO: a present-but-unreadable file is now an error, not a fresh write that drops foreign keys.
+    - TASK-262 — `/settings` shows the resolved `dolt_path` as a read-only row in both the headless value list and the TUI panel.
+    - Hermeticity: `load_or_seed` / `save` are `cfg(test)` no-ops, so the developer's real `~/.config/quizdom/settings.toml` cannot leak into the suite once a persisted `score` seeds the gauge.
+
+    Test status: 617/617 workspace tests green; 6/6 `real_dolt` acceptance tests green; clippy `-D warnings` clean; `cargo fmt --check` clean.
+
+    Verified beyond the unit tests: two worktrees sharing one config with `dolt_path = "graphs/main"  # inline comment` both resolved to the same repo under the config dir with no cwd leakage; a headless `/settings` printed the Domain graph row; a session over a file carrying `score = true` left it true.
+
+    Follow-up: TASK-300 (a persisted `mode` is still clobbered the same way `score` was — deliberately out of scope, since mode's precedence vs `--mode` and the resume log is an undecided design call), TASK-301 (`db-init` does not create parent dirs for the resolved path), TASK-302 (the `cfg(test)` no-op trade-off).
+  created_at: 2026-07-22T15:37:32.355841554Z
+  modified_at: 2026-07-22T15:37:32.355841554Z
+  session_id: 019f8a69-6676-7940-88a8-e965c3ebed19
