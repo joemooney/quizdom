@@ -1,0 +1,46 @@
+id: 019f8b71-0e5a-74b2-9627-1f0dfd6d3ec8
+spec_id: TASK-365
+agreed_id: TASK-365
+title: skip_escape_sequence drops CSI and OSC whole but lets DCS/APC/PM payloads print
+description: |
+  `diagnostics::skip_escape_sequence` (crates/quizdom/src/diagnostics.rs:161-208)
+  handles two string-introducer sequences specially — CSI (`ESC [`, consumed to
+  its final byte) and OSC (`ESC ]`, consumed to BEL or ST) — on the explicitly
+  stated rationale that dropping only the `ESC` "is the difference between
+  `red text` and `red[0m text`", because the parameters are ordinary printable
+  characters.
+
+  The same reasoning applies to the other ST-terminated string sequences, which
+  the code does not cover: DCS (`ESC P`), APC (`ESC _`), PM (`ESC ^`), and SOS
+  (`ESC X`). They fall to the two-character `_` arm, so the `ESC` is consumed and
+  the payload prints.
+
+  Verified against the built binary:
+    `\x1bPqPAYLOAD-LEAKED\x1b\\`  renders as  `qPAYLOAD-LEAKED`
+    `\x1b_APC-LEAKED\x1b\\`       renders as  `APC-LEAKED`
+
+  Severity is cosmetic, not a terminal-safety hole: zero ESC bytes reach stdout in
+  either case (confirmed with `od -c`), so the terminal never enters a string
+  state. What leaks is debris of exactly the `[0m` shape the OSC arm was written
+  to prevent — an inconsistency in the rule rather than a hazard.
+
+  How likely is the input? Low. These sequences come from sixel graphics,
+  terminal-query replies, and tmux passthrough, none of which is on quizdom's
+  dolt-subprocess path today. It is filed for consistency of the rule, not
+  urgency.
+
+  Possible fix: fold `P`, `_`, `^`, `X` into the OSC arm — the ST/BEL termination
+  logic is already written and identical.
+
+  Raised in review of PR-108: https://github.com/joemooney/quizdom/pull/108#issuecomment-5050918360
+status: Draft
+priority: Medium
+owner: ''
+feature: Uncategorized
+created_at: 2026-07-22T20:07:50.106213411Z
+modified_at: 2026-07-22T20:07:50.106213411Z
+req_type: Task
+tags:
+- from-review:PR-108
+- kind:terminal-safety
+- severity:cosmetic
