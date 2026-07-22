@@ -14,10 +14,10 @@ description: |-
   - A backend reporting absence as the wrong variant is caught by a test rather than silently degrading.
   - No clippy::too_many_arguments allow remains in session.rs; clippy is clean under -D warnings without them.
   - cargo test green; no behavior change beyond the contract fixes.
-status: Approved
+status: InProgress
 priority: Medium
 owner: ''
 feature: Uncategorized
 created_at: 2026-07-22T17:34:48.120078340Z
-modified_at: 2026-07-22T17:34:48.120078340Z
+modified_at: 2026-07-22T18:00:56.895824302Z
 req_type: Story
