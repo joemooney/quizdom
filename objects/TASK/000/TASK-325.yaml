@@ -1,0 +1,42 @@
+id: 019f8ae2-34d3-7c33-ab12-b8ff0b90bec1
+spec_id: TASK-325
+agreed_id: TASK-325
+title: An Unknown backup probe silently cancels the opt-in auto_backup push
+description: |
+  `durability_footer` matches `BackupPosition::UpToDate | BackupPosition::Unknown
+  => None` before it consults `auto_backup`
+  (`crates/quizdom/src/db_backup.rs:791`).
+
+  For the REMINDER that is correct and well argued in the code: a probe that could
+  not answer is not evidence of drift, and nagging on a broken probe trains users
+  to ignore the line. But the same branch also cancels a push the user explicitly
+  opted into, and the doc comment on `BackupPosition::Unknown` only justifies the
+  reminder half — the push consequence reads as unconsidered rather than decided.
+
+  Failure mode: a user with `auto_backup = true` running a dolt release that
+  renamed or removed `dolt_remote_branches` (or any path where the probe returns
+  `Unknown` — unparseable output, a query error) gets no push, no reminder, and no
+  diagnostic-log entry. It is the only failure mode this PR introduces with no
+  breadcrumb anywhere, in the PR that built the breadcrumb seam. CI's pinned dolt
+  plus `real_dolt_backup_position_tracks_pushes_commits_and_a_dirty_tree` catch a
+  rename in the pipeline, but that does not help a user on a different dolt.
+
+  Smallest close: `crate::diagnostics::record` the `Unknown` position so the
+  silence is at least explicable after the fact. Larger question for the advisor:
+  should `Unknown` + `auto_backup = true` attempt the push anyway, on the grounds
+  that an opted-in user would rather have a redundant push than a skipped one?
+  That is a design call, not a mechanical fix.
+
+  Raised in review of PR-102: https://github.com/joemooney/quizdom/pull/102#issuecomment-5049355015
+status: Draft
+priority: Medium
+owner: ''
+feature: Uncategorized
+created_at: 2026-07-22T17:31:48.307663753Z
+modified_at: 2026-07-22T17:31:48.307663753Z
+req_type: Task
+tags:
+- backup
+- diagnostics
+- from-review:PR-102
+- severity:minor
