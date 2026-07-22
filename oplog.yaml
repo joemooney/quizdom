@@ -4160,5 +4160,37 @@ operations:
     req_type: Story
     status: Approved
     priority: Medium
-clock: 409
+- id: 019f8867-7ef8-76b3-bace-5a9a05eaaf60
+  target_id: 019f8867-7b7a-76d3-b1ae-a95eec1aebac
+  author: aida
+  node_id: ''
+  lamport: 410
+  timestamp: 2026-07-22T05:58:31.928267193Z
+  kind: !Create
+    title: apply_log_signals enforces the batch contract in one direction only — extra returned entries are silently dropped
+    description: |
+      crates/quizdom/src/signals.rs:277-281 (TASK-246, PR-91).
+
+      take_by_id's error text states the contract as "a batch load must return one
+      entry per requested id", but only the MISSING direction is enforced. After the
+      walk over `applied` completes, any entries the bank/reweighter returned that
+      nobody asked for are still sitting in the BTreeMap and are silently dropped
+      when it goes out of scope.
+
+      Benign in practice — a superset batch still answers every request correctly,
+      and pairing is by id so an extra entry can't misattribute anything. But the
+      contract as written in the error message is stricter than the check that
+      backs it, so a bank that over-returns violates the stated invariant without
+      anyone noticing.
+
+      Options if this is worth closing: assert `loaded.is_empty()` after the walk
+      and error naming the unrequested ids, or soften the error text to describe
+      only what is actually enforced ("must return an entry for every requested
+      id").
+
+      Raised in review of PR-91: https://github.com/joemooney/quizdom/pull/91#issuecomment-5042411535
+    req_type: Task
+    status: Draft
+    priority: Medium
+clock: 410
 node_id: ''
