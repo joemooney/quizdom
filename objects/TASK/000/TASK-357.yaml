@@ -17,12 +17,12 @@ description: |-
   - A hand-run write to nodes present when a session starts is not committed under a quizdom session message.
   - Whatever the chosen behaviour (refuse at first write, or log), it costs at most one extra dolt spawn per process, not per write.
   - A test drives a real dolt repo with a foreign edit present through a session write.
-status: Draft
+status: Completed
 priority: Medium
 owner: ''
 feature: Uncategorized
 created_at: 2026-07-22T19:41:03.481255479Z
-modified_at: 2026-07-22T19:41:10.123760883Z
+modified_at: 2026-07-22T20:41:20.690974436Z
 req_type: Task
 tags:
 - dolt from-implementer:STORY-351 kind:bug-spotted severity:minor
