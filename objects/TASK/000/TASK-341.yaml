@@ -36,12 +36,12 @@ description: |
   only exercises leg 1.
 
   Raised in review of PR-104: https://github.com/joemooney/quizdom/pull/104#issuecomment-5049890681
-status: Draft
+status: Rejected
 priority: Medium
 owner: ''
 feature: Uncategorized
 created_at: 2026-07-22T18:27:08.794953010Z
-modified_at: 2026-07-22T19:00:47.008459680Z
+modified_at: 2026-07-22T19:00:48.055508534Z
 req_type: Task
 tags:
 - from-review:PR-104
