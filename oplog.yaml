@@ -7956,5 +7956,30 @@ operations:
     req_type: Task
     status: Draft
     priority: Medium
-clock: 595
+- id: 019f8b27-9ef2-7f10-afdd-0e2c78ab5f75
+  target_id: 019f8b27-9c84-7771-85cb-04a87ce3c80f
+  author: aida
+  node_id: ''
+  lamport: 596
+  timestamp: 2026-07-22T18:47:37.458613351Z
+  kind: !Create
+    title: quizdom logs could read the rotated generation inline (--all)
+    description: |
+      `quizdom logs` reads the live log and merely POINTS at `quizdom.log.1` when a
+      rotation has happened; `--path <log>.1` is the manual way to read it. The
+      natural completion is `--all`, concatenating the kept generation ahead of the
+      live one so a single command shows the full ~2 MiB trail in order, with
+      `--tail N` then counting across both.
+
+      Not done under STORY-342 because TASK-331's acceptance asked for a reader and a
+      `--tail`, and the pointer already prevents the failure it was filed against
+      (mistaking a rotated log for the whole story). Cheap to add if anyone actually
+      reaches for it.
+
+      Raised by the implementer while working STORY-342.
+      Branch: story-342  ·  Commit: 99f2f0a  (PR link added on merge)
+    req_type: Task
+    status: Draft
+    priority: Medium
+clock: 596
 node_id: ''
