@@ -43,7 +43,7 @@ priority: Medium
 owner: joe
 feature: Uncategorized
 created_at: 2026-05-31T15:07:46.435019935Z
-modified_at: 2026-07-22T05:46:40.296374148Z
+modified_at: 2026-07-22T14:50:03.690606590Z
 req_type: Task
 tags:
 - upstream:aida
@@ -73,4 +73,10 @@ comments:
   content: 'No longer blocking quizdom (ADR-201: domain graph moves to Dolt). Stands as an upstream AIDA engine finding.'
   created_at: 2026-07-19T18:42:34.287998150Z
   modified_at: 2026-07-19T18:42:34.287998150Z
+  session_id: 789bafdb-f673-41c5-affc-d550f95e51e5
+- id: 019f8a4e-202a-72b3-941f-3bf990c81bc4
+  author: joe
+  content: 'Archived from quizdom 2026-07-22: this is an AIDA engine finding, not quizdom work. Routed upstream for triage via ~/aida-upstream-triage-prompt.md (tagged upstream:aida). Archived Draft deliberately — not rejected, not abandoned; the upstream advisor owns the verdict.'
+  created_at: 2026-07-22T14:50:03.690606590Z
+  modified_at: 2026-07-22T14:50:03.690606590Z
   session_id: 789bafdb-f673-41c5-affc-d550f95e51e5
