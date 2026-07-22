@@ -16,12 +16,12 @@ description: |-
   - No test fixture carries a weight:N tag that no code reads.
   - cargo clippy --workspace --all-targets is clean; if CI is switched to -D warnings, say so in the PR body.
   - cargo test green; behavior unchanged (pure rename/cleanup).
-status: InProgress
+status: Done
 priority: Medium
 owner: ''
 feature: Uncategorized
 created_at: 2026-07-22T06:19:09.009925608Z
-modified_at: 2026-07-22T08:09:25.368561697Z
+modified_at: 2026-07-22T08:09:31.347487477Z
 req_type: Story
 relationships:
 - rel_type: Child
@@ -62,3 +62,7 @@ comments:
   created_at: 2026-07-22T08:08:42.525092105Z
   modified_at: 2026-07-22T08:08:42.525092105Z
   session_id: 019f88d6-0757-7633-acd6-04d48cc0c5ec
+implementation_info:
+  implemented: true
+  implemented_at: 2026-07-22T08:09:31.347487477Z
+  implemented_by: joe
