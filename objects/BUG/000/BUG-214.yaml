@@ -35,7 +35,7 @@ priority: Medium
 owner: ''
 feature: Uncategorized
 created_at: 2026-07-19T19:10:34.027195687Z
-modified_at: 2026-07-22T14:50:07.309805053Z
+modified_at: 2026-07-22T14:50:08.287198412Z
 req_type: Bug
 tags:
 - upstream:aida
@@ -46,3 +46,5 @@ comments:
   created_at: 2026-07-22T14:50:07.309805053Z
   modified_at: 2026-07-22T14:50:07.309805053Z
   session_id: 789bafdb-f673-41c5-affc-d550f95e51e5
+archived: true
+archived_at: 2026-07-22T14:50:08.287198412Z
