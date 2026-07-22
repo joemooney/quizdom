@@ -65,7 +65,15 @@ CI installs a pinned dolt and runs the `real_dolt` acceptance tests
 verified in the pipeline, not only on a developer's machine (STORY-261).
 The domain graph's durability path — a file-based Dolt remote defaulting to
 `~/.local/share/quizdom/dolt-backup`, with the recovery steps spelled out — is
-documented in `OVERVIEW.md` § *Durability and recovery*. Exercising `db-backup`
+documented in `OVERVIEW.md` § *Durability and recovery*. Backups stay
+**explicit** (`STORY-299`): a session that wrote to the graph and sits ahead of
+its backup ends with a one-line reminder naming the command, `auto_backup =
+true` in `settings.toml` opts into the push instead (off by default, degrades
+to the reminder on failure), and cron covers the machine. Survivable failures —
+a degraded store read, a failed auto-backup — go to the append-only diagnostic
+log (`$QUIZDOM_LOG_PATH` > `log_path` > `~/.local/share/quizdom/quizdom.log`),
+never to the terminal: `crates/quizdom/src/diagnostics.rs` is the one seam, and
+the TUI owns the alternate screen. Exercising `db-backup`
 by hand: a `--path` away from the resolved default now REQUIRES `--to`, so a
 scratch run cannot claim the real backup directory (`STORY-292`), and
 `db-backup --force` is the executable way past a backup directory already held

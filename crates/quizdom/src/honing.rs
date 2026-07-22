@@ -145,17 +145,30 @@ pub(crate) fn load_probed_terms(
 ) -> Vec<TermDefinition> {
     // trace:STORY-41 | ai:codex
     // trace:STORY-244 | ai:claude — one batched read for the probed terms.
-    // trace:TASK-247 | ai:claude — both `unwrap_or_default()`s below now
-    // swallow the same thing: a store failure, not a gap in the graph.
-    // `load_terms` is per-item lenient, so an absent probes target costs one
-    // definition rather than every definition for this question.
-    let ids: Vec<String> = bank
-        .probes(&current.id)
-        .unwrap_or_default()
-        .into_iter()
-        .map(|term_ref| term_ref.id)
-        .collect();
-    bank.load_terms(&ids).unwrap_or_default()
+    // trace:TASK-247 | ai:claude — both reads below swallow the same thing: a
+    // store failure, not a gap in the graph. `load_terms` is per-item lenient,
+    // so an absent probes target costs one definition rather than every
+    // definition for this question.
+    // trace:STORY-299 | ai:claude — and a swallowed failure now leaves a
+    // breadcrumb. Degrading to "no definitions" stays the RIGHT behaviour (the
+    // session must not die because one read failed), but it renders
+    // identically to a question that genuinely probes no terms — so the reason
+    // goes to the diagnostic log, which is the only place it can go while the
+    // TUI owns the terminal.
+    let ids: Vec<String> = match bank.probes(&current.id) {
+        Ok(refs) => refs.into_iter().map(|term_ref| term_ref.id).collect(),
+        Err(error) => {
+            crate::diagnostics::degraded_read("probes", &current.id, &error);
+            Vec::new()
+        }
+    };
+    match bank.load_terms(&ids) {
+        Ok(definitions) => definitions,
+        Err(error) => {
+            crate::diagnostics::degraded_read("load_terms", &current.id, &error);
+            Vec::new()
+        }
+    }
 }
 
 pub(crate) fn definitions_for_loaded_terms(

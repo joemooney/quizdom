@@ -34,9 +34,11 @@
 //! ## The file is shared, so this module owns the whole of it (STORY-258)
 //!
 //! Keys outside the `/settings` surface live in the same file — `dolt_path`
-//! selects the Dolt domain-graph repo and `dolt_backup_path` its file-remote
-//! backup directory (STORY-261). Two consequences, both handled here so no
-//! second reader/writer of the file can drift from this one:
+//! selects the Dolt domain-graph repo, `dolt_backup_path` its file-remote
+//! backup directory (STORY-261), `auto_backup` opts into pushing to that
+//! backup when a writing session ends and `log_path` names the diagnostic log
+//! (both STORY-299). Two consequences, both handled here so no second
+//! reader/writer of the file can drift from this one:
 //!
 //! * **Foreign keys survive a save.** [`Settings::to_toml_merged`] rewrites the
 //!   modelled keys IN PLACE and keeps every other line verbatim, so saving from
@@ -557,14 +559,92 @@ pub(crate) fn resolve_dolt_backup_path() -> PathBuf {
 /// With neither var set (no home to speak of) it degrades to a sibling of the
 /// repo, which still survives deleting `data/dolt` itself.
 fn default_dolt_backup_path() -> PathBuf {
+    user_data_dir()
+        .map(|base| base.join("dolt-backup"))
+        .unwrap_or_else(|| PathBuf::from("data/dolt-backup"))
+}
+
+// trace:STORY-299 | ai:claude
+/// THE resolution chain for the diagnostic log [`crate::diagnostics`] appends
+/// to: `QUIZDOM_LOG_PATH` (env) > `log_path` (settings.toml) >
+/// [`default_log_path`].
+///
+/// Same shape as the two Dolt paths on purpose, so the one rule a user has to
+/// learn covers every path quizdom resolves — including TASK-263's anchoring,
+/// which matters here for the same reason: a relative `log_path` in the
+/// per-user settings file would otherwise name a different log from every
+/// worktree.
+pub(crate) fn resolve_log_path() -> PathBuf {
+    tiered_path(
+        env::var("QUIZDOM_LOG_PATH").ok().as_deref(),
+        &config_text(),
+        config_dir().as_deref(),
+        "log_path",
+        default_log_path(),
+    )
+}
+
+/// `$XDG_DATA_HOME/quizdom/quizdom.log`, else
+/// `$HOME/.local/share/quizdom/quizdom.log` — the SAME user data directory the
+/// default backup lives under, so everything quizdom keeps outside the project
+/// tree is in one place to find (and one place to clear).
+fn default_log_path() -> PathBuf {
+    user_data_dir()
+        .map(|base| base.join("quizdom.log"))
+        .unwrap_or_else(|| PathBuf::from("data/quizdom.log"))
+}
+
+/// `$XDG_DATA_HOME/quizdom`, else `$HOME/.local/share/quizdom` — the user data
+/// directory shared by the default backup path and the default log path.
+/// `None` when neither var is set (no home to speak of); each caller then picks
+/// its own in-project degrade.
+fn user_data_dir() -> Option<PathBuf> {
     env::var_os("XDG_DATA_HOME")
         .map(PathBuf::from)
         .filter(|path| !path.as_os_str().is_empty())
         .or_else(|| {
             env::var_os("HOME").map(|home| PathBuf::from(home).join(".local").join("share"))
         })
-        .map(|base| base.join("quizdom").join("dolt-backup"))
-        .unwrap_or_else(|| PathBuf::from("data/dolt-backup"))
+        .map(|base| base.join("quizdom"))
+}
+
+// trace:STORY-299 | ai:claude — TASK-273's opt-in half.
+/// Whether a session that WROTE to the domain graph should push to the backup
+/// remote on its way out: `QUIZDOM_AUTO_BACKUP` (env) > `auto_backup`
+/// (settings.toml) > **off**.
+///
+/// Off is the default, and that is the decision rather than an oversight
+/// (STORY-299). A push is seconds of `dolt` spawns against a directory that may
+/// be a removable disk or a synced folder, so performing one implicitly at the
+/// end of every writing session spends the user's time and can fail in ways
+/// that muddy the end of a session. `quizdom db-backup` stays THE primitive.
+/// What the default costs — a backup nobody remembers to run — is answered by
+/// the reminder ([`crate::db_backup::session_end_durability`]), not by flipping
+/// this on for people.
+///
+/// Anyone who wants the push does opt in, with one line in `settings.toml`
+/// (`auto_backup = true`) or `QUIZDOM_AUTO_BACKUP=1` for one shell.
+pub(crate) fn resolve_auto_backup() -> bool {
+    auto_backup_from(
+        env::var("QUIZDOM_AUTO_BACKUP").ok().as_deref(),
+        &config_text(),
+    )
+}
+
+/// The pure tier selection behind [`resolve_auto_backup`], split from the env
+/// and file reads exactly as [`dolt_path_from`] is. An UNPARSEABLE value at a
+/// tier falls through to the next rather than reading as `false`, so a typo
+/// (`auto_backup = ture`) cannot silently disable a backup the user asked for
+/// in the environment.
+fn auto_backup_from(env_value: Option<&str>, config: &str) -> bool {
+    env_value
+        .and_then(parse_on_off)
+        .or_else(|| {
+            config_value(config, "auto_backup")
+                .as_deref()
+                .and_then(parse_on_off)
+        })
+        .unwrap_or(false)
 }
 
 /// The shared env > settings > default selection both Dolt paths use. Blank
@@ -1409,5 +1489,88 @@ mod tests {
         assert_eq!(loaded, saved);
 
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    // trace:STORY-299 | ai:claude — the decision STORY-299 recorded is that
+    // backups stay EXPLICIT, so the absence of the key has to mean off.
+    #[test]
+    fn auto_backup_is_off_unless_someone_asked_for_it() {
+        assert!(!auto_backup_from(None, ""), "an absent key is off");
+        assert!(
+            !auto_backup_from(None, "dolt_path = \"/mnt/data/dolt\"\n"),
+            "a settings file that says nothing about backups is off"
+        );
+        assert!(!auto_backup_from(None, "auto_backup = false\n"));
+        assert!(auto_backup_from(None, "auto_backup = true\n"));
+        // The same permissive on/off vocabulary the other boolean settings take.
+        assert!(auto_backup_from(None, "auto_backup = \"on\"\n"));
+        assert!(
+            auto_backup_from(None, "AUTO_BACKUP = 1\n"),
+            "keys fold case"
+        );
+        // Inline comments are TOML-legal here like everywhere else (TASK-265).
+        assert!(auto_backup_from(
+            None,
+            "auto_backup = true  # nightly disk\n"
+        ));
+    }
+
+    // trace:STORY-299 | ai:claude
+    #[test]
+    fn the_environment_overrides_the_file_and_a_typo_falls_through() {
+        assert!(auto_backup_from(Some("1"), "auto_backup = false\n"));
+        assert!(!auto_backup_from(Some("off"), "auto_backup = true\n"));
+        // An exported-but-empty variable is not an answer — same shape as
+        // `tiered_path`'s blank-falls-through rule.
+        assert!(auto_backup_from(Some(""), "auto_backup = true\n"));
+        // Nor is a typo: it must not silently DISABLE a backup the file asked
+        // for, because the failure would be invisible until a disk died.
+        assert!(auto_backup_from(Some("ture"), "auto_backup = true\n"));
+        assert!(
+            !auto_backup_from(Some("ture"), "auto_backup = nope\n"),
+            "with no parseable answer at any tier, the default stands"
+        );
+    }
+
+    // trace:STORY-299 | ai:claude — the log lives beside the backup, in the user
+    // data dir, never in the project tree.
+    #[test]
+    fn the_default_log_path_sits_next_to_the_default_backup() {
+        let default = default_log_path();
+        assert_eq!(default.file_name().unwrap(), "quizdom.log");
+        assert_eq!(
+            default.parent(),
+            default_dolt_backup_path().parent(),
+            "both defaults hang off the one user data directory"
+        );
+    }
+
+    // trace:STORY-299 | ai:claude — the log path takes the same chain (and so
+    // the same TASK-263 anchoring) as the two Dolt paths.
+    #[test]
+    fn a_relative_log_path_anchors_to_the_settings_file() {
+        let config_dir = Path::new("/home/someone/.config/quizdom");
+
+        assert_eq!(
+            tiered_path(
+                None,
+                "log_path = \"logs/quizdom.log\"\n",
+                Some(config_dir),
+                "log_path",
+                PathBuf::from("unused"),
+            ),
+            PathBuf::from("/home/someone/.config/quizdom/logs/quizdom.log"),
+        );
+        // The env tier stays cwd-relative, exactly as it does for dolt_path.
+        assert_eq!(
+            tiered_path(
+                Some("logs/quizdom.log"),
+                "log_path = \"/absolute/wins/not.log\"\n",
+                Some(config_dir),
+                "log_path",
+                PathBuf::from("unused"),
+            ),
+            PathBuf::from("logs/quizdom.log"),
+        );
     }
 }

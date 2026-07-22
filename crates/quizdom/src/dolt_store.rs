@@ -23,6 +23,7 @@ use crate::store::{DomainStore, EdgeKind, NewNode, NodeKind, NodeRecord};
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::PathBuf;
 use std::process::Output;
+use std::sync::atomic::{AtomicBool, Ordering};
 
 // trace:STORY-244 | ai:claude
 /// How many ids ride in one `IN (...)` list or one batched `UPDATE`, so a bank
@@ -181,8 +182,36 @@ where
         // trace:TASK-280 | ai:claude — the commit tail spawns dolt directly
         // rather than through `run_dolt`, so it takes the tripwire itself.
         crate::db_init::guard_test_path("the domain-graph path", &self.path);
-        crate::db_init::commit_all(&self.runner, &self.path, message).map(|_| ())
+        crate::db_init::commit_all(&self.runner, &self.path, message).map(|committed| {
+            // trace:STORY-299 | ai:claude
+            if committed {
+                GRAPH_WRITTEN.store(true, Ordering::Relaxed);
+            }
+        })
     }
+}
+
+// trace:STORY-299 | ai:claude
+/// Set once this process has COMMITTED at least one domain-graph write.
+///
+/// A process-wide flag rather than a value threaded through the session, for
+/// two reasons. It is a property of the PROCESS (the durability question is
+/// "did this run of quizdom move the graph?"), and the writers are half a dozen
+/// independently-constructed `Default` persisters — `persist.rs`,
+/// `contradiction.rs`, `bank.rs` — each holding its own store, so there is no
+/// single object to hang it on and threading one would mean widening every
+/// persister trait for a boolean.
+///
+/// It is set HERE because [`DoltDomainStore::commit`] is the choke point every
+/// write already passes through, and set only when a commit was actually
+/// created: an idempotent `ensure_edge` that changed nothing leaves the graph
+/// where it was and must not trigger a backup reminder.
+static GRAPH_WRITTEN: AtomicBool = AtomicBool::new(false);
+
+/// Whether this process has committed a domain-graph write — the "a session
+/// that wrote to the graph" half of [`crate::db_backup::session_end_durability`].
+pub(crate) fn graph_written_this_process() -> bool {
+    GRAPH_WRITTEN.load(Ordering::Relaxed)
 }
 
 /// Map a node kind onto the `nodes.kind` enum value and its id prefix.

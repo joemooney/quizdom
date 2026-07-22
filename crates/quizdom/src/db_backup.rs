@@ -78,6 +78,7 @@
 //!   It MOVES the foreign copy aside; nothing here ever deletes a backup.
 
 use crate::db_init::{absolute, clean_dolt_message, DoltRunner, SystemDoltRunner};
+use crate::db_migrate::sql_quote;
 use crate::error::{QuizdomError, Result};
 use std::io::Write;
 use std::path::{Path, PathBuf};
@@ -678,6 +679,228 @@ fn run_dolt(runner: &dyn DoltRunner, cwd: &Path, args: &[&str]) -> Result<Output
         )));
     }
     Ok(output)
+}
+
+// ---------------------------------------------------------------------------
+// trace:STORY-299 | ai:claude — TASK-273: "explicit" must not come to mean
+// "forgotten".
+//
+// The decision STORY-299 recorded is that `db-backup` STAYS the primitive: an
+// implicit network/disk write at the end of every session is surprising, costs
+// seconds of dolt spawns, and can fail in ways that muddy the end of a session.
+// What that leaves is the real gap — a user who writes to the graph for weeks
+// and never runs the command, with the working copy drifting further from the
+// backup every session and nothing anywhere saying so.
+//
+// So the ergonomics close instead of the default: a session that MOVED the
+// graph and sits ahead of its backup remote says so in one line on the way out,
+// naming the exact command; and `auto_backup = true` (off by default) is there
+// for anyone who would rather have the push than the reminder.
+// ---------------------------------------------------------------------------
+
+/// Where the working copy stands relative to its backup remote.
+#[derive(Debug, Clone, Copy, Eq, PartialEq)]
+pub(crate) enum BackupPosition {
+    /// `main` matches the last successful push and nothing is uncommitted —
+    /// a `db-backup` now would transfer nothing.
+    UpToDate,
+    /// The working copy holds something the backup does not: commits since the
+    /// last push, an uncommitted working set, or no push has ever happened.
+    Ahead,
+    /// The question could not be answered — no repo, no dolt, an older dolt
+    /// without the system tables, unparseable output. Deliberately distinct
+    /// from [`Self::Ahead`]: a probe that failed is not evidence of drift, and
+    /// nagging on a broken probe trains users to ignore the line.
+    Unknown,
+}
+
+/// The one query behind [`backup_position`].
+///
+/// Local-only and read-only: `dolt_remote_branches` is the remote-TRACKING ref,
+/// updated by push/fetch, so this never touches the backup directory — which
+/// matters because the backup may be a removable disk or a synced folder that
+/// is not mounted right now. quizdom's own `db-backup` is the only thing that
+/// pushes here, so the tracking ref is an accurate answer rather than a stale
+/// approximation.
+///
+/// `dolt_status` joins in because [`snapshot_working_set`] would commit an
+/// uncommitted working set on the way out: a hand-run `dolt sql -q 'UPDATE
+/// nodes …'` leaves the graph ahead of its backup even though no commit moved.
+fn backup_position_sql(remote: &str) -> String {
+    format!(
+        "SELECT \
+         (SELECT hash FROM dolt_branches WHERE name = {branch}) AS local_hash, \
+         (SELECT hash FROM dolt_remote_branches WHERE name = {tracking}) AS backup_hash, \
+         (SELECT COUNT(*) FROM dolt_status) AS pending",
+        branch = sql_quote(BACKUP_BRANCH),
+        tracking = sql_quote(&format!("remotes/{remote}/{BACKUP_BRANCH}")),
+    )
+}
+
+/// Read [`backup_position_sql`]'s single row. Split out so the interpretation
+/// is testable without a dolt to spawn.
+///
+/// An ABSENT `backup_hash` (no such remote-tracking ref) reads as [`Ahead`],
+/// not [`Unknown`]: "you have never backed this graph up" is the case the
+/// reminder exists for. An absent `local_hash` reads as [`Unknown`] — a repo
+/// with no `main` is not a repo this command understands.
+///
+/// [`Ahead`]: BackupPosition::Ahead
+/// [`Unknown`]: BackupPosition::Unknown
+fn backup_position_from_row(
+    row: Option<&serde_json::Map<String, serde_json::Value>>,
+) -> BackupPosition {
+    let Some(row) = row else {
+        return BackupPosition::Unknown;
+    };
+    let text = |key: &str| row.get(key).and_then(serde_json::Value::as_str);
+    let Some(local) = text("local_hash") else {
+        return BackupPosition::Unknown;
+    };
+    // dolt's JSON renders COUNT(*) as a number in some releases and a string in
+    // others; accept either rather than losing the dirty-tree signal to a
+    // formatting change.
+    let pending = row
+        .get("pending")
+        .and_then(|value| {
+            value
+                .as_u64()
+                .or_else(|| value.as_str().and_then(|text| text.parse().ok()))
+        })
+        .unwrap_or(0);
+    if pending > 0 || text("backup_hash") != Some(local) {
+        return BackupPosition::Ahead;
+    }
+    BackupPosition::UpToDate
+}
+
+/// Ask the repo where it stands relative to its backup. Never fails: every
+/// error is [`BackupPosition::Unknown`], because this runs on the way out of a
+/// session and must not turn a completed session into an error.
+fn backup_position(runner: &dyn DoltRunner, repo: &Path, remote: &str) -> BackupPosition {
+    if !repo.join(".dolt").exists() {
+        return BackupPosition::Unknown;
+    }
+    let args = ["sql", "-r", "json", "-q", &backup_position_sql(remote)].map(String::from);
+    let Ok(output) = runner.run(repo, &args) else {
+        return BackupPosition::Unknown;
+    };
+    if !output.status.success() {
+        return BackupPosition::Unknown;
+    }
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let Ok(value) = serde_json::from_str::<serde_json::Value>(stdout.trim()) else {
+        return BackupPosition::Unknown;
+    };
+    backup_position_from_row(
+        value
+            .get("rows")
+            .and_then(serde_json::Value::as_array)
+            .and_then(|rows| rows.first())
+            .and_then(serde_json::Value::as_object),
+    )
+}
+
+/// The one-line reminder. Names the exact command — a bare `quizdom db-backup`
+/// resolves the same env > settings > default chain this session did, so it
+/// needs no flags to mean the right pair of directories — and names the
+/// destination, because the whole point is that the user has not thought about
+/// this directory recently.
+pub(crate) fn backup_reminder(backup: &Path) -> String {
+    format!(
+        "Domain graph has changes not in its backup — run `quizdom db-backup` to push them to {}.",
+        backup.display()
+    )
+}
+
+/// The end-of-session decision, with the push passed in so the branching is
+/// testable without spawning dolt.
+///
+/// `Ahead` + auto-backup OFF is the reminder. `Ahead` + auto-backup ON attempts
+/// the push and reports it — and on failure DEGRADES to the reminder rather
+/// than surfacing an error, which is the STORY-299 rule: a backup that did not
+/// happen must never be the thing that ends a session badly. The user who opted
+/// in still learns the graph is unbacked-up, and still gets the command.
+fn durability_footer(
+    position: BackupPosition,
+    auto_backup: bool,
+    backup: &Path,
+    push: impl FnOnce() -> Result<()>,
+) -> Option<String> {
+    match position {
+        BackupPosition::UpToDate | BackupPosition::Unknown => None,
+        BackupPosition::Ahead if !auto_backup => Some(backup_reminder(backup)),
+        BackupPosition::Ahead => match push() {
+            Ok(()) => Some(format!(
+                "Backed up the domain graph to {}.",
+                backup.display()
+            )),
+            Err(error) => {
+                // The cause goes where diagnostics go. The footer stays one
+                // line: the user's next move is the same either way, and a
+                // dolt stack of prose at the end of a session is not it.
+                crate::diagnostics::record(&format!("auto_backup push failed: {error}"));
+                Some(format!(
+                    "Auto-backup failed; the graph is still unbacked-up — run \
+                     `quizdom db-backup` to push it to {}.",
+                    backup.display()
+                ))
+            }
+        },
+    }
+}
+
+/// The line a finished session prints about durability, or `None` when there is
+/// nothing to say.
+///
+/// Silent unless BOTH halves hold: this process committed a graph write
+/// ([`crate::dolt_store::graph_written_this_process`]) AND the working copy is
+/// ahead of its backup. The write check is what keeps a read-only session
+/// quiet even when the graph has been unbacked-up for a week — the reminder
+/// belongs to the session that caused the drift, so it lands as feedback on
+/// what you just did rather than as ambient nagging.
+///
+/// Under `cfg(test)` this is `None` without resolving anything (the TASK-266 /
+/// TASK-280 pattern): it would otherwise send the in-crate session tests
+/// through the real settings chain at the developer's actual graph. The
+/// behaviour is covered by driving [`durability_footer`] and
+/// [`backup_position_from_row`] directly, which is where it lives.
+pub(crate) fn session_end_durability() -> Option<String> {
+    if cfg!(test) || !crate::dolt_store::graph_written_this_process() {
+        return None;
+    }
+    let path = crate::settings::resolve_dolt_path();
+    let backup = crate::settings::resolve_dolt_backup_path();
+    let runner = SystemDoltRunner::new("dolt".to_string());
+    let position = backup_position(&runner, &path, BACKUP_REMOTE_NAME);
+    durability_footer(
+        position,
+        crate::settings::resolve_auto_backup(),
+        &backup,
+        || {
+            let config = DbBackupConfig {
+                path: path.clone(),
+                backup: backup.clone(),
+                remote: BACKUP_REMOTE_NAME.to_string(),
+                dolt_command: "dolt".to_string(),
+                // NEVER force from an automatic path: `--force` retires whatever
+                // lineage is in the backup directory, which is a decision an
+                // operator makes deliberately, not one a session end makes for
+                // them.
+                force: false,
+            };
+            // `db_backup`'s progress lines are for someone who typed the
+            // command; an auto-backup reports itself in one line above, so they
+            // go to the diagnostic log instead of into the session's tail.
+            let mut narration: Vec<u8> = Vec::new();
+            let result = db_backup(&config, &runner, &mut narration);
+            let narrated = String::from_utf8_lossy(&narration);
+            if !narrated.trim().is_empty() {
+                crate::diagnostics::record(&format!("auto_backup: {}", narrated.trim()));
+            }
+            result
+        },
+    )
 }
 
 // trace:STORY-261 | ai:claude
@@ -1529,6 +1752,94 @@ mod tests {
         let _ = std::fs::remove_dir_all(&backup);
     }
 
+    // trace:STORY-299 | ai:claude
+    /// The reminder's whole correctness rests on two dolt system tables —
+    /// `dolt_remote_branches` (the tracking ref a push updates) and
+    /// `dolt_status` — and the mock tests above pin only how quizdom READS the
+    /// rows. This one pins that the rows say what quizdom thinks they say, so a
+    /// dolt release that renames a column or a ref cannot silently turn the
+    /// reminder into permanent silence with every unit test green.
+    #[test]
+    #[ignore = "requires the dolt binary on PATH"]
+    fn real_dolt_backup_position_tracks_pushes_commits_and_a_dirty_tree() {
+        let repo = temp_dir("position");
+        let backup = temp_dir("position-dest");
+        let runner = SystemDoltRunner::new("dolt".to_string());
+        crate::db_init::run_db_init(
+            [
+                "db-init".to_string(),
+                "--path".to_string(),
+                repo.display().to_string(),
+            ],
+            &mut Vec::new(),
+        )
+        .expect("bootstrap should succeed");
+
+        // Never pushed anywhere: the case the reminder exists for.
+        assert_eq!(
+            backup_position(&runner, &repo, BACKUP_REMOTE_NAME),
+            BackupPosition::Ahead,
+            "a graph with no backup at all is ahead of one"
+        );
+
+        let config = config(&repo, &backup);
+        db_backup(&config, &runner, &mut Vec::new()).expect("backup should succeed");
+        assert_eq!(
+            backup_position(&runner, &repo, BACKUP_REMOTE_NAME),
+            BackupPosition::UpToDate,
+            "straight after a push there is nothing to remind anyone about"
+        );
+
+        // A hand-run `dolt sql` — the working-set case `snapshot_working_set`
+        // exists to rescue. The branch hash has NOT moved, so only dolt_status
+        // can see this.
+        run_dolt(
+            &runner,
+            &repo,
+            &[
+                "sql",
+                "-q",
+                "INSERT INTO nodes (id, kind, title, body, tags, weight) VALUES \
+                 ('Q-1', 'question', 'seed question', 'body', '', 70);",
+            ],
+        )
+        .expect("fixture should load");
+        assert_eq!(
+            backup_position(&runner, &repo, BACKUP_REMOTE_NAME),
+            BackupPosition::Ahead,
+            "an uncommitted change is unbacked-up even at an unchanged hash"
+        );
+
+        // And a committed write, which is what every quizdom writer produces.
+        db_backup(&config, &runner, &mut Vec::new()).expect("re-backup should succeed");
+        assert_eq!(
+            backup_position(&runner, &repo, BACKUP_REMOTE_NAME),
+            BackupPosition::UpToDate
+        );
+        crate::db_init::commit_all(&runner, &repo, "a later write").ok();
+        run_dolt(
+            &runner,
+            &repo,
+            &[
+                "sql",
+                "-q",
+                "INSERT INTO nodes (id, kind, title, body, tags, weight) VALUES \
+                 ('Q-2', 'question', 'another', 'body', '', 70);",
+            ],
+        )
+        .expect("fixture should load");
+        crate::db_init::commit_all(&runner, &repo, "a later write")
+            .expect("the write should commit");
+        assert_eq!(
+            backup_position(&runner, &repo, BACKUP_REMOTE_NAME),
+            BackupPosition::Ahead,
+            "a commit since the last push is what a writing session leaves behind"
+        );
+
+        let _ = std::fs::remove_dir_all(&repo);
+        let _ = std::fs::remove_dir_all(&backup);
+    }
+
     // trace:BUG-277 | ai:claude
     /// BUG-277's acceptance, replayed against the real engine: a backup
     /// directory pre-populated with an UNRELATED repo must produce quizdom's
@@ -1608,5 +1919,243 @@ mod tests {
         let _ = std::fs::remove_dir_all(&backup);
         let _ = std::fs::remove_dir_all(&retired);
         let _ = std::fs::remove_dir_all(&restored);
+    }
+
+    // -----------------------------------------------------------------------
+    // trace:STORY-299 | ai:claude — the durability ergonomics.
+    // -----------------------------------------------------------------------
+
+    fn position_row(json: &str) -> BackupPosition {
+        let value: serde_json::Value = serde_json::from_str(json).unwrap();
+        backup_position_from_row(value.as_object())
+    }
+
+    #[test]
+    fn a_repo_matching_its_backup_with_a_clean_tree_is_up_to_date() {
+        assert_eq!(
+            position_row(r#"{"local_hash":"abc","backup_hash":"abc","pending":0}"#),
+            BackupPosition::UpToDate
+        );
+    }
+
+    #[test]
+    fn a_commit_since_the_last_push_is_ahead() {
+        assert_eq!(
+            position_row(r#"{"local_hash":"def","backup_hash":"abc","pending":0}"#),
+            BackupPosition::Ahead
+        );
+    }
+
+    // The graph is a database a user can write to directly, and `db-backup`
+    // snapshots the working set before pushing — so an uncommitted change is
+    // just as unbacked-up as a commit, even though the branch hash has not
+    // moved.
+    #[test]
+    fn an_uncommitted_working_set_is_ahead_even_at_the_same_hash() {
+        assert_eq!(
+            position_row(r#"{"local_hash":"abc","backup_hash":"abc","pending":2}"#),
+            BackupPosition::Ahead
+        );
+        // dolt has rendered COUNT(*) as a string in some releases; the
+        // dirty-tree signal must not depend on which.
+        assert_eq!(
+            position_row(r#"{"local_hash":"abc","backup_hash":"abc","pending":"2"}"#),
+            BackupPosition::Ahead
+        );
+    }
+
+    // "You have never backed this graph up" is the single most important case
+    // for the reminder to catch, and it looks like a missing tracking ref.
+    #[test]
+    fn a_graph_never_pushed_anywhere_is_ahead_not_unknown() {
+        assert_eq!(
+            position_row(r#"{"local_hash":"abc","pending":0}"#),
+            BackupPosition::Ahead
+        );
+    }
+
+    // A probe that could not answer is not evidence of drift. Nagging on a
+    // failed probe would train users to ignore the line, which costs more than
+    // the missed reminder.
+    #[test]
+    fn an_unanswerable_probe_is_unknown_and_says_nothing() {
+        assert_eq!(position_row("{}"), BackupPosition::Unknown);
+        assert_eq!(
+            backup_position_from_row(None),
+            BackupPosition::Unknown,
+            "no row at all — an older dolt without the system tables"
+        );
+        assert_eq!(
+            durability_footer(
+                BackupPosition::Unknown,
+                false,
+                Path::new("/backup"),
+                || panic!("nothing should push")
+            ),
+            None
+        );
+    }
+
+    #[test]
+    fn the_probe_reads_the_tracking_ref_for_the_configured_remote() {
+        let sql = backup_position_sql("backup");
+
+        assert!(sql.contains("'remotes/backup/main'"), "{sql}");
+        assert!(sql.contains("dolt_remote_branches"), "{sql}");
+        assert!(sql.contains("dolt_status"), "{sql}");
+        // A remote name is user-supplied (`--remote`), so it is quoted, not
+        // interpolated raw.
+        assert!(
+            backup_position_sql("it's").contains("'remotes/it''s/main'"),
+            "{}",
+            backup_position_sql("it's")
+        );
+    }
+
+    // The probe never touches the backup directory: the backup may be an
+    // unmounted removable disk, and a session end must not block on it.
+    #[test]
+    fn the_probe_runs_one_local_read_only_query() {
+        let repo = temp_dir("position-probe");
+        std::fs::create_dir_all(repo.join(".dolt")).unwrap();
+        let runner = RecordingDoltRunner::new(vec![(
+            0,
+            r#"{"rows":[{"local_hash":"abc","backup_hash":"abc","pending":0}]}"#,
+            "",
+        )]);
+
+        assert_eq!(
+            backup_position(&runner, &repo, BACKUP_REMOTE_NAME),
+            BackupPosition::UpToDate
+        );
+        let calls = runner.call_names();
+        assert_eq!(calls.len(), 1, "{calls:?}");
+        assert!(calls[0].starts_with("sql -r json -q"), "{calls:?}");
+
+        let _ = std::fs::remove_dir_all(&repo);
+    }
+
+    #[test]
+    fn a_dolt_that_cannot_be_spawned_leaves_the_session_silent() {
+        let repo = temp_dir("position-no-dolt");
+        std::fs::create_dir_all(repo.join(".dolt")).unwrap();
+
+        // A failing query (an older dolt without `dolt_remote_branches`).
+        let runner = RecordingDoltRunner::new(vec![(1 << 8, "", "table not found")]);
+        assert_eq!(
+            backup_position(&runner, &repo, BACKUP_REMOTE_NAME),
+            BackupPosition::Unknown
+        );
+
+        // Output that is not JSON at all.
+        let runner = RecordingDoltRunner::new(vec![(0, "not json", "")]);
+        assert_eq!(
+            backup_position(&runner, &repo, BACKUP_REMOTE_NAME),
+            BackupPosition::Unknown
+        );
+
+        let _ = std::fs::remove_dir_all(&repo);
+    }
+
+    #[test]
+    fn no_repo_is_nothing_to_remind_anyone_about() {
+        let runner = RecordingDoltRunner::new(vec![]);
+        assert_eq!(
+            backup_position(
+                &runner,
+                Path::new("/nowhere/quizdom-has-no-graph-here"),
+                BACKUP_REMOTE_NAME
+            ),
+            BackupPosition::Unknown
+        );
+        assert!(runner.call_names().is_empty(), "and nothing was spawned");
+    }
+
+    // trace:STORY-299 | ai:claude — the DEFAULT path: explicit backups, plus a
+    // line that names the exact command so "explicit" stops meaning "forgotten".
+    #[test]
+    fn ahead_with_auto_backup_off_names_the_exact_command_and_destination() {
+        let footer = durability_footer(
+            BackupPosition::Ahead,
+            false,
+            Path::new("/backups/qz"),
+            || panic!("auto_backup is off; nothing may push"),
+        )
+        .expect("a session that moved the graph past its backup says so");
+
+        assert!(footer.contains("quizdom db-backup"), "{footer}");
+        assert!(footer.contains("/backups/qz"), "{footer}");
+        assert_eq!(footer.lines().count(), 1, "one line, not a lecture");
+    }
+
+    #[test]
+    fn an_already_backed_up_graph_says_nothing() {
+        assert_eq!(
+            durability_footer(
+                BackupPosition::UpToDate,
+                false,
+                Path::new("/backups/qz"),
+                || { panic!("nothing to push") }
+            ),
+            None
+        );
+        // …and auto-backup does not push what is already there either.
+        assert_eq!(
+            durability_footer(
+                BackupPosition::UpToDate,
+                true,
+                Path::new("/backups/qz"),
+                || { panic!("nothing to push") }
+            ),
+            None
+        );
+    }
+
+    #[test]
+    fn auto_backup_pushes_and_reports_it_in_one_line() {
+        let pushed = RefCell::new(false);
+
+        let footer = durability_footer(
+            BackupPosition::Ahead,
+            true,
+            Path::new("/backups/qz"),
+            || {
+                *pushed.borrow_mut() = true;
+                Ok(())
+            },
+        )
+        .expect("an auto-backup reports what it did");
+
+        assert!(*pushed.borrow(), "the push actually ran");
+        assert!(footer.contains("Backed up"), "{footer}");
+        assert!(footer.contains("/backups/qz"), "{footer}");
+        assert_eq!(footer.lines().count(), 1, "{footer}");
+    }
+
+    // The STORY-299 rule: a backup that did not happen must never be the thing
+    // that ends a session badly. It degrades to the reminder — the user who
+    // opted in still learns the graph is unbacked-up, and still gets the command.
+    #[test]
+    fn a_failed_auto_backup_degrades_to_the_reminder_rather_than_erroring() {
+        let footer = durability_footer(
+            BackupPosition::Ahead,
+            true,
+            Path::new("/backups/qz"),
+            || Err(QuizdomError::Dolt("the backup disk is not mounted".into())),
+        )
+        .expect("a failed auto-backup still has something to say");
+
+        assert!(footer.contains("Auto-backup failed"), "{footer}");
+        assert!(footer.contains("quizdom db-backup"), "{footer}");
+        assert!(footer.contains("/backups/qz"), "{footer}");
+        // The cause is not lost — it goes where diagnostics go, not to the
+        // terminal the TUI owns.
+        assert!(
+            crate::diagnostics::captured()
+                .iter()
+                .any(|entry| entry.contains("the backup disk is not mounted")),
+            "{:?}",
+            crate::diagnostics::captured()
+        );
     }
 }

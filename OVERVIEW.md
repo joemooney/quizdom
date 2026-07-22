@@ -88,10 +88,11 @@ Runtime preferences live in `~/.config/quizdom/settings.toml` (or
 `$XDG_CONFIG_HOME/quizdom/`) — a small flat `key = value` table quizdom
 hand-parses. Four keys are the `/settings` surface (`editor`, `mouse`, `score`,
 `mode`) and quizdom rewrites those in place; every other line — comments, blanks,
-and foreign keys like `dolt_path` and `dolt_backup_path` — is preserved verbatim
-on save. Unknown keys are ignored on load, so an older quizdom never chokes on a
-newer file. `/settings` also *shows* the resolved `dolt_path` as a read-only row,
-since that one value decides which graph the session reads.
+and foreign keys like `dolt_path`, `dolt_backup_path`, `auto_backup` and
+`log_path` — is preserved verbatim on save. Unknown keys are ignored on load, so
+an older quizdom never chokes on a newer file. `/settings` also *shows* the
+resolved `dolt_path` as a read-only row, since that one value decides which
+graph the session reads.
 
 Values parse the way TOML would: double **and** single quotes come off, and an
 inline `# comment` ends the value. `dolt_path = "/mnt/data/dolt"  # the big disk`
@@ -114,9 +115,14 @@ per-invocation by someone who can see their own cwd:
 
 | Tier | Example | Relative to |
 |------|---------|-------------|
-| CLI flag / env var | `--path`, `$QUIZDOM_DOLT_PATH`, `$QUIZDOM_DOLT_BACKUP_PATH` | the process cwd |
-| `settings.toml` key | `dolt_path`, `dolt_backup_path` | the settings file's directory |
+| CLI flag / env var | `--path`, `$QUIZDOM_DOLT_PATH`, `$QUIZDOM_DOLT_BACKUP_PATH`, `$QUIZDOM_LOG_PATH` | the process cwd |
+| `settings.toml` key | `dolt_path`, `dolt_backup_path`, `log_path` | the settings file's directory |
 | Compiled default | `data/dolt` | the process cwd (deliberately per-checkout — it is the gitignored local graph each worktree gets for free) |
+
+The two non-path keys take the same env > file > default shape:
+`auto_backup` (`$QUIZDOM_AUTO_BACKUP`, default **off**) opts a writing session
+into pushing to the backup remote on its way out — see *Durability and recovery*
+below.
 
 ## Durability and recovery
 
@@ -137,17 +143,82 @@ committed data only), points the `backup` remote at the backup directory, and
 pushes `main`. Every quizdom writer commits its own writes — the store per write
 (STORY-208), `db-init` its schema and `db-migrate` its import (STORY-291) — so
 that first step normally finds nothing to do; what it catches is a change made
-by hand with `dolt sql` in the repo. Run `db-backup` after a session that wrote
-to the graph, or from cron:
-
-```cron
-0 * * * * cd /path/to/quizdom && ./target/release/quizdom db-backup
-```
+by hand with `dolt sql` in the repo.
 
 The backup directory resolves as `$QUIZDOM_DOLT_BACKUP_PATH` > `dolt_backup_path`
 in `~/.config/quizdom/settings.toml` > `~/.local/share/quizdom/dolt-backup` —
 deliberately outside the project tree, so `rm -rf data/` cannot take the backup
 with it.
+
+<!-- trace:STORY-299 | ai:claude -->
+
+### Explicit backups, and the three ways not to forget one
+
+**A backup is an explicit act, and that is the decision** (STORY-299, closing
+TASK-273). Pushing implicitly at the end of every writing session would spend
+seconds of `dolt` spawns on a directory that may be an unmounted removable disk
+or a synced folder, and would fail in ways that muddy the end of a session.
+`quizdom db-backup` stays the primitive.
+
+What "explicit" must not come to mean is "forgotten" — a graph drifting further
+from its backup every session with nothing anywhere saying so. Three ways to
+close that, in increasing order of automation:
+
+1. **The reminder (always on).** A session that *wrote to the graph* and leaves
+   the working copy ahead of its backup ends with one extra line naming the
+   exact command:
+
+   ```
+   Domain graph has changes not in its backup — run `quizdom db-backup` to push them to /home/you/.local/share/quizdom/dolt-backup.
+   ```
+
+   Both halves have to hold, so the line stays feedback on what you just did
+   rather than ambient nagging: a session that only read says nothing, and a
+   session whose writes are already backed up says nothing. The check is local
+   and read-only — it compares `main` against the `backup` remote-tracking ref
+   (plus `dolt_status` for a hand-edited working set), so it never blocks on a
+   backup directory that is not mounted, and a probe that cannot answer stays
+   silent rather than guessing.
+
+2. **`auto_backup` (opt-in, off by default).** One line in
+   `~/.config/quizdom/settings.toml` performs the push instead of printing the
+   reminder:
+
+   ```toml
+   auto_backup = true    # push to the backup remote when a writing session ends
+   ```
+
+   `QUIZDOM_AUTO_BACKUP=1` does the same for one shell. A failed auto-backup
+   never takes the session down — it degrades to the reminder, so you still
+   learn the graph is unbacked-up and still get the command, with dolt's
+   complaint in the diagnostic log.
+
+3. **Cron / a systemd timer**, which covers the machine rather than the session
+   — including the hand-run `dolt sql` no session end will ever see:
+
+   ```cron
+   0 * * * * cd /path/to/quizdom && ./target/release/quizdom db-backup
+   ```
+
+### The diagnostic log
+
+<!-- trace:STORY-299 | ai:claude -->
+
+The TUI owns the terminal (crossterm's alternate screen + raw mode), so a
+diagnostic printed to stdout lands inside a frame ratatui is about to redraw and
+one printed to stderr is invisible at best. Failures that are *survivable* —
+a store read that degraded to "no definitions", an auto-backup that could not
+push — therefore go to an append-only file instead:
+
+```
+$QUIZDOM_LOG_PATH > log_path in ~/.config/quizdom/settings.toml > ~/.local/share/quizdom/quizdom.log
+```
+
+Same resolution chain as every other quizdom path, including the anchoring rule
+in *Settings* above. It is a breadcrumb trail, not a logging framework: no
+levels, no filters, one line per event. Nothing in the seam ever writes to the
+terminal, and a log that cannot be written is dropped silently — a breadcrumb
+that takes down the session it was meant to explain is worse than none.
 
 **Recovery — from a deleted `data/dolt`:**
 

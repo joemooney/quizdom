@@ -289,6 +289,25 @@ fn render_session_end(
     }
     writeln!(output, "Session {session_id} ended.")?;
     writeln!(output, "Resume:  quizdom session resume {session_id}")?;
+    render_durability_footer(output)
+}
+
+// trace:STORY-299 | ai:claude
+/// The durability line, appended to every session footer.
+///
+/// It sits HERE rather than at each exit path because the footer is where a
+/// user is already reading "what just happened and what can I do next", and the
+/// backup reminder is exactly that shape. [`crate::db_backup::session_end_durability`]
+/// decides whether there is anything to say — the common case is silence, since
+/// a session that only read, or one whose writes are already backed up, has
+/// nothing to remind anyone about.
+///
+/// Never fatal beyond the write itself: the session is over, and a durability
+/// note must not be the thing that turns a completed session into an error.
+fn render_durability_footer(output: &mut dyn Write) -> Result<()> {
+    if let Some(line) = crate::db_backup::session_end_durability() {
+        writeln!(output, "{line}")?;
+    }
     Ok(())
 }
 
@@ -3597,6 +3616,11 @@ fn run_session_from_current(
     if ended_at_frontier {
         if discarded {
             writeln!(fe.out(), "Session ended.")?;
+            // trace:STORY-299 | ai:claude — a discarded session recorded no
+            // ANSWER, which is not the same as having written nothing: a
+            // quick-added question or a settled term definition already landed
+            // in the graph. The durability line follows the write, not the log.
+            render_durability_footer(fe.out())?;
         } else {
             // trace:STORY-156 | ai:claude — a concluded session reached a GOOD
             // (convergence) terminal, so preface the resume footer with a
