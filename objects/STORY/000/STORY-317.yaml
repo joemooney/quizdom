@@ -1,0 +1,26 @@
+id: 019f8abc-8027-7451-8d46-ec4ba430ef22
+spec_id: STORY-317
+agreed_id: STORY-317
+title: 'Review PR-101: STORY-293: trait contract follow-through — close the batch contract both ways, tell absent from failed, retire the silencers'
+description: |
+  Auto-filed by `aida pr auto-queue-review` (typically from /aida-pr) (session `019f8ab0`) for branch `story-293`.
+
+  - PR: <https://github.com/joemooney/quizdom/pull/101>
+  - Branch: `story-293` → `main`
+
+  ## Covers
+
+  - STORY-293
+
+  ## Acceptance
+
+  - Generate a structured review prompt with `aida review prompt --pr 101` and verify each spec's acceptance criteria.
+  - Approve and merge, or request changes by spec id.
+  - Mark this story `completed` once the PR is merged.
+status: Approved
+priority: Medium
+owner: ''
+feature: Uncategorized
+created_at: 2026-07-22T16:50:37.223833268Z
+modified_at: 2026-07-22T16:50:37.223833268Z
+req_type: Story
