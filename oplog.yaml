@@ -4819,5 +4819,31 @@ operations:
   timestamp: 2026-07-22T06:53:07.735354339Z
   kind: !SetStatus
     status: In Progress
-clock: 440
+- id: 019f889b-41bf-7591-bdc4-3e9d40d57e9e
+  target_id: 019f889b-3fd7-72b1-9933-000e90b12133
+  author: aida
+  node_id: ''
+  lamport: 441
+  timestamp: 2026-07-22T06:55:04.127340141Z
+  kind: !Create
+    title: 'Review PR-94: [AI:claude] fix(store): bound batched SQL by bytes, document neighbor ordering, name the CTE depth limit (STORY-259)'
+    description: |
+      Auto-filed by `aida session end` (backup trigger) (session `019f888d`) for branch `story-259`.
+
+      - PR: <https://github.com/joemooney/quizdom/pull/94>
+      - Branch: `story-259` → `main`
+
+      ## Covers
+
+      - STORY-259
+
+      ## Acceptance
+
+      - Generate a structured review prompt with `aida review prompt --pr 94` and verify each spec's acceptance criteria.
+      - Approve and merge, or request changes by spec id.
+      - Mark this story `completed` once the PR is merged.
+    req_type: Story
+    status: Approved
+    priority: Medium
+clock: 441
 node_id: ''
