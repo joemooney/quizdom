@@ -29,12 +29,12 @@ description: |
   remediation advice being unreachable, not the error being wrong.
 
   Raised in review of PR-94: https://github.com/joemooney/quizdom/pull/94#issuecomment-5042890190
-status: Draft
+status: Completed
 priority: Medium
 owner: ''
 feature: Uncategorized
 created_at: 2026-07-22T07:02:36.310122701Z
-modified_at: 2026-07-22T07:02:36.310122701Z
+modified_at: 2026-07-22T15:19:41.544195999Z
 req_type: Task
 tags:
 - docs
