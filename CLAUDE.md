@@ -45,11 +45,21 @@ data substrate.
   commit that stages the whole working set (`dolt add -A`) — breadth is its
   job, and "snapshot working set" claims nothing about authorship. Every other
   writer stages `nodes`/`edges` **by name** (`db_init::commit_tables`), because
-  their messages do make a claim. Staging is table-granular, so `db-init` and
-  `db-migrate` also ask **before** they write
-  (`db_init::refuse_on_foreign_changes`) and refuse when a table they are about
-  to stage already holds a hand-run edit — quizdom cannot author a message for a
-  change it did not make, and refusing beats mislabelling it or dropping it.
+  their messages do make a claim. Staging is table-granular, so every writer
+  also asks **before** it writes (`db_init::begin_write`) and refuses when a
+  table it is about to stage already holds a hand-run edit — quizdom cannot
+  author a message for a change it did not make, and refusing beats mislabelling
+  it or dropping it. **Whose changes are they** (`BUG-366`): the answer is the
+  `dolt_status.staged` flag, not a memory. Every quizdom write stages itself in
+  the same `dolt sql` call (`db_init::staging_write` appends `CALL
+  DOLT_ADD('nodes','edges')`), so staged-but-uncommitted rows are an unfinished
+  quizdom run — **resumed**, with a line saying so — and unstaged rows are
+  refused. Before this, a `db-migrate` that failed parity was blocked on its own
+  leftovers by a message blaming a hand edit that never happened. The three
+  writers share one seam: `begin_write` hands back a `WriteClaim` and
+  `commit_tables` takes that claim rather than a path, so a writer cannot reach
+  the commit tail without passing the pre-flight — the gap that let the store,
+  the writer a session runs on every answer, silently miss it (`TASK-357`).
   `db-migrate` commits **last**, after parity + the BUG-231 cross-check + the
   spot-check agree: its message asserts the counts it carried, and a failed run
   used to leave permanent history asserting what that same run had just

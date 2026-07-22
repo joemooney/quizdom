@@ -519,13 +519,18 @@ mod reweight_tests {
     use crate::dolt_store::{DoltDomainStore, ScriptedDoltRunner};
     use crate::model::AnswerKind;
 
+    // trace:BUG-366 | ai:claude — every store write now opens with the
+    // foreign-change pre-flight, so `calls[0]` is that probe and the write it
+    // guards is `calls[1]`.
     fn reweighter_with(
         responses: Vec<(i32, &str, &str)>,
     ) -> (
         StoreQuestionReweighter<DoltDomainStore<ScriptedDoltRunner>>,
         ScriptedDoltRunner,
     ) {
-        let runner = ScriptedDoltRunner::new(responses);
+        let mut scripted = vec![(0, "{}", "")];
+        scripted.extend(responses);
+        let runner = ScriptedDoltRunner::new(scripted);
         let handle = runner.clone();
         let reweighter = StoreQuestionReweighter::with_store(DoltDomainStore::with_runner(
             "/tmp/quizdom-dolt",
@@ -561,7 +566,7 @@ mod reweight_tests {
         );
 
         let calls = runner.calls.borrow();
-        let update = ScriptedDoltRunner::sql_of_call(&calls[0]);
+        let update = ScriptedDoltRunner::sql_of_call(&calls[1]);
         assert!(update.contains("tags = 'topic:meaning,quality:insightful'"));
         assert!(update.contains("weight = 62"));
         assert!(update.contains("WHERE id = 'Q-7'"));
@@ -576,7 +581,7 @@ mod reweight_tests {
 
         assert_eq!(updated.weight, 38);
         let calls = runner.calls.borrow();
-        let update = ScriptedDoltRunner::sql_of_call(&calls[0]);
+        let update = ScriptedDoltRunner::sql_of_call(&calls[1]);
         assert!(update.contains("weight = 38"));
         assert!(update.contains("quality:unhelpful"));
     }
@@ -593,7 +598,7 @@ mod reweight_tests {
 
         assert_eq!(updated.weight, 0);
         let calls = runner.calls.borrow();
-        let update = ScriptedDoltRunner::sql_of_call(&calls[0]);
+        let update = ScriptedDoltRunner::sql_of_call(&calls[1]);
         assert!(update.contains("weight = 0"));
         assert!(update.contains("quality:punted"));
     }
@@ -641,7 +646,12 @@ mod user_authored_tests {
         StoreUserAuthoredQuestionPersister<DoltDomainStore<ScriptedDoltRunner>>,
         ScriptedDoltRunner,
     ) {
-        let runner = ScriptedDoltRunner::new(responses);
+        // trace:BUG-366 | ai:claude — every store write opens with the
+        // foreign-change pre-flight, so the scripted responses (and the recorded
+        // calls) start one spawn later than they used to.
+        let mut scripted = vec![(0, "{}", "")];
+        scripted.extend(responses);
+        let runner = ScriptedDoltRunner::new(scripted);
         let handle = runner.clone();
         let persister = StoreUserAuthoredQuestionPersister::with_store(
             DoltDomainStore::with_runner("/tmp/quizdom-dolt", runner),
@@ -698,9 +708,10 @@ mod user_authored_tests {
         );
 
         let calls = runner.calls.borrow();
-        // Standalone -> mint scan + insert + add + commit, no edge insert.
-        assert_eq!(calls.len(), 4);
-        let insert = ScriptedDoltRunner::sql_of_call(&calls[1]);
+        // Standalone -> pre-flight + mint scan + insert + add + commit, no
+        // edge insert.
+        assert_eq!(calls.len(), 5);
+        let insert = ScriptedDoltRunner::sql_of_call(&calls[2]);
         assert!(insert.contains("'Q-21'"));
         assert!(insert.contains("'question'"));
         assert!(insert.contains("'Is the self continuous over time?'"));
@@ -726,9 +737,10 @@ mod user_authored_tests {
 
         assert_eq!(persisted.id, "Q-30");
         let calls = runner.calls.borrow();
-        // mint + insert + add + commit, then edge insert + add + commit.
-        assert_eq!(calls.len(), 7);
-        let edge = ScriptedDoltRunner::sql_of_call(&calls[4]);
+        // pre-flight + mint + insert + add + commit, then a second pre-flight
+        // + edge insert + add + commit.
+        assert_eq!(calls.len(), 9);
+        let edge = ScriptedDoltRunner::sql_of_call(&calls[6]);
         // begets is origin -> new.
         assert!(edge.contains("INSERT INTO edges"));
         assert!(edge.contains("'Q-7', 'Q-30', 'begets'"));
@@ -752,7 +764,7 @@ mod user_authored_tests {
         assert_eq!(persisted.id, "Q-31");
         assert!(persisted.tags.contains(&"answer:free-text".to_string()));
         let calls = runner.calls.borrow();
-        let edge = ScriptedDoltRunner::sql_of_call(&calls[4]);
+        let edge = ScriptedDoltRunner::sql_of_call(&calls[6]);
         // probes is new -> term.
         assert!(edge.contains("'Q-31', 'TERM-3', 'probes'"));
     }
@@ -781,7 +793,11 @@ mod user_authored_tests {
             other => panic!("expected Dolt error, got {other:?}"),
         }
         // The failed create must not be followed by an edge insert.
-        assert_eq!(runner.calls.borrow().len(), 1);
+        assert_eq!(
+            runner.calls.borrow().len(),
+            2,
+            "the pre-flight, then the failed mint scan"
+        );
     }
 
     #[test]

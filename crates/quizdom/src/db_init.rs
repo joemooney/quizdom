@@ -14,13 +14,31 @@
 //! ## Shared dolt plumbing
 //!
 //! This module also hosts the pieces every dolt caller needs, because it
-//! already owns the [`DoltRunner`] seam they all spawn through: the commit tail
-//! ([`commit_tables`] / [`commit_working_set`]), the structured clean-tree probe
-//! behind it ([`working_set_is_clean`], TASK-276), the foreign-change pre-flight
-//! ([`refuse_on_foreign_changes`], TASK-297), the control-character scrub every
-//! error surface applies ([`clean_dolt_message`], TASK-279), and the
-//! `#[cfg(test)]` real-path tripwire ([`guard_test_path`], TASK-280). Keeping
-//! one copy of each is the point — four hand-copied variants is how they drift.
+//! already owns the [`DoltRunner`] seam they all spawn through: the write seam
+//! ([`begin_write`] → [`staging_write`] → [`commit_tables`]), the structured
+//! clean-tree probe behind the commit tail ([`working_set_is_clean`],
+//! TASK-276), the control-character scrub every error surface applies
+//! ([`clean_dolt_message`], TASK-279), and the `#[cfg(test)]` real-path
+//! tripwire ([`guard_test_path`], TASK-280). Keeping one copy of each is the
+//! point — four hand-copied variants is how they drift.
+//!
+//! ## The write seam (BUG-366)
+//!
+//! Three pieces that only work together, so they live together:
+//!
+//! 1. [`begin_write`] is the pre-flight, asked before the first write. It hands
+//!    back a [`WriteClaim`].
+//! 2. [`staging_write`] wraps a write statement so it STAGES ITSELF in the same
+//!    `dolt sql` call. That is what gives the pre-flight something to read:
+//!    quizdom's own uncommitted rows are staged rows, so an unstaged change is
+//!    one quizdom did not make.
+//! 3. [`commit_tables`] takes the `WriteClaim` rather than a bare path, so a
+//!    writer cannot reach the commit tail without having passed the pre-flight.
+//!    TASK-297 made that ordering a convention and applied it to two
+//!    subcommands; the session write path never got it (TASK-357).
+//!
+//! [`commit_working_set`] is the deliberate exception on all three counts — see
+//! its own docs.
 
 use crate::error::{QuizdomError, Result};
 use std::io::Write;
@@ -189,18 +207,32 @@ fn db_init(path: &Path, runner: &dyn DoltRunner, output: &mut impl Write) -> Res
             "Dolt repo already initialised at {} — skipping `dolt init`.",
             path.display()
         )?;
-        // trace:TASK-297 | ai:claude — only meaningful on a re-run: a repo
-        // `dolt init` just created has no working set to be foreign to.
-        refuse_on_foreign_changes(runner, path, "quizdom db-init")?;
     }
 
-    run_dolt(runner, path, &["sql", "-q", DOLT_SCHEMA_SQL])?;
+    // trace:TASK-297 | ai:claude
+    // trace:BUG-366 | ai:claude — asked on the fresh path too, now that it costs
+    // a claim rather than only a refusal. A `dolt init` that reaches the DDL and
+    // then fails to commit it (an unconfigured author identity is the everyday
+    // way) leaves the new tables uncommitted, and the re-run must recognise them
+    // as its own rather than accuse the user of a hand edit.
+    let claim = begin_write(runner, path, "quizdom db-init")?;
+    if let Some(note) = claim.resumed_note() {
+        writeln!(output, "{note}")?;
+    }
+
+    // trace:BUG-366 | ai:claude — the DDL stages itself, so the tables it
+    // creates are recognisably quizdom's before the commit is attempted.
+    run_dolt(
+        runner,
+        path,
+        &["sql", "-q", &staging_write(DOLT_SCHEMA_SQL)],
+    )?;
     writeln!(
         output,
         "Applied domain-graph schema (nodes, edges) — DDL is idempotent."
     )?;
     // trace:STORY-291 | ai:claude
-    if commit_tables(runner, path, QUIZDOM_TABLES, SCHEMA_COMMIT_MESSAGE)? {
+    if commit_tables(runner, &claim, QUIZDOM_TABLES, SCHEMA_COMMIT_MESSAGE)? {
         writeln!(output, "Committed the schema to Dolt history.")?;
     } else {
         writeln!(output, "Schema already committed — nothing new to record.")?;
@@ -241,11 +273,16 @@ pub(crate) fn pending_changes_sql(scope: &[&str]) -> String {
 }
 
 // trace:TASK-297 | ai:claude
-/// The names in `scope` that currently carry uncommitted changes.
-fn pending_tables_sql(scope: &[&str]) -> String {
+// trace:BUG-366 | ai:claude — `staged` comes back too, because it is the one
+// column that says WHOSE change this is.
+/// The uncommitted state of `scope`. `dolt_status` carries one row per
+/// (table, staged) pair, so a table holding both a staged and an unstaged
+/// change appears twice — which is precisely the case the pre-flight must not
+/// collapse.
+fn uncommitted_sql(scope: &[&str]) -> String {
     match table_name_filter(scope) {
-        Some(filter) => format!("SELECT DISTINCT table_name FROM dolt_status WHERE {filter}"),
-        None => "SELECT DISTINCT table_name FROM dolt_status".to_string(),
+        Some(filter) => format!("SELECT table_name, staged FROM dolt_status WHERE {filter}"),
+        None => "SELECT table_name, staged FROM dolt_status".to_string(),
     }
 }
 
@@ -330,58 +367,194 @@ fn is_clean_tree_refusal(
 /// the store, and `question add` write lives in these two.
 pub(crate) const QUIZDOM_TABLES: &[&str] = &["nodes", "edges"];
 
+// trace:BUG-366 | ai:claude
+/// Proof that the foreign-change pre-flight ran, and the repo it ran against.
+///
+/// [`commit_tables`] takes one of these instead of a path, so the pre-flight is
+/// not something a writer remembers to do — it is the only way to get the value
+/// the commit tail needs. TASK-297 wrote the ordering down as a convention and
+/// wired it into two subcommands; the store, the writer that runs most often,
+/// simply never got it (TASK-357). A convention that one of three callers can
+/// silently skip is not a protection.
+#[must_use = "the claim is what a writer passes to `commit_tables`"]
+pub(crate) struct WriteClaim {
+    repo: PathBuf,
+    /// Tables an earlier quizdom run left staged and never committed.
+    resumed: Vec<String>,
+}
+
+impl WriteClaim {
+    /// The repo the claim was taken against — the commit tail's working
+    /// directory.
+    pub(crate) fn repo(&self) -> &Path {
+        &self.repo
+    }
+
+    // trace:BUG-366 | ai:claude
+    /// One line naming what an earlier quizdom run left behind, or `None` on
+    /// the ordinary clean start.
+    ///
+    /// Said out loud rather than passed over in silence: this run's commit will
+    /// carry those rows as well as its own, and the reader deserves to know the
+    /// commit spans two attempts. The CLI subcommands print it; the session
+    /// logs it (the TUI owns the terminal).
+    pub(crate) fn resumed_note(&self) -> Option<String> {
+        if self.resumed.is_empty() {
+            return None;
+        }
+        Some(format!(
+            "Resuming an earlier quizdom run: {} carr{} staged rows it never committed — \
+             this run's commit records them too.",
+            self.resumed.join(", "),
+            if self.resumed.len() == 1 { "ies" } else { "y" }
+        ))
+    }
+}
+
 // trace:TASK-297 | ai:claude
-/// Refuse to proceed when a table quizdom is about to stage ALREADY carries
-/// changes quizdom did not make.
+// trace:BUG-366 | ai:claude
+/// The pre-flight every quizdom write passes: refuse when the tables quizdom is
+/// about to stage carry changes quizdom did not make, and claim them otherwise.
+///
+/// ## Why refuse at all (TASK-297)
 ///
 /// `db-backup`'s own documentation invites the user to run `dolt sql` against
 /// `data/dolt` by hand, so a pending `UPDATE nodes …` is a supported state, not
 /// a corrupt one. But staging is table-granular — `dolt add nodes` takes every
 /// pending row in `nodes`, not just ours — so once quizdom writes on top of that
 /// edit the two are indistinguishable, and the commit tail would file the user's
-/// work in Dolt history under a message describing only quizdom's.
+/// work in Dolt history under a message describing only quizdom's. Refusing is
+/// the honest option: the alternatives are to mislabel their commit or to
+/// silently drop their edit.
 ///
-/// Hence a PRE-FLIGHT: asked before quizdom writes anything, while the two are
-/// still separable. Refusing is the honest option — the alternatives are to
-/// mislabel their commit or to silently drop their edit, and quizdom cannot
-/// author a message for a change it did not make.
-pub(crate) fn refuse_on_foreign_changes(
+/// ## Why it needs provenance (BUG-366)
+///
+/// The check TASK-297 shipped refused on ANY pending change, which made a
+/// `db-migrate` that failed parity unrecoverable: the failed run's own
+/// half-imported rows sat in the working set, and the retry refused, blaming a
+/// hand edit that had never happened. A guard that cannot say whose changes it
+/// found should not be asserting whose they are.
+///
+/// So `staged` is the signal. Every quizdom write stages itself in the same
+/// `dolt sql` call ([`staging_write`]), which makes the invariant readable off
+/// the repository: **staged-but-uncommitted rows in `nodes`/`edges` are an
+/// unfinished quizdom run; unstaged ones are not**. The first is resumed, the
+/// second refused.
+///
+/// Read from the repository, deliberately, rather than remembered across runs.
+/// A breadcrumb file recording "quizdom was writing here" would still say
+/// *mine* after the user had discarded those rows with `dolt reset --hard` and
+/// hand-edited the table — which is the very recovery the refusal below
+/// recommends, so the memory would be wrong exactly when it mattered.
+pub(crate) fn begin_write(
     runner: &dyn DoltRunner,
     repo: &Path,
     command: &str,
-) -> Result<()> {
-    let pending = pending_tables(runner, repo, QUIZDOM_TABLES)?;
-    if pending.is_empty() {
-        return Ok(());
+) -> Result<WriteClaim> {
+    let (staged, unstaged) = uncommitted_tables(runner, repo, QUIZDOM_TABLES)?;
+    if !unstaged.is_empty() {
+        return Err(QuizdomError::Dolt(foreign_change_refusal(
+            repo, command, &unstaged,
+        )));
     }
-    Err(QuizdomError::Dolt(format!(
-        "{repo} has uncommitted changes to {tables} that quizdom did not make.\n\
-         `{command}` commits what it writes to those tables, and staging is \
-         table-granular — so those edits would land in Dolt history under a \
-         quizdom message that does not describe them.\n\
+    Ok(WriteClaim {
+        repo: repo.to_path_buf(),
+        resumed: staged,
+    })
+}
+
+// trace:BUG-366 | ai:claude
+/// What the refusal says, naming what it actually found.
+///
+/// The wording this replaces asserted the changes were ones "quizdom did not
+/// make" — a claim the check had no way to support, and one it made most loudly
+/// when the changes were quizdom's own. What it can support is the observation
+/// and the inference from it: these rows are unstaged, and quizdom stages as it
+/// writes.
+fn foreign_change_refusal(repo: &Path, command: &str, unstaged: &[String]) -> String {
+    format!(
+        "{repo} has uncommitted changes to {tables} that no quizdom run left there: \
+         they are UNSTAGED, and quizdom stages every write in the same statement \
+         that makes it.\n\
+         `{command}` stages those tables by name, so committing now would file \
+         those changes in Dolt history under a message that does not describe \
+         them.\n\
          Settle them first: `quizdom db-backup` commits them under their own \
          snapshot message, or `cd {repo} && dolt add -A && dolt commit -m '…'` \
          records them in your words (`dolt reset --hard` discards them).",
         repo = repo.display(),
-        tables = pending.join(", ")
-    )))
+        tables = unstaged.join(", ")
+    )
+}
+
+// trace:BUG-366 | ai:claude
+/// Wrap a write statement so it stages itself in the same `dolt sql` call.
+///
+/// This is the other half of [`begin_write`]: the pre-flight can only read
+/// provenance off `dolt_status` if quizdom's writes are staged the moment they
+/// land. One spawn rather than a following `dolt add` is the point — a separate
+/// staging call leaves a window in which a killed process's rows look exactly
+/// like a hand edit, and the whole bug is about a guard accusing the wrong
+/// party.
+///
+/// It stages the tables BY NAME for the same reason [`commit_tables`] does: a
+/// `CALL DOLT_ADD('-A')` here would sweep in a table quizdom has never heard of.
+pub(crate) fn staging_write(statement: &str) -> String {
+    let tables: Vec<String> = QUIZDOM_TABLES
+        .iter()
+        .map(|name| format!("'{name}'"))
+        .collect();
+    format!("{statement}\nCALL DOLT_ADD({});", tables.join(", "))
 }
 
 // trace:TASK-297 | ai:claude
-/// The tables of `scope` with uncommitted changes, from `dolt_status`. A repo
-/// whose working set is clean answers with no `rows` key at all, which is an
-/// empty list rather than a parse failure.
-fn pending_tables(runner: &dyn DoltRunner, repo: &Path, scope: &[&str]) -> Result<Vec<String>> {
-    let value = probe_json(runner, repo, &pending_tables_sql(scope))?;
-    Ok(value
+// trace:BUG-366 | ai:claude
+/// The tables of `scope` with uncommitted changes, split into `(staged,
+/// unstaged)`. A repo whose working set is clean answers with no `rows` key at
+/// all, which is two empty lists rather than a parse failure.
+fn uncommitted_tables(
+    runner: &dyn DoltRunner,
+    repo: &Path,
+    scope: &[&str],
+) -> Result<(Vec<String>, Vec<String>)> {
+    let value = probe_json(runner, repo, &uncommitted_sql(scope))?;
+    let mut staged = Vec::new();
+    let mut unstaged = Vec::new();
+    let rows = value
         .get("rows")
         .and_then(serde_json::Value::as_array)
-        .map(|rows| {
-            rows.iter()
-                .filter_map(|row| row.get("table_name")?.as_str().map(str::to_string))
-                .collect()
-        })
-        .unwrap_or_default())
+        .cloned()
+        .unwrap_or_default();
+    for row in rows {
+        let Some(name) = row.get("table_name").and_then(serde_json::Value::as_str) else {
+            continue;
+        };
+        let side = if is_staged(row.get("staged")) {
+            &mut staged
+        } else {
+            &mut unstaged
+        };
+        if !side.iter().any(|seen: &String| seen == name) {
+            side.push(name.to_string());
+        }
+    }
+    Ok((staged, unstaged))
+}
+
+// trace:BUG-366 | ai:claude
+/// Dolt types `dolt_status.staged` as `tinyint(1)`, which `dolt sql -r json`
+/// renders as `0`/`1`. Read the neighbouring shapes too rather than pin the
+/// rendering: an unreadable flag counts as UNSTAGED, so a format change costs a
+/// refusal the user can act on, never a silently absorbed edit.
+fn is_staged(value: Option<&serde_json::Value>) -> bool {
+    match value {
+        Some(serde_json::Value::Bool(flag)) => *flag,
+        Some(serde_json::Value::Number(number)) => number.as_i64().is_some_and(|flag| flag != 0),
+        Some(serde_json::Value::String(text)) => {
+            matches!(text.trim(), "1" | "true" | "TRUE" | "True")
+        }
+        _ => false,
+    }
 }
 
 // trace:TASK-279 | ai:claude
@@ -476,14 +649,16 @@ pub(crate) fn guard_test_path(_flag: &str, _path: &Path) {}
 /// It stages `tables` BY NAME rather than `-A` (TASK-297): a message that says
 /// "quizdom db-migrate: import N nodes" must not carry a table quizdom has never
 /// heard of. The narrower half of that promise — a hand edit to `nodes` itself —
-/// is [`refuse_on_foreign_changes`]'s job, because by the time this runs the two
-/// are one diff.
+/// belongs to [`begin_write`], because by the time this runs the two are one
+/// diff. Taking the [`WriteClaim`] rather than a path is how that ordering stops
+/// being a convention (BUG-366).
 pub(crate) fn commit_tables(
     runner: &dyn DoltRunner,
-    repo: &Path,
+    claim: &WriteClaim,
     tables: &[&str],
     message: &str,
 ) -> Result<bool> {
+    let repo = claim.repo();
     let mut args = vec!["add"];
     args.extend_from_slice(tables);
     run_dolt(runner, repo, &args)?;
@@ -497,6 +672,12 @@ pub(crate) fn commit_tables(
 /// point there: what it exists to rescue is precisely the change quizdom did not
 /// make, under a message ("snapshot working set") that claims nothing about
 /// authorship. Every other writer uses [`commit_tables`].
+///
+// trace:BUG-366 | ai:claude
+/// It takes a path rather than a [`WriteClaim`] for the same reason: the
+/// pre-flight exists to keep a foreign edit out of a commit that mislabels it,
+/// and this commit is the sanctioned way to record one. `db-backup` is the way
+/// out the refusal itself recommends, so it cannot be behind the refusal.
 pub(crate) fn commit_working_set(
     runner: &dyn DoltRunner,
     repo: &Path,
@@ -606,6 +787,17 @@ mod tests {
     /// `dolt sql -r json` omits the `rows` key entirely for an empty result.
     const NO_FOREIGN_CHANGES: (i32, &str, &str) = (0, "{}", "");
 
+    // trace:BUG-366 | ai:claude
+    /// A hand-run `UPDATE nodes …` sitting in the working set: UNSTAGED, because
+    /// nobody ran `dolt add` for it. `dolt_status` renders the flag as the
+    /// `tinyint(1)` it is declared as.
+    const HAND_EDITED_NODES: &str = r#"{"rows":[{"table_name":"nodes","staged":0}]}"#;
+
+    // trace:BUG-366 | ai:claude
+    /// The same table, left STAGED — an earlier quizdom run wrote it (every
+    /// quizdom write stages itself) and never reached its commit.
+    const OUR_STAGED_LEFTOVERS: &str = r#"{"rows":[{"table_name":"nodes","staged":1}]}"#;
+
     /// A repo that already exists, so `db_init` runs its pre-flight — every
     /// such test scripts that probe first.
     fn existing_repo(label: &str) -> PathBuf {
@@ -624,17 +816,23 @@ mod tests {
     #[test]
     fn fresh_directory_inits_then_applies_schema() {
         let dir = temp_dir("fresh");
-        let runner = RecordingDoltRunner::new(vec![(0, "", ""), (0, "", "")]);
+        let runner = RecordingDoltRunner::new(vec![(0, "", ""), NO_FOREIGN_CHANGES, (0, "", "")]);
         let mut output = Vec::new();
 
         db_init(&dir, &runner, &mut output).expect("bootstrap should succeed");
 
         let calls = runner.calls.borrow();
-        assert_eq!(calls.len(), 4, "init, sql, then the commit tail");
+        assert_eq!(
+            calls.len(),
+            5,
+            "init, pre-flight, sql, then the commit tail"
+        );
         assert_eq!(calls[0].0, dir);
         assert_eq!(calls[0].1, vec!["init".to_string()]);
-        assert_eq!(calls[1].1[0..2], ["sql".to_string(), "-q".to_string()]);
-        assert_eq!(calls[1].1[2], DOLT_SCHEMA_SQL);
+        assert_eq!(calls[2].1[0..2], ["sql".to_string(), "-q".to_string()]);
+        // trace:BUG-366 | ai:claude — the DDL, plus the tail that stages it.
+        assert!(calls[2].1[2].starts_with(DOLT_SCHEMA_SQL));
+        assert!(calls[2].1[2].contains("CALL DOLT_ADD('nodes', 'edges');"));
         let rendered = String::from_utf8(output).unwrap();
         assert!(rendered.contains("Initialised Dolt repo"));
         assert!(rendered.contains("Applied domain-graph schema"));
@@ -653,7 +851,7 @@ mod tests {
         let root = temp_dir("nested");
         let nested = root.join("graphs").join("quizdom").join("dolt");
         assert!(!nested.exists(), "the whole chain starts missing");
-        let runner = RecordingDoltRunner::new(vec![(0, "", ""), (0, "", "")]);
+        let runner = RecordingDoltRunner::new(vec![(0, "", ""), NO_FOREIGN_CHANGES, (0, "", "")]);
 
         db_init(&nested, &runner, &mut Vec::new()).expect("a nested path should bootstrap");
 
@@ -729,7 +927,7 @@ mod tests {
     #[test]
     fn the_schema_is_committed_not_left_in_the_working_set() {
         let dir = temp_dir("commits");
-        let runner = RecordingDoltRunner::new(vec![(0, "", ""), (0, "", "")]);
+        let runner = RecordingDoltRunner::new(vec![(0, "", ""), NO_FOREIGN_CHANGES, (0, "", "")]);
         let mut output = Vec::new();
 
         db_init(&dir, &runner, &mut output).expect("bootstrap should succeed");
@@ -737,12 +935,12 @@ mod tests {
         let calls = runner.calls.borrow();
         // trace:TASK-297 | ai:claude — by name, never `-A`.
         assert_eq!(
-            calls[2].1,
+            calls[3].1,
             ["add", "nodes", "edges"].map(String::from),
             "a quizdom-labelled commit stages only the tables quizdom owns"
         );
         assert_eq!(
-            calls[3].1,
+            calls[4].1,
             [
                 "commit".to_string(),
                 "-m".to_string(),
@@ -891,12 +1089,11 @@ mod tests {
     #[test]
     fn db_init_refuses_rather_than_absorbing_a_foreign_working_set_edit() {
         let dir = existing_repo("foreign");
-        let runner =
-            RecordingDoltRunner::new(vec![(0, r#"{"rows":[{"table_name":"nodes"}]}"#, "")]);
+        let runner = RecordingDoltRunner::new(vec![(0, HAND_EDITED_NODES, "")]);
 
         match db_init(&dir, &runner, &mut Vec::new()) {
             Err(QuizdomError::Dolt(message)) => {
-                assert!(message.contains("quizdom did not make"), "{message}");
+                assert!(message.contains("no quizdom run left there"), "{message}");
                 assert!(message.contains("nodes"), "it names the table: {message}");
                 assert!(
                     message.contains("quizdom db-backup"),
@@ -913,6 +1110,86 @@ mod tests {
         );
 
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    // trace:BUG-366 | ai:claude
+    /// The regression TASK-297 shipped: a run whose own uncommitted rows are
+    /// still in the working set must be able to carry on. Staged rows are
+    /// quizdom's — every quizdom write stages itself — so the pre-flight resumes
+    /// rather than accusing the user of an edit they did not make.
+    #[test]
+    fn our_own_uncommitted_leftovers_are_resumed_not_refused() {
+        let dir = existing_repo("leftovers");
+        let runner = RecordingDoltRunner::new(vec![
+            (0, OUR_STAGED_LEFTOVERS, ""), // pre-flight: staged, so ours
+            (0, "", ""),                   // schema DDL
+            (0, "", ""),                   // add nodes edges
+            (0, "", ""),                   // commit
+        ]);
+        let mut output = Vec::new();
+
+        db_init(&dir, &runner, &mut output).expect("its own leftovers are not grounds to refuse");
+
+        let rendered = String::from_utf8(output).unwrap();
+        assert!(
+            rendered.contains("Resuming an earlier quizdom run") && rendered.contains("nodes"),
+            "and it says so rather than committing two runs' work silently: {rendered}"
+        );
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    // trace:BUG-366 | ai:claude
+    /// The pair that decides the whole design: the same table, the same pending
+    /// change, told apart by whether anyone staged it. A hand edit arriving on
+    /// top of an aborted run's staged rows still refuses — `dolt_status` reports
+    /// a table with both kinds of change as two rows, and the unstaged one wins.
+    #[test]
+    fn a_hand_edit_on_top_of_our_leftovers_still_refuses() {
+        let dir = existing_repo("mixed");
+        let runner = RecordingDoltRunner::new(vec![(
+            0,
+            r#"{"rows":[{"table_name":"nodes","staged":1},{"table_name":"nodes","staged":0}]}"#,
+            "",
+        )]);
+
+        match db_init(&dir, &runner, &mut Vec::new()) {
+            Err(QuizdomError::Dolt(message)) => {
+                assert!(message.contains("no quizdom run left there"), "{message}")
+            }
+            other => panic!("a hand edit is still a hand edit, got {other:?}"),
+        }
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    // trace:BUG-366 | ai:claude
+    /// The provenance signal has to be legible to the pre-flight, which means
+    /// every write quizdom sends carries its own `dolt add`. Reading it back off
+    /// the flag is only sound because of this.
+    #[test]
+    fn a_write_stages_itself_in_the_same_statement() {
+        let staged = staging_write("UPDATE nodes SET weight = 3 WHERE id = 'Q-1';");
+
+        assert!(staged.starts_with("UPDATE nodes SET weight = 3 WHERE id = 'Q-1';"));
+        assert!(
+            staged.ends_with("CALL DOLT_ADD('nodes', 'edges');"),
+            "by name, never -A — same promise the commit tail makes: {staged}"
+        );
+    }
+
+    // trace:BUG-366 | ai:claude
+    /// An unreadable `staged` flag counts as unstaged. If dolt ever changed the
+    /// rendering, the failure this picks is a refusal the user can act on — not
+    /// a silently absorbed edit, which is the failure with no signal at all.
+    #[test]
+    fn an_unreadable_staged_flag_is_treated_as_foreign() {
+        assert!(is_staged(Some(&serde_json::json!(1))));
+        assert!(is_staged(Some(&serde_json::json!(true))));
+        assert!(is_staged(Some(&serde_json::json!("1"))));
+        assert!(!is_staged(Some(&serde_json::json!(0))));
+        assert!(!is_staged(Some(&serde_json::json!("who knows"))));
+        assert!(!is_staged(None));
     }
 
     // trace:TASK-297 | ai:claude

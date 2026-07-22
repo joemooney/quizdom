@@ -227,16 +227,17 @@ import 4 nodes / 3 edges" must not turn out to carry a table quizdom has never
 heard of.
 
 Staging is table-granular, though, so naming tables cannot separate a hand-run
-`UPDATE nodes …` from quizdom's own rows once both are pending. `db-init` and
-`db-migrate` therefore ask **before** they write, while the two are still
-separable, and refuse when a table they are about to stage already carries
-changes quizdom did not make:
+`UPDATE nodes …` from quizdom's own rows once both are pending. **Every**
+writer therefore asks before it writes, while the two are still separable, and
+refuses when a table it is about to stage already carries changes quizdom did
+not make:
 
 ```
-data/dolt has uncommitted changes to nodes that quizdom did not make.
-`quizdom db-migrate` commits what it writes to those tables, and staging is
-table-granular — so those edits would land in Dolt history under a quizdom
-message that does not describe them.
+data/dolt has uncommitted changes to nodes that no quizdom run left there: they
+are UNSTAGED, and quizdom stages every write in the same statement that makes
+it.
+`quizdom` stages those tables by name, so committing now would file those
+changes in Dolt history under a message that does not describe them.
 Settle them first: `quizdom db-backup` commits them under their own snapshot
 message, or `cd data/dolt && dolt add -A && dolt commit -m '…'` records them in
 your words (`dolt reset --hard` discards them).
@@ -246,6 +247,43 @@ Refusing is the honest option, not a safety reflex: the alternatives are to
 mislabel someone's commit or to silently drop their edit, and quizdom cannot
 author a message for a change it did not make. The edit survives the refusal
 untouched.
+
+<!-- trace:BUG-366 | ai:claude -->
+
+##### Whose changes are these? — the `staged` flag answers, not a memory
+
+The first version of this guard (`TASK-297`) refused on *any* pending change,
+which quietly made it a different guard than the one intended. A `db-migrate`
+that failed parity left its own half-imported rows in the working set — as its
+own error message said it would — and the retry then refused, naming a hand
+edit that had never happened. The recovery was hand-run `dolt`, from a guard
+whose entire purpose was to keep hand-run `dolt` safe. A check that cannot say
+*whose* changes it found should not be asserting whose they are (`BUG-366`).
+
+So quizdom gives itself something to read. **Every quizdom write stages itself
+in the same `dolt sql` call** — the statement carries its own `CALL
+DOLT_ADD('nodes', 'edges')` tail — which makes provenance a property of the
+repository rather than a memory of intent:
+
+| `dolt_status` says | Means | quizdom |
+|---|---|---|
+| staged, uncommitted | an earlier quizdom run that never reached its commit | resumes, and says so |
+| unstaged | nobody staged it, so no quizdom write made it | refuses, naming the table |
+
+One spawn, not a following `dolt add`, because a separate staging call leaves a
+window where a killed process's rows look exactly like a hand edit. And read off
+the repository rather than remembered in a breadcrumb file, because a breadcrumb
+saying *quizdom was writing here* would still say "mine" after the user had
+discarded those rows with `dolt reset --hard` and hand-edited the table — which
+is the very recovery the refusal above recommends, so the memory would be wrong
+exactly when it mattered.
+
+The three writers share one seam for this (`db_init.rs`): `begin_write` is the
+pre-flight and hands back a `WriteClaim`, and `commit_tables` takes that claim
+rather than a path. A new writer cannot reach the commit tail without passing
+the pre-flight — which is the difference that mattered, since the store, the
+writer a session runs on every answer, is the one `TASK-297`'s convention
+silently missed (`TASK-357`).
 
 <!-- trace:TASK-296 | ai:claude -->
 
