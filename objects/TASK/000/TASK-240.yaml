@@ -12,9 +12,16 @@ priority: Medium
 owner: ''
 feature: Uncategorized
 created_at: 2026-07-20T01:41:05.146997995Z
-modified_at: 2026-07-20T01:41:05.146997995Z
+modified_at: 2026-07-22T05:43:29.671508745Z
 req_type: Task
 tags:
 - from-implementer:STORY-209
 - kind:design-choice
 - severity:minor
+comments:
+- id: 019f8859-ba87-7fc0-8618-5c187dd6a768
+  author: joe
+  content: 'Advisor decision: no cross-substrate provenance convention needed. The Q-23 to STORY-16 link remains in aida-store git history; domain nodes are addressed by Dolt id going forward.'
+  created_at: 2026-07-22T05:43:29.671508745Z
+  modified_at: 2026-07-22T05:43:29.671508745Z
+  session_id: 789bafdb-f673-41c5-affc-d550f95e51e5
