@@ -316,8 +316,11 @@ const NODE_COLUMNS: &str = "id, title, body, tags, weight";
 // store answering, not the store failing, and the
 // [`DomainStore::fetch_nodes_present`] default keys its skip off exactly that
 // distinction.
+// trace:TASK-318 | ai:claude — which is why the variant is no longer chosen
+// here: [`crate::store::missing_node`] is the shared constructor that fixes it,
+// so this backend owns only the operator-facing wording.
 fn missing_node(id: &str) -> QuizdomError {
-    QuizdomError::NotFound(format!("node {id} not found in the Dolt store"))
+    crate::store::missing_node(id, "Dolt store")
 }
 
 impl<R> DomainStore for DoltDomainStore<R>
@@ -1131,6 +1134,22 @@ mod tests {
         assert_eq!(calls.len(), 1, "one IN(...) spawn, same as the strict read");
     }
 
+    // trace:TASK-318 | ai:claude
+    // trace:STORY-327 | ai:claude — the Dolt backend's side of the absent-node
+    // invariant, asserted through the shared conformance check rather than by
+    // re-describing it here. The three scripted empty results answer the check's
+    // three reads (`fetch_node`, `fetch_nodes_present`, `fetch_nodes`).
+    #[test]
+    fn the_dolt_backend_satisfies_the_absence_contract() {
+        let store = store_with(vec![
+            (0, r#"{"rows":[]}"#, ""),
+            (0, r#"{"rows":[]}"#, ""),
+            (0, r#"{"rows":[]}"#, ""),
+        ]);
+
+        crate::store::assert_absence_contract(&store, "Q-404");
+    }
+
     // trace:TASK-247 | ai:claude
     #[test]
     fn fetch_nodes_present_still_propagates_a_query_failure() {
@@ -1486,6 +1505,12 @@ mod tests {
         expected.sort();
         assert_eq!(reached, expected);
         assert!(!reached.contains(&term), "probes spur not walked");
+
+        // trace:TASK-318 | ai:claude — the absent-node invariant against a real
+        // dolt, not only against scripted rows: an id no row holds must come
+        // back as `NotFound` from the per-item read, be skipped by the lenient
+        // batch read, and still fail the strict one.
+        crate::store::assert_absence_contract(&store, "Q-999999");
 
         // trace:STORY-244 — against a real dolt, every set-based method agrees
         // with the loop over the per-item method it replaces.

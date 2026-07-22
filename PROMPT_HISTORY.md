@@ -682,3 +682,60 @@ acceptance tests pass against local dolt 2.2.1.
 configured-remote and blind-probe rules in § *Durability and recovery*, and the
 log bound + the two-test rationale in § *The diagnostic log*; `CLAUDE.md`
 summarizes all five.
+
+## 2026-07-22 — STORY-327: contract-message accuracy, an enforced store contract, the last session.rs `too_many_arguments`
+
+**Request.** `/aida-pickup STORY-327` under a headless `aida queue work
+STORY-327 --auto-complete --no-human=both` drain. Third-generation follow-ups on
+STORY-293, across `signals.rs` / `store.rs` / `session.rs`.
+
+**TASK-319 — a message that named the wrong kind of seam.** The three
+batch-contract errors in `apply_log_signals` shared a tail inherited from
+`take_by_id`: *"a batch load must return one entry per requested id"*. All three
+are raised against **both** seams, and `reweight_questions` is a batch write, so
+half the diagnostics described the wrong operation. TASK-319 proposed making the
+tail seam-neutral; instead the seam became a value (`BatchSeam { name, verb }`,
+with `LOAD_QUESTIONS` / `REWEIGHT_QUESTIONS` constants), so the message names the
+seam *and* its direction and cannot disagree with the call that produced it. A
+new test asserts all three violations from both seams, including that the write
+seam's message never contains "load".
+
+**TASK-318 — a doc-comment promoted to an enforced contract.** STORY-293 made
+`fetch_nodes_present` skip only `NotFound` and propagate everything else, which
+silently moved an obligation onto backends: report a missing row as `Dolt(...)`
+and every absence propagates as a hard failure — the lenient read becomes the
+strict one, with no compile error and no failing test. Two things now hold it:
+`store::missing_node(id, backend)`, the shared constructor that fixes the variant
+by construction (the Dolt backend supplies only the wording), and
+`store::check_absence_contract` / `assert_absence_contract`, the conformance
+check pinning all three halves at once. The check is non-panicking underneath so
+the check *itself* is under test: a backend reporting absence as `Dolt(...)`
+fails it, and the report names the variant and why it matters. The Dolt backend
+runs it against scripted rows and inside `real_dolt_full_trait_surface` against
+a real dolt.
+
+**TASK-315 — the last seven allows, retired with payload structs.** Applied
+STORY-293's own `EventScope` move one layer up. Three structs:
+
+- `TurnJournal<'a>` — the `(config, logger, turn)` triple every session-loop
+  helper took. Applied to all **eleven** helpers carrying it, not only the five
+  over the lint threshold: a payload struct only earns its keep as a rule, and a
+  convention half the siblings follow is worse than none.
+- `SessionWiring<'a>` — the seven collaborators threaded one-per-parameter
+  through `run_session_from_current` (thirteen arguments) and re-listed at six
+  call sites. Destructured at the top of the body, so the loop reads exactly as
+  before; the bundle is about the call sites. `resume_session_with_term_persister`
+  now builds one wiring instead of constructing the same `Store*` defaults twice.
+- `SynopsisSource<'a>` — the `(observer, log_path, branch)` triple
+  `render_session_synopsis` reads from. Not invented to dodge the lint:
+  `ReviewContext` had already bundled exactly these three, and now embeds it.
+
+Zero `#[allow(clippy::too_many_arguments)]` remain in `session.rs`. The two in
+`frontend.rs` / `tui.rs` are out of scope per TASK-315's own file set.
+
+**Verified.** `cargo fmt --all` applied; `cargo clippy --workspace --all-targets
+-- -D warnings` exits 0; 680 quizdom + 7 llm tests green (5 new); all 8
+`real_dolt` acceptance tests pass against local dolt.
+
+**Docs.** `docs/architecture/graph-schema.md` gains § *The absent-node
+invariant*; `CLAUDE.md`'s storage-seam bullet names it and points there.
