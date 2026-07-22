@@ -8007,5 +8007,47 @@ operations:
     req_type: Story
     status: Approved
     priority: Medium
-clock: 597
+- id: 019f8b2f-f7ea-7cc1-bcce-11cf7fed6edc
+  target_id: 019f8b2f-f5c1-7a00-8fbb-c97e72c61254
+  author: aida
+  node_id: ''
+  lamport: 598
+  timestamp: 2026-07-22T18:56:44.522459440Z
+  kind: !Create
+    title: quizdom logs reports every unreadable log as "no such file"
+    description: |
+      `render_logs` (crates/quizdom/src/logs.rs:114-120) matches on
+      `std::fs::read_to_string(path)` with `let Ok(contents) = ... else`, discarding
+      the `io::Error`, and then hardcodes the reason string `"no such file"`:
+
+          No diagnostics recorded — /path/to/quizdom.log (no such file).
+
+      Three inputs reach that line without the file being absent:
+
+      - a log quizdom cannot read (written by a differently-owned run — cron, a
+        root-installed build)
+      - a file that is not valid UTF-8 (`read_to_string` fails, not `open`)
+      - a mistyped `--path`, where "no such file" is accidentally true but the user
+        is told nothing about which of their two candidate paths was wrong
+
+      In each case the command asserts a specific cause it did not verify, and the
+      assertion is wrong. The healthy-install case ("there is genuinely no file") and
+      the broken case ("I could not read the file") are reported identically, so the
+      second is invisible.
+
+      This is the same failure shape TASK-328 fixed one module over: `Unknown` +
+      auto_backup OFF used to be silent, and silence was indistinguishable from
+      `UpToDate`. The fix there was to make the weaker, accurate claim ("could not
+      tell") rather than guess. `logs` should do the same — carry the `io::Error`
+      into the message, or at minimum distinguish `ErrorKind::NotFound` from
+      everything else.
+
+      Not a merge blocker: the stated acceptance ("a missing log is a clear message,
+      not an error") is met, and the missing-log path — the common one — is correct.
+
+      Raised in review of PR-105: https://github.com/joemooney/quizdom/pull/105#issuecomment-5050208191
+    req_type: Task
+    status: Draft
+    priority: Medium
+clock: 598
 node_id: ''
