@@ -29,12 +29,12 @@ description: |
 
   Raised by the implementer while working BUG-366.
   Branch: bug-366  ·  Commit: 1fb58b6  ·  PR: https://github.com/joemooney/quizdom/pull/109
-status: Draft
+status: Completed
 priority: Medium
 owner: ''
 feature: Uncategorized
 created_at: 2026-07-22T20:34:21.054039573Z
-modified_at: 2026-07-22T20:34:40.814692911Z
+modified_at: 2026-07-22T22:04:55.729025343Z
 req_type: Task
 tags:
 - from-implementer:BUG-366
