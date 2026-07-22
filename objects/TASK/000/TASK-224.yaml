@@ -6,12 +6,12 @@ description: |
   The recursive CTE in DoltDomainStore::reachable (dolt_store.rs:315) is subject to MySQL/Dolt's default cte_max_recursion_depth (~1000). A >1000-hop chain errors on the Dolt backend while the aida backend's app-side walk succeeds. Not plausible for the current domain graph; noting for parity completeness. Could SET SESSION cte_max_recursion_depth in the query if it ever matters.
 
   Raised in review of PR-85: https://github.com/joemooney/quizdom/pull/85#issuecomment-5017187770
-status: Draft
+status: Approved
 priority: Medium
 owner: ''
 feature: Uncategorized
 created_at: 2026-07-19T20:04:12.340537805Z
-modified_at: 2026-07-19T20:04:12.340537805Z
+modified_at: 2026-07-22T05:44:59.272308797Z
 req_type: Task
 tags:
 - from-review:PR-85
