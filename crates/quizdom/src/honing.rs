@@ -145,6 +145,10 @@ pub(crate) fn load_probed_terms(
 ) -> Vec<TermDefinition> {
     // trace:STORY-41 | ai:codex
     // trace:STORY-244 | ai:claude — one batched read for the probed terms.
+    // trace:TASK-247 | ai:claude — both `unwrap_or_default()`s below now
+    // swallow the same thing: a store failure, not a gap in the graph.
+    // `load_terms` is per-item lenient, so an absent probes target costs one
+    // definition rather than every definition for this question.
     let ids: Vec<String> = bank
         .probes(&current.id)
         .unwrap_or_default()
