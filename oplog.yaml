@@ -5510,5 +5510,31 @@ operations:
     req_type: Task
     status: Draft
     priority: Medium
-clock: 475
+- id: 019f88df-48e7-7200-b2c5-d4f138dddfd7
+  target_id: 019f88df-46ad-7f11-8b88-1ce7027b4a43
+  author: aida
+  node_id: ''
+  lamport: 476
+  timestamp: 2026-07-22T08:09:22.407504384Z
+  kind: !Create
+    title: 'Review PR-97: STORY-260: post-cutover hygiene — rename AidaCli* to Store*, drop dead weight:N fixtures, gate clippy'
+    description: |
+      Auto-filed by `aida pr auto-queue-review` (typically from /aida-pr) (session `019f88d6`) for branch `story-260`.
+
+      - PR: <https://github.com/joemooney/quizdom/pull/97>
+      - Branch: `story-260` → `main`
+
+      ## Covers
+
+      - STORY-260
+
+      ## Acceptance
+
+      - Generate a structured review prompt with `aida review prompt --pr 97` and verify each spec's acceptance criteria.
+      - Approve and merge, or request changes by spec id.
+      - Mark this story `completed` once the PR is merged.
+    req_type: Story
+    status: Approved
+    priority: Medium
+clock: 476
 node_id: ''
