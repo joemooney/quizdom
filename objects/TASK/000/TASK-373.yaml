@@ -26,12 +26,12 @@ description: |
 
   Raised by the implementer while working STORY-367.
   Branch: story-367  ·  Commit: be2d554  (PR link added on merge)
-status: Draft
+status: Completed
 priority: Medium
 owner: ''
 feature: Uncategorized
 created_at: 2026-07-22T20:56:33.041533168Z
-modified_at: 2026-07-22T20:56:33.041533168Z
+modified_at: 2026-07-22T22:04:54.712793409Z
 req_type: Task
 tags:
 - from-implementer:STORY-367
