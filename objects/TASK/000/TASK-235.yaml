@@ -17,8 +17,15 @@ priority: Medium
 owner: ''
 feature: Uncategorized
 created_at: 2026-07-19T21:13:56.627537451Z
-modified_at: 2026-07-19T21:13:56.627537451Z
+modified_at: 2026-07-22T05:42:43.865473374Z
 req_type: Task
 tags:
 - from-review:PR-87
 - severity:minor
+comments:
+- id: 019f8859-0799-7263-bd4e-ff95db2d9bc5
+  author: joe
+  content: Duplicate of TASK-228 (same db-init/db-migrate QUIZDOM_DOLT_PATH gap, raised independently in the PR-86 and PR-87 reviews). Consolidated into TASK-228.
+  created_at: 2026-07-22T05:42:43.865473374Z
+  modified_at: 2026-07-22T05:42:43.865473374Z
+  session_id: 789bafdb-f673-41c5-affc-d550f95e51e5
