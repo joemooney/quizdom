@@ -43,14 +43,10 @@ priority: Medium
 owner: joe
 feature: Uncategorized
 created_at: 2026-05-31T15:07:46.435019935Z
-modified_at: 2026-07-19T18:42:34.287998150Z
+modified_at: 2026-07-22T05:46:30.208786621Z
 req_type: Task
 tags:
-- from-implementer:STORY-16
-- kind:observation
-- linked:EPIC-5
-- linked:VIS-2
-- severity:major
+- upstream:aida
 relationships:
 - rel_type: References
   target_id: 019e7e5d-171f-7822-865d-ddcf6b9a560b
