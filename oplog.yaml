@@ -7268,5 +7268,49 @@ operations:
     req_type: Task
     status: Draft
     priority: Medium
-clock: 562
+- id: 019f8af3-2b00-74c1-8573-b475d022f391
+  target_id: 019f8af3-284f-73f0-ae83-5aefbd1a8599
+  author: aida
+  node_id: ''
+  lamport: 563
+  timestamp: 2026-07-22T17:50:19.905002303Z
+  kind: !Create
+    title: The terminal-safety capture is a child process, not dup2 in-process
+    description: |
+      TASK-322 proposed proving the never-touch-the-terminal invariant by
+      "redirecting the process's fd 1 and 2 with `dup2`", and anticipated a `libc`
+      dependency for it. That was implemented first and DOES NOT WORK under a normal
+      `cargo test` run: the capture then also collects libtest's own `test … ok`
+      progress lines from every other test finishing concurrently, so "nothing
+      arrived" is not assertable. Observed failure: 146 unexpected bytes, all of them
+      other tests' progress output.
+
+      What shipped instead
+      (`nothing_reaches_the_terminal_while_the_alternate_screen_is_active`,
+      crates/quizdom/src/diagnostics.rs): the test re-runs the test binary for one
+      `#[ignore]`d child test with `--exact --ignored --nocapture --test-threads=1`
+      and a piped stdout, then asserts the bytes between crossterm's enter and leave
+      sequences are zero. One writer on the pipe, so the assertion is exact.
+      `--nocapture` is load-bearing — it is what makes a stray `println!` reach the
+      pipe instead of being swallowed by libtest's own capture, which is the
+      regression the test exists to catch. No `libc` dependency was added.
+
+      Two consequences worth the advisor's eyes:
+
+      1. The invariant is now pinned by TWO tests with different blind spots (the
+         source scan is lexical but covers every path; the capture is behavioural but
+         only covers paths the child drives). The module docs say so. Neither is
+         redundant.
+      2. The child spawns the test binary, which tripped BUG-200's
+         `no_raw_command_spawns_outside_the_choke_point` guard — see the sibling
+         finding about the allowlist.
+
+      Verified by mutation: adding a `println!` to `emit` fails the capture test.
+
+      Raised by the implementer while working STORY-326.
+      Branch: story-326  ·  Commit: 99956f4  (PR link added on merge)
+    req_type: Task
+    status: Draft
+    priority: Medium
+clock: 563
 node_id: ''
