@@ -19,7 +19,7 @@ priority: Medium
 owner: ''
 feature: Uncategorized
 created_at: 2026-07-22T19:01:32.628896531Z
-modified_at: 2026-07-22T20:00:21.122240966Z
+modified_at: 2026-07-22T20:01:33.089550795Z
 req_type: Story
 comments:
 - id: 019f8b6a-3482-7251-bd99-4c7c9a1fce37
@@ -27,4 +27,18 @@ comments:
   content: Commit f813a01 references this requirement
   created_at: 2026-07-22T20:00:21.122240966Z
   modified_at: 2026-07-22T20:00:21.122240966Z
+  session_id: 019f8b63-175f-7182-bc87-fb806fe3937b
+- id: 019f8b6b-4da1-7430-9e7b-86bf41bde6c7
+  author: joe
+  content: |-
+    Implemented via branch story-352 (commit f813a01):
+
+    - TASK-347: `render_logs` splits `ErrorKind::NotFound` (message + exit 0, the healthy install) from every other read failure (`QuizdomError::Io`, exit 1, naming the OS cause). A `--path` that found nothing also names the resolved log, so a typo's "no such file" no longer leaves two candidate paths unresolved.
+    - TASK-349: new `diagnostics::one_line` collapses an event to one line of printable text on the WRITE side — CSI/OSC escape sequences dropped whole, other control characters to spaces. `logs.rs` re-applies it to entries and displayed paths, because `--path` reads files this crate never wrote.
+    - TASK-348: `ROTATED_SUFFIX` is `pub(crate)`; the reader's `previous_generation` uses it instead of a second `".1"` literal.
+
+    Test status: 714/714 tests green (7 new), clippy `-D warnings` clean, `cargo fmt --all --check` clean. All four surfaces also driven end to end against the built binary (`cat -v` on a colourized + `\r`-bearing log shows no `^[`, no `^M`).
+    Follow-up: TASK-361 and TASK-362 filed as implementer findings (both `kind:design-choice`) for advisor triage.
+  created_at: 2026-07-22T20:01:33.089550795Z
+  modified_at: 2026-07-22T20:01:33.089550795Z
   session_id: 019f8b63-175f-7182-bc87-fb806fe3937b
