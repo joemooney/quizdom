@@ -128,10 +128,85 @@ pub(crate) fn degraded_read(operation: &str, subject: &str, error: &QuizdomError
     ));
 }
 
-/// `<rfc3339>  <event>` — one line. Newlines inside `event` collapse to spaces
-/// so one event stays one line and the file stays greppable.
+/// `<rfc3339>  <event>` — one line, and one line of PRINTABLE text (see
+/// [`one_line`]), so the file stays greppable and reading it back stays safe.
 fn format_entry(at: &str, event: &str) -> String {
-    format!("{at}  {}", event.replace('\n', " "))
+    format!("{at}  {}", one_line(event))
+}
+
+// trace:TASK-349 | ai:claude
+/// Collapse `event` to a single line of printable text: ANSI escape sequences
+/// are DROPPED, every other control character becomes a space.
+///
+/// ## Why this is not just `replace('\n', " ")`
+///
+/// The newline collapse was written for one invariant — one event is one grep
+/// hit — and while nothing ever printed the log that was the whole requirement.
+/// TASK-331's reader changed the module's standing: this text now has a path to
+/// a terminal, and not all of it is quizdom's own prose. [`degraded_read`] and
+/// the auto-backup footer embed subprocess output, and a dolt build that
+/// colourizes its stderr writes real escape sequences into the log. A bare
+/// `\r` is the sharper case: it returns the cursor, so the next entry overwrites
+/// the one before it — an entry could HIDE its predecessor in the exact command
+/// someone runs to find out what went wrong.
+///
+/// So the sanitizing lives here, on the WRITE side, where "the log holds one
+/// line of printable text per event" is a property of the file rather than a
+/// habit of whoever reads it. [`crate::logs`] applies it a second time on the
+/// way out, because `--path` will happily read a file this module never wrote.
+pub(crate) fn one_line(event: &str) -> String {
+    let mut out = String::with_capacity(event.len());
+    let mut chars = event.chars().peekable();
+    while let Some(character) = chars.next() {
+        match character {
+            '\u{1b}' => skip_escape_sequence(&mut chars),
+            // `\n`, `\r`, `\t`, the C1 range and DEL. A space keeps the words
+            // either side of it apart, which dropping the character would not.
+            _ if character.is_control() => out.push(' '),
+            _ => out.push(character),
+        }
+    }
+    out
+}
+
+// trace:TASK-349 | ai:claude
+/// Consume the remainder of the escape sequence whose `ESC` was just read.
+///
+/// Dropping the whole sequence rather than filtering the `ESC` out of it is the
+/// difference between `red text` and `red[0m text`: the parameters are ordinary
+/// printable characters, so a filter that only removes control characters leaves
+/// the sequence's debris in the message.
+fn skip_escape_sequence(chars: &mut std::iter::Peekable<std::str::Chars<'_>>) {
+    match chars.peek() {
+        // CSI — `ESC [ <parameters> <final byte>`: colours, cursor movement.
+        Some('[') => {
+            chars.next();
+            for character in chars.by_ref() {
+                if matches!(character, '\u{40}'..='\u{7e}') {
+                    break;
+                }
+            }
+        }
+        // OSC — `ESC ] <text> <BEL | ST>`: window titles, hyperlinks.
+        Some(']') => {
+            chars.next();
+            while let Some(character) = chars.next() {
+                match character {
+                    '\u{7}' => break,
+                    '\u{1b}' => {
+                        chars.next_if_eq(&'\\');
+                        break;
+                    }
+                    _ => {}
+                }
+            }
+        }
+        // Every other sequence is two characters (`ESC =`, `ESC 7`, …), and a
+        // trailing `ESC` with nothing after it consumes nothing.
+        _ => {
+            chars.next();
+        }
+    }
 }
 
 // trace:TASK-321 | ai:claude
@@ -147,8 +222,18 @@ fn format_entry(at: &str, event: &str) -> String {
 const LOG_SIZE_LIMIT: u64 = 1024 * 1024;
 
 // trace:TASK-321 | ai:claude
+// trace:TASK-348 | ai:claude — `pub(crate)` so the READER shares the definition.
 /// The suffix of the one kept previous generation.
-const ROTATED_SUFFIX: &str = ".1";
+///
+/// Visible to the crate because [`crate::logs`] points at the rotated
+/// generation and this module writes it: two spellings of the same name would
+/// agree until the day the suffix changed, and then `quizdom logs` would simply
+/// stop printing its `(an earlier generation is in …)` line — no error, a
+/// pointer that quietly disappears. That matters more than usual here, because
+/// the pointer exists precisely for the reader whose `--tail` never reaches the
+/// live log's `-- rotated at … --` first line, so its absence is exactly what
+/// they cannot detect.
+pub(crate) const ROTATED_SUFFIX: &str = ".1";
 
 // trace:TASK-333 | ai:claude
 /// Where a rotation's copy lands before it is renamed onto [`ROTATED_SUFFIX`],
@@ -322,6 +407,56 @@ mod tests {
 
         assert!(!entry.trim_end().contains('\n'), "{entry}");
         assert!(entry.contains("dolt sql failed: line two"), "{entry}");
+    }
+
+    // trace:TASK-349 | ai:claude
+    /// The write side of terminal safety. `\r` is the one that matters most: it
+    /// returns the cursor, so an entry carrying one HIDES the entry printed
+    /// before it — in the exact command someone runs to find out what went
+    /// wrong. Escape sequences are dropped whole rather than filtered, because
+    /// their parameters are ordinary printable characters and a control-only
+    /// filter would leave `[0m` behind in the message.
+    #[test]
+    fn an_entry_carries_no_escape_sequences_and_no_carriage_returns() {
+        // A dolt build that colourizes its stderr, quoted into a degraded-read
+        // entry.
+        assert_eq!(
+            one_line("dolt sql failed: \u{1b}[31mconnection refused\u{1b}[0m"),
+            "dolt sql failed: connection refused"
+        );
+        // The cursor-return case, and the C1/DEL range beside it.
+        assert_eq!(one_line("second\rfirst"), "second first");
+        assert_eq!(one_line("a\u{7f}b\u{9b}c"), "a b c");
+        // OSC — a window title or a hyperlink, terminated either way.
+        assert_eq!(one_line("\u{1b}]0;pwned\u{7}real text"), "real text");
+        assert_eq!(one_line("\u{1b}]8;;http://x\u{1b}\\real text"), "real text");
+        // A truncated sequence at the end of a message consumes what is there
+        // and stops, rather than looping or panicking.
+        assert_eq!(one_line("trailing \u{1b}"), "trailing ");
+        assert_eq!(one_line("trailing \u{1b}[3"), "trailing ");
+        // …and ordinary prose is untouched, including the punctuation the log's
+        // own messages are full of.
+        assert_eq!(
+            one_line("degraded read: probes(Q-23) failed and returned nothing"),
+            "degraded read: probes(Q-23) failed and returned nothing"
+        );
+    }
+
+    // trace:TASK-349 | ai:claude — the invariant reaches the recorded entry,
+    // not just the helper: `record` is the only way in, so this is the property
+    // the FILE has.
+    #[test]
+    fn a_recorded_event_is_sanitized_before_it_is_stored() {
+        clear_captured();
+
+        record("auto_backup push failed: \u{1b}[1;31mfatal\u{1b}[0m\rhidden");
+
+        let captured = captured();
+        assert_eq!(captured.len(), 1, "{captured:?}");
+        let entry = &captured[0];
+        assert!(!entry.contains('\u{1b}'), "{entry:?}");
+        assert!(!entry.contains('\r'), "{entry:?}");
+        assert!(entry.contains("fatal hidden"), "{entry:?}");
     }
 
     #[test]
