@@ -33,12 +33,12 @@ description: |
 
   Raised by the implementer while working STORY-293.
   Branch: story-293  ·  Commit: 071d5ff  (PR link added on merge)
-status: Draft
+status: Completed
 priority: Medium
 owner: ''
 feature: Uncategorized
 created_at: 2026-07-22T16:49:01.774944104Z
-modified_at: 2026-07-22T16:49:01.774944104Z
+modified_at: 2026-07-22T18:28:09.184914423Z
 req_type: Task
 tags:
 - aida:techdebt
