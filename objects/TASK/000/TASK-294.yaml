@@ -1,0 +1,36 @@
+id: 019f8a61-abb6-7d32-bf2e-3758a082dc52
+spec_id: TASK-294
+agreed_id: TASK-294
+title: The shared dolt commit tail lives in db_init.rs — the DoltRunner seam has outgrown that module
+description: |
+  STORY-291 gave `db-init` and `db-migrate` a commit tail and collapsed the three
+  copies of it into one helper — `db_init::commit_all` plus
+  `db_init::is_nothing_to_commit` (crates/quizdom/src/db_init.rs:160-198).
+  `DoltDomainStore::commit` and `db_backup::snapshot_working_set` now call into
+  them.
+
+  That works, but `db_init.rs` is named for one CLI subcommand and is now the home
+  of three cross-cutting things: the `DoltRunner` trait, `SystemDoltRunner`, and
+  the shared commit tail. Every other dolt-touching module imports from a module
+  whose name says "bootstrap". A `dolt_cmd.rs` (or similar) holding the spawn seam
+  + the commit tail would say what it is, and `db_init.rs` would go back to being
+  the db-init flow.
+
+  Deliberately not done here: STORY-291's acceptance is about the commit lifecycle
+  and a move would have widened the diff across five files for no behavioural
+  change. Cheap to do later, and the trace comments make the call sites easy to
+  find.
+
+  Raised by the implementer while working STORY-291.
+  Branch: story-291  ·  Commit: 8c374fa  (PR link added on merge)
+status: Draft
+priority: Medium
+owner: ''
+feature: Uncategorized
+created_at: 2026-07-22T15:11:24.598248785Z
+modified_at: 2026-07-22T15:11:24.598248785Z
+req_type: Task
+tags:
+- from-implementer:STORY-291
+- kind:followup-suggestion
+- severity:cosmetic
