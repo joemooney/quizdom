@@ -1,0 +1,37 @@
+id: 019f8afb-81b6-79f0-b185-5afa5d956589
+spec_id: TASK-335
+agreed_id: TASK-335
+title: The /settings read-only row count lives as prose in two footers with nothing pinning it
+description: |
+  `ReadOnlyRows::rows()` returns a fixed `[(&'static str, String); 3]`
+  (crates/quizdom/src/settings.rs:230-238), and two footers hardcode that arity
+  in prose:
+
+    - crates/quizdom/src/settings.rs:391 — "the three rows above are read-only —
+      set dolt_path / auto_backup / log_path"
+    - crates/quizdom/src/tui.rs:2144 — "the last three rows are read-only
+      (dolt_path / auto_backup / log_path in settings.toml)"
+
+  Adding a fourth read-only row means editing the array (which the compiler
+  forces) plus both footer strings and both key lists (which nothing forces).
+  The result compiles and passes while both surfaces tell the user the wrong
+  number and omit the new key — the exact drift `ReadOnlyRows` was introduced to
+  prevent for the rows themselves.
+
+  TASK-320 got the rows right; this is the leftover prose seam beside them.
+  Cheapest fix is to derive the footer from `rows()` — the count and the key
+  list are both computable — or to assert in a test that each label named in
+  `rows()` also appears in the footer.
+
+  Raised in review of PR-103: https://github.com/joemooney/quizdom/pull/103#issuecomment-5049615664
+status: Draft
+priority: Medium
+owner: ''
+feature: Uncategorized
+created_at: 2026-07-22T17:59:26.390733024Z
+modified_at: 2026-07-22T17:59:26.390733024Z
+req_type: Task
+tags:
+- from-review:PR-103
+- settings
+- severity:cosmetic
