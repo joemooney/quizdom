@@ -1,0 +1,43 @@
+id: 019f8b8f-03de-7370-b730-0f295c7ec27e
+spec_id: TASK-371
+agreed_id: TASK-371
+title: Docs lead-in still says the guard refuses 'changes quizdom did not make' — the claim BUG-366 removed from the message
+description: |
+  Cosmetic doc-consistency drift found in the PR-109 adversarial deep-pass.
+  Non-blocking; the verdict is Approved.
+
+  BUG-366's thesis is that a check which cannot say *whose* changes it found
+  should not assert whose they are — so `foreign_change_refusal` was reworded to
+  report the observation (`they are UNSTAGED`) instead of the claim.
+
+  Two prose lead-ins that introduce that very message still carry the old claim:
+
+  - OVERVIEW.md:230-233 — "refuses when a table it is about to stage already
+    carries changes quizdom did not make", immediately above the fenced example
+    of the new message that deliberately stops saying that.
+  - CLAUDE.md:48-50 — "refuses when a table it is about to stage already holds a
+    hand-run edit". Softer, and the precise staged/unstaged rule follows two
+    sentences later, so this one is borderline.
+
+  Why it matters beyond style: the actual refusal condition is "unstaged", not
+  "not quizdom's". TASK-368 records the gap between those two — a user's own
+  `dolt add` reads as quizdom's leftovers — so the lead-in slightly overstates
+  the guarantee the section then goes on to qualify.
+
+  Suggested shape: "refuses when a table it is about to stage carries changes no
+  quizdom run staged", which matches both the message and the `staged`-flag table
+  directly below it.
+
+  Raised in review of PR-109:
+  https://github.com/joemooney/quizdom/pull/109#issuecomment-5051249314
+status: Draft
+priority: Medium
+owner: ''
+feature: Uncategorized
+created_at: 2026-07-22T20:40:33.502541171Z
+modified_at: 2026-07-22T20:40:33.502541171Z
+req_type: Task
+tags:
+- docs
+- from-review:PR-109
+- severity:cosmetic
