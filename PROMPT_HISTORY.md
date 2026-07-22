@@ -104,3 +104,59 @@ adding the EPIC-167 status block, the TUI/turn-envelope architecture notes, the
 real test count, and resolving the "still open" LLM-integration item. Created
 this `PROMPT_HISTORY.md`. Docs only, no code touched. Shipped via the same
 isolated-worktree + PR-to-`main` + CI-auto-merge workflow.
+
+## 2026-07-21 — STORY-244: batching the DomainStore (the ADR-203 spawn ceiling)
+
+**The request.** `/aida-pickup STORY-244` — the implementer seat picking up the
+queued story off the branch `story-244`.
+
+**The problem, as measured.** `quizdom curate` against the real 75-node bank
+took 2m09s wall for ~12s of CPU, spawning 264 `dolt` processes. Process
+startup (~0.37s each), not query time, was the whole cost. STORY-207's
+recursive-CTE win on traversal was being swamped by per-query spawns
+everywhere else. Root cause was N+1 at the trait seam, not in the backend:
+every hot path looped a per-item `DomainStore` method — `all_questions()` did
+`list_node_ids` + a `fetch_node` per id, the `begets`/`probes` fan-outs loaded
+their successors one at a time, `detect_graph_contradictions` read edges one
+belief at a time, and the curate re-weight loop paid an UPDATE + `dolt add` +
+`dolt commit` per question (4 spawns × 66 questions = the 264).
+
+**What was done.** Four set-based methods added to `DomainStore` —
+`fetch_nodes`, `list_nodes`, `neighbors_many`, `update_weights` — each with a
+**default implementation that loops the per-item method it batches**, so every
+impl and every test double stayed correct without being touched. The Dolt
+backend overrides all four with single-query forms: `IN (...)` selects, one
+grouped edge select (`ORDER BY from_id, created_at, to_id`, preserving the
+per-source ordering TASK-221 documents), and a multi-row
+`UPDATE ... SET tags = CASE id WHEN ... END, weight = CASE id WHEN ... END`
+followed by one `add` + one `commit`. All three chunk at `MAX_BATCH_IDS = 500`
+so a bank far larger than the current one costs a spawn per chunk, not per row
+— and can't blow the argv limit. Node-row decoding was pulled into one
+`node_from_row` so the per-item and set-based reads can't drift.
+
+Contract parity was the design constraint, since the point of the defaults is
+that the two paths are interchangeable: `fetch_nodes` returns records in
+requested-id order and raises the *same* not-found error looping `fetch_node`
+raises; `neighbors_many` is total over its inputs; `update_weights` is
+last-write-wins per repeated id. The two bank-level batch reads deliberately
+differ in strictness, each matching the call site it replaces —
+`load_questions` is strict (the `begets` and curate fan-outs were), while
+`load_terms` skips a node with no `definition:` line rather than failing the
+batch (the `probes` fan-out's long-standing `filter_map(.ok())`).
+
+**Result, measured the same way (PATH shim logging every `dolt` invocation,
+against a copy of the real 71-question bank plus a log that re-weights all
+71).** Before: 207 spawns and still running when killed at 120s. After: **4
+spawns, 1.94s wall.** The batched write was checked for correctness too, not
+just speed — all 71 rows moved −12 with `quality:unhelpful` appended, in a
+single Dolt commit.
+
+**Tests.** 578 lib tests green (8 new: batch-vs-loop parity for each method,
+the spawn counts, empty-batch no-op, repeated-id last-write-wins, and an
+end-to-end curate run over a scripted Dolt runner asserting a *fixed* 4 spawns
+regardless of question count). The 3 ignored `real_dolt` tests green against a
+real `dolt` binary, now asserting batch/per-item agreement on real data. No new
+clippy warnings.
+
+**Not done, deliberately.** No `dolt sql-server` — ADR-203 keeps CLI spawns;
+this story was about spawn *count*, not the spawn *mechanism*.
