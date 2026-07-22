@@ -1,0 +1,41 @@
+id: 019f8bd0-bd47-7673-ab3c-b9016d93a390
+spec_id: TASK-381
+agreed_id: TASK-381
+title: TASK-373 changed the no-config-path load from seed_from_env() to Settings::default()
+description: |
+  Moving the hermeticity guard from the IO to the path required deciding what
+  `load_or_seed_at(None)` means. It now returns `Settings::default()`; before, a
+  `config_path()` of `None` fell through to `seed_from_env()` (the STORY-180
+  `$EDITOR`/`$VISUAL` inference).
+
+  Why the change, and why I judged it inconsequential rather than routing it back:
+
+  - `None` only happens in production when NEITHER `$XDG_CONFIG_HOME` nor `$HOME`
+    is set, i.e. when nothing will ever be persisted anyway.
+  - The seed only decides what is DISPLAYED and SAVED. The default,
+    `EditorChoice::Auto`, re-infers from `$EDITOR` every time the editor is
+    actually built (`EditorChoice::resolve`), so the running editor is unchanged.
+  - Keeping `seed_from_env()` there would have re-introduced exactly the leak
+    TASK-266 closed: under `cfg(test)` the path is `None`, so the ~730 in-crate
+    tests would have started reading the developer's `$EDITOR`.
+
+  The path that still seeds from the environment is the one that means "first
+  run": a config path EXISTS and holds no file yet. That is arguably what
+  `seed_from_env` always meant.
+
+  Flagging it because it is a production behaviour change the spec did not ask
+  for, made in service of one it did.
+
+  Raised by the implementer while working BUG-378.
+  Branch: bug-378  ·  Commit: 2278782  (PR link added on merge)
+status: Draft
+priority: Medium
+owner: ''
+feature: Uncategorized
+created_at: 2026-07-22T21:52:20.807827887Z
+modified_at: 2026-07-22T21:52:20.807827887Z
+req_type: Task
+tags:
+- from-implementer:BUG-378
+- kind:deviation
+- severity:cosmetic
