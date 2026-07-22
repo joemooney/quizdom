@@ -7562,5 +7562,37 @@ operations:
   timestamp: 2026-07-22T18:00:58.276985095Z
   kind: !SetStatus
     status: Completed
-clock: 576
+- id: 019f8b0c-ee9a-73b2-b6b4-189a68da1689
+  target_id: 019f8b0c-ecc1-7753-93dc-775200f1d375
+  author: aida
+  node_id: ''
+  lamport: 577
+  timestamp: 2026-07-22T18:18:28.378243Z
+  kind: !Create
+    title: Two clippy::too_many_arguments allows remain outside session.rs (frontend.rs, tui.rs)
+    description: |
+      STORY-327's TASK-315 retired all seven allows on session.rs free functions and
+      left two standing, exactly as TASK-315 scoped it:
+
+      - crates/quizdom/src/frontend.rs:100
+      - crates/quizdom/src/tui.rs:2360
+
+      Both predate STORY-260 and neither file was in STORY-293's or STORY-327's
+      stated file set, so they were deliberately not touched. The lint is now
+      retired everywhere else in the crate, which makes these two the entire
+      remaining backlog for it — worth deciding explicitly whether to finish the job
+      or to keep them as accepted exceptions with a stated reason.
+
+      Note the shape differs from what STORY-327 fixed. The session.rs free
+      functions shared a recurring triple (config/logger/turn) that was one concept;
+      these two are front-end constructors/renderers whose arguments may genuinely
+      be independent. Check before assuming a payload struct is the right move —
+      an `#[allow]` with a one-line rationale may be the honest answer for these.
+
+      Raised by the implementer while working STORY-327.
+      Branch: story-327  ·  Commit: 4b52709  (PR link added on merge)
+    req_type: Task
+    status: Draft
+    priority: Medium
+clock: 577
 node_id: ''
