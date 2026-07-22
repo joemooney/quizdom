@@ -4458,5 +4458,30 @@ operations:
     req_type: Story
     status: Approved
     priority: Medium
-clock: 421
+- id: 019f887a-a323-7f22-a99e-6e59098bafb3
+  target_id: 019f887a-9eb1-7990-a924-0a580d07a9c8
+  author: aida
+  node_id: ''
+  lamport: 422
+  timestamp: 2026-07-22T06:19:26.371677211Z
+  kind: !Create
+    title: 'Durability + CI: dolt in the pipeline, a remote/backup for data/dolt, and the stale promotion doc'
+    description: |-
+      Bundles TASK-219, TASK-243, TASK-241 — infra and docs, file-disjoint from the code batches (.github/workflows/ci.yml, docs/, and a small backup path).
+
+      TASK-243 (the risk item): after STORY-209 purged domain objects from the AIDA store, the domain graph exists ONLY in the local gitignored data/dolt. A disk loss costs all 75 nodes and 75 edges, and replaying db-migrate from aida-store history gets staler every session that writes to Dolt. Decide and wire the durability story: a Dolt remote (DoltHub, or a file/S3 remote) with a push after session writes, or a scheduled dolt backup. Document whichever is chosen in OVERVIEW.md and CLAUDE.md. Prefer a file-based remote if it avoids a hosted-account dependency — the goal is that a lost working copy is recoverable.
+
+      TASK-219: CI has no dolt binary, so the three ignored real_dolt acceptance tests never run in the pipeline — the storage layer that was fully replaced is the one layer CI cannot verify. Install dolt in the workflow and run the ignored tests.
+
+      TASK-241: docs/architecture/session-log-promotion.md still describes the AIDA-store world; only a banner was fixed during STORY-209. Rewrite it in Dolt terms.
+
+      ## Acceptance
+      - A documented, runnable durability path: from a deleted data/dolt, the documented commands restore the 75 nodes / 75 edges. State the recovery steps explicitly in OVERVIEW.md.
+      - CI installs dolt and runs the previously-ignored real_dolt tests; the workflow passes on this PR.
+      - session-log-promotion.md describes the Dolt substrate with no stale AIDA-store domain-data claims.
+      - cargo test green.
+    req_type: Story
+    status: Approved
+    priority: Medium
+clock: 422
 node_id: ''
