@@ -35,11 +35,15 @@ pub trait QuestionBank {
     // trace:STORY-244 | ai:claude
     /// Load many terms at once — the batched form of the `probes` fan-out.
     ///
-    /// Lenient about *conversion*, mirroring the `filter_map(.ok())` that
-    /// fan-out has always used: a node carrying no `definition:` line is
-    /// skipped rather than failing the batch. Store errors still propagate;
-    /// the schema's `fk_edges_to` constraint means a `probes` target always
-    /// has a row, so there is no missing-node case to be lenient about.
+    /// Lenient per *item*, mirroring the `filter_map(.ok())` that fan-out has
+    /// always used: an id with no node, or a node carrying no `definition:`
+    /// line, is skipped and the remaining definitions still reach the caller.
+    ///
+    // trace:TASK-247 | ai:claude — the leniency is per-item in *every* impl.
+    /// Deliberately not the strictness of [`Self::load_questions`]: a term
+    /// this bank cannot produce costs the reader one definition, not the
+    /// whole set, so an implementation must never fail the batch over a
+    /// single absent id.
     fn load_terms(&self, ids: &[String]) -> Result<Vec<TermDefinition>> {
         Ok(ids
             .iter()
@@ -123,10 +127,14 @@ where
     }
 
     // trace:STORY-244 | ai:claude
+    // trace:TASK-247 | ai:claude — `fetch_nodes_present`, not `fetch_nodes`:
+    // the strict read failed the whole batch on one absent probes target,
+    // which the caller's `unwrap_or_default()` then turned into "this
+    // question defines nothing". Same leniency as the trait default now.
     fn load_terms(&self, ids: &[String]) -> Result<Vec<TermDefinition>> {
         Ok(self
             .store
-            .fetch_nodes(ids)?
+            .fetch_nodes_present(ids)?
             .into_iter()
             .filter_map(|record| term_from_node(record).ok())
             .collect())

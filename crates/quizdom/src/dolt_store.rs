@@ -89,6 +89,32 @@ where
             .unwrap_or_default())
     }
 
+    // trace:TASK-247 | ai:claude
+    /// The rows behind `ids`, keyed by id — one `IN (...)` SELECT per
+    /// [`MAX_BATCH_IDS`] distinct ids. Absent ids simply have no entry; it is
+    /// the caller that decides whether that is an error
+    /// ([`DomainStore::fetch_nodes`]) or a skip
+    /// ([`DomainStore::fetch_nodes_present`]).
+    fn found_nodes(&self, ids: &[String]) -> Result<BTreeMap<String, NodeRecord>> {
+        let distinct: Vec<&str> = ids
+            .iter()
+            .map(String::as_str)
+            .collect::<BTreeSet<_>>()
+            .into_iter()
+            .collect();
+        let mut found: BTreeMap<String, NodeRecord> = BTreeMap::new();
+        for chunk in distinct.chunks(MAX_BATCH_IDS) {
+            for row in self.sql_json(&format!(
+                "SELECT {NODE_COLUMNS} FROM nodes WHERE id IN ({});",
+                sql_id_list(chunk)
+            ))? {
+                let record = node_from_row(&row);
+                found.insert(record.id.clone(), record);
+            }
+        }
+        Ok(found)
+    }
+
     /// Stage and commit a completed write. A no-op write (e.g. an idempotent
     /// [`DomainStore::ensure_edge`] hitting an existing row) leaves nothing to
     /// commit — dolt's refusal for that case is success here.
@@ -313,25 +339,22 @@ where
         if ids.is_empty() {
             return Ok(Vec::new());
         }
-        let distinct: Vec<&str> = ids
-            .iter()
-            .map(String::as_str)
-            .collect::<BTreeSet<_>>()
-            .into_iter()
-            .collect();
-        let mut found: BTreeMap<String, NodeRecord> = BTreeMap::new();
-        for chunk in distinct.chunks(MAX_BATCH_IDS) {
-            for row in self.sql_json(&format!(
-                "SELECT {NODE_COLUMNS} FROM nodes WHERE id IN ({});",
-                sql_id_list(chunk)
-            ))? {
-                let record = node_from_row(&row);
-                found.insert(record.id.clone(), record);
-            }
-        }
+        let found = self.found_nodes(ids)?;
         ids.iter()
             .map(|id| found.get(id).cloned().ok_or_else(|| missing_node(id)))
             .collect()
+    }
+
+    // trace:TASK-247 | ai:claude
+    /// The same one-`IN (...)`-per-chunk read as [`Self::fetch_nodes`], minus
+    /// the missing-row check: a query error still propagates, an absent id is
+    /// just absent from the result.
+    fn fetch_nodes_present(&self, ids: &[String]) -> Result<Vec<NodeRecord>> {
+        if ids.is_empty() {
+            return Ok(Vec::new());
+        }
+        let found = self.found_nodes(ids)?;
+        Ok(ids.iter().filter_map(|id| found.get(id).cloned()).collect())
     }
 
     // trace:STORY-244 | ai:claude
@@ -755,11 +778,48 @@ mod tests {
         }
     }
 
+    // trace:TASK-247 | ai:claude
+    #[test]
+    fn fetch_nodes_present_skips_a_missing_id_instead_of_failing_the_batch() {
+        let ids = ["Q-1", "Q-404", "Q-2"].map(String::from).to_vec();
+        let store = store_with(vec![(0, TWO_NODE_ROWS, "")]);
+
+        let records = store
+            .fetch_nodes_present(&ids)
+            .expect("an absent id is a skip, not an error");
+
+        assert_eq!(
+            records.iter().map(|r| r.id.as_str()).collect::<Vec<_>>(),
+            ["Q-1", "Q-2"],
+            "the rows that exist, still in requested-id order"
+        );
+        let calls = store.runner.calls.borrow();
+        assert_eq!(calls.len(), 1, "one IN(...) spawn, same as the strict read");
+    }
+
+    // trace:TASK-247 | ai:claude
+    #[test]
+    fn fetch_nodes_present_still_propagates_a_query_failure() {
+        let store = store_with(vec![(1, "", "connection refused")]);
+
+        match store.fetch_nodes_present(&["Q-1".to_string()]) {
+            Err(QuizdomError::Dolt(message)) => {
+                assert!(message.contains("connection refused"), "{message}");
+            }
+            other => panic!("a store failure is not an absent row, got {other:?}"),
+        }
+    }
+
     #[test]
     fn empty_batches_do_no_work_at_all() {
         let store = store_with(Vec::new());
 
         assert!(store.fetch_nodes(&[]).expect("empty fetch").is_empty());
+        // trace:TASK-247 | ai:claude
+        assert!(store
+            .fetch_nodes_present(&[])
+            .expect("empty lenient fetch")
+            .is_empty());
         assert!(store
             .neighbors_many(&[], EdgeKind::Begets)
             .expect("empty neighbors")

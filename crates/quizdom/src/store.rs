@@ -154,6 +154,25 @@ pub trait DomainStore {
         ids.iter().map(|id| self.fetch_node(id)).collect()
     }
 
+    // trace:TASK-247 | ai:claude
+    /// The best-effort form of [`Self::fetch_nodes`]: an id with no row is
+    /// skipped rather than failing the batch. The records that do exist come
+    /// back in `ids` order, repeated ids repeated.
+    ///
+    /// For callers whose own contract is best-effort — a fan-out that would
+    /// rather show the reachable part of the graph than nothing at all. A
+    /// caller that needs every id present wants [`Self::fetch_nodes`].
+    ///
+    /// The default cannot tell an absent row from a store failure, so it
+    /// skips both; a backend that can distinguish them overrides this and
+    /// propagates store failures.
+    fn fetch_nodes_present(&self, ids: &[String]) -> Result<Vec<NodeRecord>> {
+        Ok(ids
+            .iter()
+            .filter_map(|id| self.fetch_node(id).ok())
+            .collect())
+    }
+
     // trace:STORY-244 | ai:claude
     /// Every node of `kind`, id-ordered — the set-based form of
     /// [`Self::list_node_ids`] followed by a fetch per id, which is what the

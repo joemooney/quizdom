@@ -4995,3 +4995,43 @@ fn debate_mode_verdict_judges_argument_structure_not_truth() {
 
     let _ = fs::remove_file(path);
 }
+
+// trace:TASK-247 | ai:claude
+// A `probes` target with no `nodes` row costs the reader that one definition,
+// never the whole set. The batched read behind `load_probed_terms` used to be
+// strict (`fetch_nodes`), so one absent target failed the batch and the
+// caller's `unwrap_or_default()` reported the question as defining nothing.
+#[test]
+fn load_probed_terms_keeps_the_definitions_that_do_exist() {
+    let runner = ScriptedDoltRunner::new(vec![
+        // probes(Q-23) — the edge rows survive the missing node.
+        (
+            0,
+            r#"{"rows":[{"to_id":"TERM-24"},{"to_id":"TERM-404"}]}"#,
+            "",
+        ),
+        // The batched node read: TERM-24 has a row, TERM-404 does not.
+        (
+            0,
+            r#"{"rows":[{"id":"TERM-24","title":"free will","body":"definition: the capacity to choose otherwise","tags":"topic:free-will","weight":50}]}"#,
+            "",
+        ),
+    ]);
+    let bank = AidaCliQuestionBank::with_store(DoltDomainStore::with_runner(
+        "/tmp/quizdom-dolt-tests",
+        runner,
+    ));
+    let current = question_with_tags("Q-23", 70, AnswerKind::YesNo, ["answer:yes-no"]);
+
+    let terms = load_probed_terms(&bank, &current);
+
+    assert_eq!(
+        terms
+            .iter()
+            .map(|term| term.id.as_str())
+            .collect::<Vec<_>>(),
+        ["TERM-24"],
+        "the surviving definition still reaches the reader"
+    );
+    assert_eq!(terms[0].definition, "the capacity to choose otherwise");
+}
