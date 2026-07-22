@@ -6349,5 +6349,49 @@ operations:
   timestamp: 2026-07-22T15:47:25.147275174Z
   kind: !SetStatus
     status: Completed
-clock: 518
+- id: 019f8a95-42ca-7843-b875-c440fe9d4801
+  target_id: 019f8a95-40e9-7b50-b50d-ea3d30b1e945
+  author: aida
+  node_id: ''
+  lamport: 519
+  timestamp: 2026-07-22T16:07:45.610985239Z
+  kind: !Create
+    title: db-backup now REFUSES a non-default --path without --to (a new user-facing refusal)
+    description: |
+      STORY-292's acceptance bullet 1 only required (a) the unrelated-lineage error and
+      (b) the overwrite path as a flag. Both shipped. I ALSO shipped the second
+      hardening TASK-283 floated as optional ("possible hardening, if it earns its
+      keep... require an explicit --to whenever the source --path is not the resolved
+      default dolt path"), because without it the story's own title — "guard the real
+      vector" — is not met.
+
+      The reasoning: dolt's unrelated-lineage refusal only fires on the SECOND push. The
+      BUG-277 incident was the FIRST one — a throwaway fixture claiming an empty default
+      backup directory, which succeeds silently and is what poisons the directory for
+      the real graph afterwards. Translating the second push more nicely does not
+      prevent the first. The `--path`-not-the-resolved-default + no-`--to` pairing is
+      the only reliable tell available before the push, so that is where the guard went.
+
+      What this means for users (crates/quizdom/src/db_backup.rs, DbBackupConfig::parse):
+
+        quizdom db-backup                                  # unchanged
+        quizdom db-backup --path <resolved-default>        # unchanged
+        quizdom db-backup --path X --to Y                  # unchanged
+        quizdom db-backup --path X                         # NEW: Usage error, names --to
+
+      db-restore is deliberately untouched — it reads the backup, so the same pairing
+      cannot poison anything.
+
+      Flagging because it is a new refusal on a durability command that the acceptance
+      criteria did not ask for by name. If the advisor thinks the mismatch tell is too
+      aggressive, the guard is one `if` in `DbBackupConfig::parse` and its two tests
+      (`an_unpinned_scratch_path_may_not_claim_the_default_backup`,
+      `pinned_and_default_backups_are_left_alone`).
+
+      Raised by the implementer while working STORY-292.
+      Branch: story-292  ·  Commit: aa43e69  (PR link added on merge)
+    req_type: Task
+    status: Draft
+    priority: Medium
+clock: 519
 node_id: ''
