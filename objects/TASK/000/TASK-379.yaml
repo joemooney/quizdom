@@ -40,9 +40,14 @@ priority: Medium
 owner: ''
 feature: Uncategorized
 created_at: 2026-07-22T21:51:44.406811126Z
-modified_at: 2026-07-22T21:51:44.406811126Z
+modified_at: 2026-07-22T21:52:04.722858696Z
 req_type: Task
 tags:
 - from-implementer:BUG-378
 - kind:design-choice
 - severity:minor
+relationships:
+- rel_type: Child
+  target_id: 019f8bb7-0b30-7b03-9194-803de8d3889e
+  created_at: 2026-07-22T21:52:04.722851778Z
+  created_by: joe
