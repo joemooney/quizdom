@@ -19,9 +19,16 @@ priority: Medium
 owner: ''
 feature: Uncategorized
 created_at: 2026-07-19T19:32:10.302599852Z
-modified_at: 2026-07-19T19:32:10.302599852Z
+modified_at: 2026-07-22T05:43:33.911019646Z
 req_type: Task
 tags:
 - from-implementer:STORY-206
 - kind:design-choice
 - severity:minor
+comments:
+- id: 019f8859-cb17-7092-99cb-690a3c1e5def
+  author: joe
+  content: 'Won''t-fix: the migration is a completed one-shot and load-time timestamps are documented in graph-schema.md. Historical Opened/Modified provenance stays available in aida-store git history.'
+  created_at: 2026-07-22T05:43:33.911019646Z
+  modified_at: 2026-07-22T05:43:33.911019646Z
+  session_id: 789bafdb-f673-41c5-affc-d550f95e51e5
