@@ -1,0 +1,34 @@
+id: 019f88d4-56de-74d2-a0e4-e5a38ab98bf7
+spec_id: TASK-282
+agreed_id: TASK-282
+title: db-backup test tripwire silently no-ops if a tests/ directory is ever added
+description: |
+  `guard_test_paths` (crates/quizdom/src/db_backup.rs:492-517) is `#[cfg(test)]`,
+  so it only exists when the lib is compiled as a test target. Its doc comment
+  claims it "covers the whole suite" (:500-503), and that is accurate today —
+  verified: neither `crates/quizdom/tests/` nor `crates/llm/tests/` exists, every
+  test is an in-crate unit test.
+
+  But nothing enforces the invariant. An integration test under
+  `crates/quizdom/tests/` links the lib WITHOUT `cfg(test)`, so the tripwire
+  compiles to the `#[cfg(not(test))]` no-op and any `db-backup` / `db-restore`
+  call from there resolves the real settings-chain paths unguarded. That is
+  precisely the shape of test most likely to invoke the CLI end-to-end without
+  pinning `--to`, i.e. the BUG-277 vector.
+
+  Options: a build-time guard test asserting no `tests/` directory exists in the
+  crate (mirroring the existing BUG-200 allowlist-guard pattern), or move the
+  check behind a runtime signal that survives without `cfg(test)` (e.g. refuse
+  the default backup path when `CARGO_*` test env is present).
+
+  Raised in review of PR-96: https://github.com/joemooney/quizdom/pull/96#issuecomment-5043339135
+status: Draft
+priority: Medium
+owner: ''
+feature: Uncategorized
+created_at: 2026-07-22T07:57:25.086099723Z
+modified_at: 2026-07-22T07:57:25.086099723Z
+req_type: Task
+tags:
+- from-review:PR-96
+- severity:minor
