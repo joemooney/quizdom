@@ -9632,5 +9632,55 @@ operations:
   timestamp: 2026-07-22T21:56:04.493589665Z
   kind: !SetStatus
     status: In Progress
-clock: 684
+- id: 019f8bdb-9c32-7ad0-b26b-46a5be0dd484
+  target_id: 019f8bdb-9a08-7d33-b080-4aa2dc706b71
+  author: aida
+  node_id: ''
+  lamport: 685
+  timestamp: 2026-07-22T22:04:13.234042785Z
+  kind: !Create
+    title: The TUI panel's Mode row can still turn a session override into the persisted default
+    description: |
+      BUG-378/TASK-372 closed the flag-becomes-default class for the `/mode`, `/mode
+      <arg>` and `/score` SHORTCUTS by routing them all through `mirror_live`. One
+      path to the same outcome survives, through the surface the design deliberately
+      left persisting.
+
+      What: with `mode = "socratic"` on disk and `--mode debate` in force for this
+      session, opening `/settings` calls `mirror_live` (session.rs:3317), which seeds
+      the panel's display copy with the LIVE mode — `debate`. Cycling the panel's Mode
+      row twice returns the *display* to where the user found it, but the second
+      `persist(SettingKey::Mode)` adopts `debate` into the persisted copy, which still
+      holds `socratic`, so the guard does not fire and the file is rewritten. The
+      session's `--mode debate` override is now the saved default.
+
+      Where: crates/quizdom/src/tui.rs:2040-2043 (the Mode arm of the panel's row
+      commit) -> tui.rs:2005 (`persist`).
+
+      Why it matters (two parts, the second is the smaller but more certain one):
+
+      1. It is a residual of exactly the class STORY-367 and TASK-372 closed. It is
+         defensible as designed — the panel Mode row is named in CLAUDE.md as one of
+         the two persisting surfaces, and the user did actively toggle the row — so
+         this is a question for the advisor, not a defect the review should have
+         blocked on. The open question is whether "the user touched the Mode row"
+         should be enough to promote a value the user never typed, given that what
+         the row was seeded with came from a flag rather than from the file.
+
+      2. Independently of that call, the TASK-375 comment at tui.rs:1998 is
+         inaccurate as written: "a panel row cycled back to where it started leaves
+         the file byte-identical". That holds only when no session override is in
+         force; under an override, "where it started" in the panel is the mirrored
+         live value, not the persisted one. Whichever way (1) is decided, the comment
+         should say which of the two copies "where it started" refers to.
+
+      Not a blocker: BUG-378's acceptance is about the `/mode <arg>` and `/score`
+      shortcuts, and those pass. Verdict on PR-111 was Approved.
+
+      Raised in review of PR-111:
+      https://github.com/joemooney/quizdom/pull/111#issuecomment-5052092374
+    req_type: Task
+    status: Draft
+    priority: Medium
+clock: 685
 node_id: ''
