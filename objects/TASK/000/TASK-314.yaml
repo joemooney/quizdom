@@ -1,0 +1,38 @@
+id: 019f8aba-d189-7be1-aabc-f7a3708cb582
+spec_id: TASK-314
+agreed_id: TASK-314
+title: 'TASK-286''s premise was wrong: persist.rs''s two ''dead'' helpers are live'
+description: |
+  TASK-286 (bundled into STORY-293) said two genuinely-dead helpers survive
+  behind `#[allow(dead_code)]` in persist.rs and should be deleted. They are
+  not dead:
+
+  - `QuestionLink::rel_endpoints` (crates/quizdom/src/persist.rs) is called by
+    `StoreUserAuthoredQuestionPersister::persist_user_authored_question` to wire
+    the begets/probes edge.
+  - `user_authored_question_description` is called from the same method to build
+    the node body.
+
+  Deleting either would not compile. What was actually dead was the pair of
+  `#[allow(dead_code)]` *attributes* — stale since the persister grew its real
+  implementation. STORY-293 removed the attributes instead; the build and
+  `clippy -D warnings` are clean without them.
+
+  Flagged because the spec's acceptance said "the dead helpers are gone", and
+  what shipped is "the stale silencers are gone". Same end state (no
+  `#[allow(dead_code)]`, no unwarranted code), different action than the spec
+  described. No follow-up work is implied — this is a correction to the record.
+
+  Raised by the implementer while working STORY-293.
+  Branch: story-293  ·  Commit: 071d5ff  (PR link added on merge)
+status: Draft
+priority: Medium
+owner: ''
+feature: Uncategorized
+created_at: 2026-07-22T16:48:46.985877234Z
+modified_at: 2026-07-22T16:48:46.985877234Z
+req_type: Task
+tags:
+- from-implementer:STORY-293
+- kind:deviation
+- severity:minor
