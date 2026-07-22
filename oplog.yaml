@@ -3376,5 +3376,48 @@ operations:
     req_type: Task
     status: Draft
     priority: Medium
-clock: 328
+- id: 019f881f-4b3b-7d43-8513-4125c4075684
+  target_id: 019f881f-49c3-72f1-a940-5b31aa2763e1
+  author: aida
+  node_id: ''
+  lamport: 329
+  timestamp: 2026-07-22T04:39:40.091739699Z
+  kind: !Create
+    title: 'load_probed_terms is now all-or-nothing: one absent probes target drops every definition for the question'
+    description: |
+      crates/quizdom/src/honing.rs:147-154 (STORY-244, PR-90).
+
+      Before: `bank.probes(id).filter_map(|r| bank.load_term(&r.id).ok())` —
+      a per-term `.ok()`, so a probes target that failed to load dropped only
+      itself and the other definitions still reached the user.
+
+      After: `bank.load_terms(&ids).unwrap_or_default()`. The Dolt-backed
+      override (`bank.rs:127-135`) calls `fetch_nodes(&ids)?`, which is STRICT
+      about a missing row — it returns Err for the whole batch. The
+      `unwrap_or_default()` then swallows that into an empty Vec, so a single
+      absent probes target silently drops EVERY definition for that question.
+
+      Near-unreachable in practice, and the doc comment on `load_terms` says
+      so explicitly: the schema's `fk_edges_to` foreign key (db/schema.sql:31)
+      guarantees a probes target always has a `nodes` row. The conversion case
+      (a node with no `definition:` line) is still handled leniently by the
+      override's own `filter_map`, correctly.
+
+      What's worth a second look is the strictness ASYMMETRY, not the current
+      behaviour: the trait DEFAULT `load_terms` is lenient per-item, while the
+      Dolt override is all-or-nothing. Two impls of one method with different
+      blast radii on the same failure is the kind of drift the STORY-244
+      default-impl design was specifically built to prevent everywhere else.
+      It also degrades silently — no log line distinguishes "this question
+      probes no terms" from "the batch read failed".
+
+      Suggested fix: make the override lenient about missing rows too (fetch
+      and skip absentees, mirroring the default), or have `load_probed_terms`
+      log rather than `unwrap_or_default()` the error away.
+
+      Raised in review of PR-90: https://github.com/joemooney/quizdom/pull/90#issuecomment-5041919599
+    req_type: Task
+    status: Draft
+    priority: Medium
+clock: 329
 node_id: ''
