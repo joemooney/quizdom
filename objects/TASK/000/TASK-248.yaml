@@ -30,12 +30,12 @@ description: |
   entirely.
 
   Raised in review of PR-90: https://github.com/joemooney/quizdom/pull/90#issuecomment-5041919599
-status: Approved
+status: InProgress
 priority: Medium
 owner: ''
 feature: Uncategorized
 created_at: 2026-07-22T04:39:54.554898228Z
-modified_at: 2026-07-22T05:48:03.566782153Z
+modified_at: 2026-07-22T06:52:35.119785561Z
 req_type: Task
 tags:
 - from-review:PR-90
