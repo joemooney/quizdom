@@ -22,12 +22,12 @@ description: |
 
   Raised by the implementer while working TASK-246.
   Branch: task-246  ·  Commit: a5724a6  (PR link added on merge)
-status: Draft
+status: Rejected
 priority: Medium
 owner: ''
 feature: Uncategorized
 created_at: 2026-07-22T05:51:17.897842360Z
-modified_at: 2026-07-22T14:52:49.855826733Z
+modified_at: 2026-07-22T14:52:50.666596793Z
 req_type: Task
 tags:
 - from-implementer:TASK-246
