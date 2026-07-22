@@ -16,12 +16,12 @@ description: |-
   - An Unknown probe with auto_backup OFF still tells the user it could not determine backup state (test both probe outcomes against both settings).
   - No clippy::too_many_arguments allow remains anywhere in the workspace; clippy clean under -D warnings.
   - cargo test green; real_dolt green.
-status: InProgress
+status: Done
 priority: Medium
 owner: ''
 feature: Uncategorized
 created_at: 2026-07-22T18:29:30.576506552Z
-modified_at: 2026-07-22T18:49:03.996579507Z
+modified_at: 2026-07-22T18:49:12.386059972Z
 req_type: Story
 relationships:
 - rel_type: Parent
@@ -71,3 +71,7 @@ comments:
   created_at: 2026-07-22T18:48:20.022972158Z
   modified_at: 2026-07-22T18:48:20.022972158Z
   session_id: 019f8b17-273d-7f80-8e0c-bd18ca8cb150
+implementation_info:
+  implemented: true
+  implemented_at: 2026-07-22T18:49:12.386059972Z
+  implemented_by: joe
