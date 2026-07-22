@@ -18,5 +18,21 @@ priority: Medium
 owner: ''
 feature: Uncategorized
 created_at: 2026-07-22T20:10:24.625577801Z
-modified_at: 2026-07-22T20:41:45.333786697Z
+modified_at: 2026-07-22T20:57:03.297739070Z
 req_type: Story
+comments:
+- id: 019f8b9e-1e41-7b52-8624-7738d46ab134
+  author: joe
+  content: |-
+    Implemented on branch story-367 (commit be2d554):
+
+    - TASK-356 + the third route: each front-end now keeps a display copy the engine mirrors its live score/mode into (`FrontEnd::mirror_live`, never writes) beside the persisted copy a save writes. Explicit changes cross one key at a time (`Settings::adopt`) through a single `persist(key)` per front-end; `settings::save` has exactly two callers, both inside it. Three routes closed: `/settings` pushing the live mode across as a persisting call, a bare `/mode` writing back the answer to its own question, and any explicit change saving the mirrored struct whole (`/settings set editor vim` persisted `mode = "debate"`).
+    - TASK-355: the mode precedence tier is resolved once, into `config.mode` itself (`CliConfig::seeded_from`, called from `run_cli`), upstream of every reader and still outranked by `resolve_resume_config`. The BUG-136 resume auto-continue and the loop can no longer frame two different modes.
+
+    Test status: 724/724 quizdom unit tests green (+7 in llm); clippy --workspace --all-targets -D warnings clean; cargo fmt clean.
+    Both regression tests were verified against the pre-fix code rather than assumed: the resume test fails with [Debate, Socratic], and the mirror test fails when mirror_live is made to persist.
+
+    Follow-up: TASK-372 (whether /mode should persist at all) and TASK-373 (settings save/load are cfg(test) no-ops, so the file-level round trip is untestable) filed as draft findings.
+  created_at: 2026-07-22T20:57:03.297739070Z
+  modified_at: 2026-07-22T20:57:03.297739070Z
+  session_id: 019f8b90-1e67-7e13-8be7-420dcc1ccce7
