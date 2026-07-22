@@ -8990,5 +8990,29 @@ operations:
   timestamp: 2026-07-22T20:09:58.271349946Z
   kind: !RemoveTag
     tag: kind:observation
-clock: 656
+- id: 019f8b73-601c-72d2-b949-def9625dec0d
+  target_id: 019f8b73-5c78-7ab1-b88d-c8f28b6470ca
+  author: aida
+  node_id: ''
+  lamport: 657
+  timestamp: 2026-07-22T20:10:22.108850201Z
+  kind: !Create
+    title: 'Foreign-change pre-flight is provenance-blind: a failed parity run''s own leftovers block the retry, and sessions still absorb hand edits'
+    description: |-
+      Two halves of the same gap, both introduced or left open by STORY-351's TASK-297 fix.
+
+      TASK-359 (regression from my own fix): db-migrate's new foreign-change pre-flight cannot tell WHOSE changes are in the working set. A migration that fails parity leaves its own partial writes behind — and the retry then refuses with a message blaming a hand edit that never happened. So the guard makes the failure mode unrecoverable without manual dolt surgery, and lies about why. The pre-flight needs provenance: quizdom's own leftovers from an aborted run are not foreign, and the message must not assert a user edit it cannot see.
+
+      TASK-357 (the other half, still open): DoltDomainStore has NO foreign-change pre-flight at all, so a normal session still absorbs a hand edit to nodes into a quizdom-labelled commit — exactly what TASK-297 fixed for db-migrate. The protection must live at the commit seam every writer shares, not on one subcommand.
+
+      ## Acceptance
+      - A migration that fails parity can be retried without manual dolt intervention; the retry does not report a foreign edit when the only changes are the aborted run's own.
+      - A genuine hand edit is still refused, with a message that names what it actually found (test both: own-leftovers retry succeeds, real foreign edit refuses).
+      - The session write path gets the same protection as db-migrate — a hand edit is never silently absorbed into a quizdom commit.
+      - The pre-flight lives at the shared commit seam, not duplicated per caller.
+      - cargo test green; real_dolt green; clippy clean.
+    req_type: Bug
+    status: Approved
+    priority: Medium
+clock: 657
 node_id: ''
