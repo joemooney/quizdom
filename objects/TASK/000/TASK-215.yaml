@@ -14,12 +14,12 @@ description: |
 
   Raised by the implementer while working STORY-206.
   Branch: epic-202-2  ·  Commit: f0b0bad  (PR link added on merge)
-status: Draft
+status: Rejected
 priority: Medium
 owner: ''
 feature: Uncategorized
 created_at: 2026-07-19T19:32:10.302599852Z
-modified_at: 2026-07-22T05:43:33.911019646Z
+modified_at: 2026-07-22T05:43:53.343235770Z
 req_type: Task
 tags:
 - from-implementer:STORY-206
