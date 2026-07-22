@@ -8684,5 +8684,29 @@ operations:
     req_type: Task
     status: Draft
     priority: Medium
-clock: 637
+- id: 019f8b61-b3db-7120-9a85-c25a55f7cf42
+  target_id: 019f8b61-afe4-79c0-a430-e6728423495d
+  author: aida
+  node_id: ''
+  lamport: 638
+  timestamp: 2026-07-22T19:51:03.899312492Z
+  kind: !Create
+    title: dolt_store.rs module doc left an orphaned two-line fragment after the STORY-351 rewrap
+    description: |
+      Raised in review of PR-107: https://github.com/joemooney/quizdom/pull/107#issuecomment-5050751659
+
+      crates/quizdom/src/dolt_store.rs:8-12 — updating `dolt add -A` to
+      `dolt add nodes edges` in the module doc pushed the sentence over the line
+      width and the rewrap was left half-done:
+
+          //! `dolt add nodes edges` + `dolt commit`, so the domain graph's history lives
+          //! in Dolt
+          //! itself. Multi-hop traversal is a single recursive CTE
+
+      `//! in Dolt` / `//! itself.` should be one reflowed line. Prose only — no
+      behaviour, no symbol renamed.
+    req_type: Task
+    status: Draft
+    priority: Medium
+clock: 638
 node_id: ''
