@@ -24,10 +24,44 @@ priority: Medium
 owner: ''
 feature: Uncategorized
 created_at: 2026-07-22T07:34:49.518934323Z
-modified_at: 2026-07-22T07:35:46.895760497Z
+modified_at: 2026-07-22T07:49:49.165527677Z
 req_type: Bug
 relationships:
 - rel_type: References
   target_id: 019f887a-9eb1-7990-a924-0a580d07a9c8
   created_at: 2026-07-22T07:35:19.265035523Z
   created_by: joe
+comments:
+- id: 019f88cd-61ed-7002-8d98-47babbe13b17
+  author: joe
+  content: |-
+    Implemented on branch bug-277 (commit 3bf8e0b):
+
+    - Defect 1: `guard_test_paths`, a `#[cfg(test)]` tripwire in db_backup.rs that
+      panics unless BOTH `--path` and the backup directory sit under the system
+      temp dir. A whitelist rather than a blacklist of known-real paths, so a test
+      that forgets to pin cannot reach the real graph or backup by any route; it
+      compiles out entirely in a real build.
+    - Defect 2: the push moved out of the generic `run_dolt` into
+      `push_to_backup`, which classifies the failure. An unrelated-history refusal
+      now names the backup directory and the repo, explains these are two lineages
+      rather than a diverged branch, states nothing reached the backup, and lists
+      three non-destructive ways out (`--to` elsewhere / clone it out to inspect /
+      `mv` aside under `.foreign-lineage`). Other push failures keep the plain shape.
+    - Detection was reproduced against dolt 2.2.1 rather than guessed, which also
+      surfaced the backspace runs dolt uses to erase its upload spinner (`\x08` is
+      not whitespace, so `str::trim` left control characters mid-message);
+      `clean_dolt_message` strips them across this file's dolt error surfaces.
+    - Acceptance criterion 3 is `real_dolt_backup_refuses_a_foreign_lineage_backup`,
+      which replays the exact BUG-277 sequence against the real engine: a throwaway
+      claims the backup dir, then the genuine graph's backup is refused with the
+      actionable message.
+
+    Test status: 607 quizdom + 7 llm tests green; all 5 real_dolt acceptance tests
+    pass against dolt 2.2.1; fmt clean; no new clippy warnings.
+    Follow-up: TASK-278 (no --force flag; overwrite shipped as a documented mv
+    recipe), TASK-279 (same control-character trail in db_init / db_migrate /
+    dolt_store), TASK-280 (extend the tripwire to those modules).
+  created_at: 2026-07-22T07:49:49.165527677Z
+  modified_at: 2026-07-22T07:49:49.165527677Z
+  session_id: 019f88c0-8d5f-79d1-bdee-7e3927de371e
