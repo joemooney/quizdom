@@ -8263,5 +8263,34 @@ operations:
     req_type: Story
     status: Approved
     priority: Medium
-clock: 615
+- id: 019f8b34-2622-7022-92c3-a7cb3d908bcd
+  target_id: 019f8b34-2490-74e3-8687-5d0a4fe38ad7
+  author: aida
+  node_id: ''
+  lamport: 616
+  timestamp: 2026-07-22T19:01:18.498277221Z
+  kind: !Create
+    title: 'Dolt commit semantics: verify before committing, stage only our own writes, and diagnose a missing path honestly'
+    description: |-
+      Bundles TASK-296, TASK-297, TASK-298, TASK-301, TASK-304 — db_migrate.rs / db_init.rs.
+
+      TASK-296 (ordering bug): db-migrate commits its import BEFORE parity, the BUG-231 edge cross-check and the spot-check BFS run. So a migration that FAILS parity still leaves a commit whose message asserts the very counts parity just refuted. Verify first, commit after — or commit and roll back on failure. The history must not assert something the run disproved.
+
+      TASK-297 (real risk): commit_all stages the ENTIRE working set with 'dolt add -A' under a message describing only what quizdom did. db_backup.rs's own docs now state data/dolt is a database the user may write to directly — so a hand-run UPDATE sitting in the working set gets absorbed into a quizdom-labelled commit. Stage only the tables quizdom touched, or refuse when foreign changes are present and say so.
+
+      TASK-298: db-migrate's no-op commit message overloads the empty-import case.
+      TASK-301: db-init does not create parent directories for the resolved dolt_path, so a configured nested path fails.
+      TASK-304: a missing dolt_path directory misdiagnoses as 'is dolt installed and on PATH?' — a wrong diagnosis is worse than none.
+
+      ## Acceptance
+      - A migration failing parity leaves NO commit asserting those counts (test forces a parity failure and inspects dolt log).
+      - Hand-made working-set edits are never absorbed into a quizdom commit — either not staged, or the command refuses with a clear message (test with a foreign edit present).
+      - db-init creates missing parent directories for a nested dolt_path.
+      - A missing directory reports the missing directory, not a PATH problem.
+      - The no-op/empty-import messages are distinguishable.
+      - cargo test green; real_dolt green; clippy clean.
+    req_type: Story
+    status: Approved
+    priority: Medium
+clock: 616
 node_id: ''
