@@ -1,0 +1,27 @@
+id: 019f8b34-17ab-7392-9517-c66a6f18e6a9
+spec_id: STORY-350
+agreed_id: STORY-350
+title: 'Settings: mode clobber (score''s twin), TOML escapes and ~ expansion, and the last hermeticity leak'
+description: |-
+  Bundles TASK-300, TASK-307, TASK-306, TASK-305 — all settings.rs.
+
+  TASK-300 (real data loss): STORY-290/TASK-266 fixed the persisted score being ignored on load then overwritten by the engine default. 'mode' has the IDENTICAL defect and was not in that bundle, so it still ships broken. Reproduced against the STORY-290 build: a settings.toml carrying mode = "debate" loses it on the next save. Fix it the same way score was fixed, and check whether any OTHER persisted key shares the shape — a third instance means the seam needs a general fix, not a third one-off.
+
+  TASK-307: parse_value does not process TOML backslash escapes, nor expand a leading '~'. dolt_path = "~/graphs/main" is exactly the value a user would write, and it currently resolves to a literal ~ directory. Expand a leading ~ and handle standard escapes.
+
+  TASK-306: render_list() still reads the real user config during tests — the hermeticity gap PR-99 closed elsewhere, still open here.
+  TASK-305: config_value's doc comment still claims 'matched-pair unquoting' after TASK-265 replaced it.
+
+  ## Acceptance
+  - A persisted mode survives load/save round trip (test); if a third key shares the defect, the fix is generalised at the seam rather than repeated.
+  - dolt_path = "~/x" resolves under the home directory; standard TOML backslash escapes are honoured (tests).
+  - No test reads the real user config; render_list is hermetic (test proves it).
+  - config_value's doc matches its implementation.
+  - cargo test green; clippy clean under -D warnings.
+status: Approved
+priority: Medium
+owner: ''
+feature: Uncategorized
+created_at: 2026-07-22T19:01:14.795857680Z
+modified_at: 2026-07-22T19:01:14.795857680Z
+req_type: Story
