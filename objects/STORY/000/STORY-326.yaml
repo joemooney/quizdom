@@ -23,5 +23,39 @@ priority: Medium
 owner: ''
 feature: Uncategorized
 created_at: 2026-07-22T17:34:44.567716796Z
-modified_at: 2026-07-22T17:35:07.736164004Z
+modified_at: 2026-07-22T17:51:23.427903696Z
 req_type: Story
+comments:
+- id: 019f8af4-2323-7b60-9651-04b1ba42b6f5
+  author: joe
+  content: |-
+    Implemented on branch story-326 (commit 99956f4):
+
+    - TASK-325: `Unknown` no longer matched alongside `UpToDate` before `auto_backup`
+      is consulted. The reminder half stays silent (a failed probe is not evidence of
+      drift); the push half reverses — `Unknown` + auto_backup on pushes and says why,
+      degrading to the reminder on failure. `Unknown` + auto_backup off stays silent
+      but records the blind probe, closing the one path that left no trace anywhere.
+    - TASK-324: added `settings::resolve_backup_remote` ($QUIZDOM_BACKUP_REMOTE >
+      backup_remote > backup), made it the parsed default so `--remote` still sits on
+      top, and resolved it once in `session_end_durability` for both probe and push.
+    - TASK-321: the diagnostic log rotates to `quizdom.log.1` at 1 MiB. Rotation, not
+      truncation — the entries explaining the breakage are why the file exists.
+    - TASK-322: added the behavioural half of the terminal-safety invariant. A child
+      process re-runs the test binary for one ignored test with `--nocapture`, enters
+      the alternate screen, drives the seam including a failing write, and asserts
+      zero bytes between crossterm's enter/leave sequences. The dup2-in-process form
+      the TASK proposed was tried first and cannot work (libtest's own progress lines
+      land in the capture). No new dependency.
+    - TASK-320: generalised `dolt_path_row` into `settings::ReadOnlyRows`, so the TUI
+      panel and the headless value list draw `Domain graph:` / `Auto-backup:` /
+      `Diagnostics:` from one computation.
+
+    Test status: 675 quizdom + 7 llm tests green; 8/8 real_dolt acceptance tests pass
+    against dolt 2.2.1; clippy clean under -D warnings; cargo fmt clean.
+    Follow-up: 4 implementer findings filed — TASK-328 (the Unknown-pushes decision),
+    TASK-329 (child-process capture vs dup2), TASK-330 (diagnostics.rs added to
+    BUG-200's Command::new allowlist), TASK-331 (the log still has no reader).
+  created_at: 2026-07-22T17:51:23.427903696Z
+  modified_at: 2026-07-22T17:51:23.427903696Z
+  session_id: 019f8ae5-45ad-76b0-b26f-74c35982ee87
