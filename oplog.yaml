@@ -5544,5 +5544,50 @@ operations:
   timestamp: 2026-07-22T08:11:39.516212388Z
   kind: !SetStatus
     status: In Progress
-clock: 477
+- id: 019f88e6-84d9-7112-a540-735a6588cff3
+  target_id: 019f88e6-82b9-7c03-acf2-5cdcc6908078
+  author: aida
+  node_id: ''
+  lamport: 478
+  timestamp: 2026-07-22T08:17:16.505170592Z
+  kind: !Create
+    title: 'Reviewer fix-forward on PR-97: retire 7 stale post-cutover AIDA doc claims'
+    description: |
+      Reviewer fix-forwarded a doc-only correction during review of PR-97.
+
+      Commit: d97c47c7ae3ae7307a05fcd1205b1e9713cbf831
+      Files:  crates/quizdom/src/question_add.rs:9,186,199
+              crates/quizdom/src/session.rs:3904
+              crates/quizdom/src/signals.rs:438,970
+              crates/quizdom/src/transcript.rs:269
+
+      Change: STORY-260's acceptance requires doc comments to match the renamed
+      Store* types. Seven comment claims still described the pre-STORY-208 AIDA
+      write path for code that is now Dolt-backed:
+
+        - question_add.rs:9,186 "AIDA-backed bank + persister". Line 186 is a line
+          PR-97 itself edited (it retargeted the intra-doc link to StoreQuestionBank)
+          while leaving the wrong backend claim standing.
+        - question_add.rs:199, session.rs:3904 "an AIDA hiccup" -> a domain-store hiccup
+        - signals.rs:438 "persisting each change to AIDA" -> to the domain graph
+        - signals.rs:970, transcript.rs:269 "never shells out to aida" -> dolt
+
+      Comment prose only; no source, tests, or string literals touched. Verified
+      comment-only by diffing non-comment lines (empty). fmt/clippy/test all green
+      locally before push.
+
+      Why this needs an independent look: the reviewer wrote this commit and then
+      approved it, so the implementer/reviewer separation is bent. Grade whether
+      the reword is accurate (is "domain-store hiccup" the right phrase for a
+      DoltDomainStore read failure?) and whether the fix-forward should instead
+      have been RequestChanges given the acceptance named doc comments explicitly.
+
+      Verdict: Approved (mergeStateStatus CLEAN confirmed on the fix-forward commit
+      before approval).
+      PR: https://github.com/joemooney/quizdom/pull/97
+      Review comment: https://github.com/joemooney/quizdom/pull/97#issuecomment-5043515442
+    req_type: Task
+    status: Draft
+    priority: Medium
+clock: 478
 node_id: ''
