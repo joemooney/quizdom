@@ -5968,5 +5968,29 @@ operations:
   timestamp: 2026-07-22T15:19:52.517427638Z
   kind: !SetStatus
     status: Completed
-clock: 501
+- id: 019f8a73-00e0-7f43-b9a9-5bb721c109bd
+  target_id: 019f8a72-fef1-7120-ac0a-b2edd06e87b3
+  author: aida
+  node_id: ''
+  lamport: 502
+  timestamp: 2026-07-22T15:30:20.512839134Z
+  kind: !Create
+    title: Durability ergonomics + an observability seam for the TUI
+    description: |-
+      Takes on the two EPIC-289 items originally parked for a human decision. Solo-mode design calls are recorded here so they are reviewable rather than implicit.
+
+      TASK-273 — backups are explicit (db-backup) rather than an automatic push after session writes. DECISION: keep the explicit command as the primitive (an implicit network/disk write on every session write is surprising and can fail in ways that corrupt the session UX), but close the ergonomics gap that makes 'explicit' mean 'forgotten': (a) after a session that wrote to the graph, print a short reminder naming the exact db-backup command when the working copy is ahead of the backup remote; (b) add an opt-in setting (e.g. auto_backup = true) that performs the push after a session write, off by default; (c) document the cron recipe already in OVERVIEW.md next to the setting. The user keeps the choice; the default stops silently drifting.
+
+      TASK-257 — no logging seam: under the crossterm alternate screen an eprintln! is invisible at best and display-corrupting at worst, so load_probed_terms' unwrap_or_default() hides a genuine store failure as 'this question defines nothing'. DECISION: add a minimal file-backed diagnostic log (path resolved like the other settings; e.g.  > log_path > a default under the user data dir), written through one seam, never to stdout/stderr while the alternate screen is active. Then route the currently-swallowed store failures through it so a degraded read is recorded rather than silently rendered as absence. Keep it dependency-light — this is a diagnostic breadcrumb, not a logging framework.
+
+      ## Acceptance
+      - A session that wrote to the graph and is ahead of the backup remote ends with a one-line reminder naming the exact command; a session that wrote nothing, or is already backed up, prints nothing.
+      - auto_backup is off by default, documented, and when enabled performs the push after a session write; failure to back up never takes down the session (it degrades to the reminder).
+      - A diagnostic log seam exists, is used by at least the load_probed_terms swallow site, and writes NOTHING to stdout/stderr while the TUI is active (test asserts the seam does not touch the terminal).
+      - A forced store failure in a probes read produces a log entry rather than a silent empty definition list (test).
+      - cargo test green; clippy clean under -D warnings.
+    req_type: Story
+    status: Approved
+    priority: Medium
+clock: 502
 node_id: ''
