@@ -9521,5 +9521,45 @@ operations:
     req_type: Task
     status: Draft
     priority: Medium
-clock: 680
+- id: 019f8bd0-86aa-7141-ab2e-81baddb1df0f
+  target_id: 019f8bd0-82fb-7612-ae95-dff5daa563a4
+  author: aida
+  node_id: ''
+  lamport: 681
+  timestamp: 2026-07-22T21:52:06.826839891Z
+  kind: !Create
+    title: 'TASK-372 reverses a stated STORY-194 decision: /mode <arg> and /score are no longer persisting surfaces'
+    description: |
+      BUG-378's acceptance was explicit ("/mode <arg> and /score follow the same rule
+      as bare /mode"), so this is not a judgement call I made — but it IS a
+      user-visible behaviour change that reverses a design decision STORY-194 wrote
+      down, and the advisor should know it shipped rather than discover it from a
+      user report.
+
+      Before: `/mode debate` and `/score` wrote `settings.toml`, on STORY-194's
+      reading that "the shortcut commands (/mouse, /score, /mode)" are persisting
+      surfaces and that naming a value IS choosing a new default.
+
+      After: they mirror only. `/settings set mode debate`, `/settings set score on`
+      and the TUI panel's Mode / Score rows are the surfaces that persist. The
+      argument for the change is in TASK-372 and is sound — the live mode is a
+      `mode_set` EVENT restored from the session log on resume, so `settings.toml`'s
+      `mode` is the default for NEW sessions — but two consequences follow:
+
+      1. A user who has been setting their default with `/mode debate` will find it
+         stops sticking, with no message saying so. Nothing tells them the surface
+         moved. A one-line hint on the shortcut ("this session only — /settings set
+         mode debate to change the default") would close that, and I did not add one
+         because the spec did not ask for it and the shortcut's output is asserted
+         byte-for-byte by the piped tests.
+      2. `/mouse` is now the only shortcut that still persists, since it is
+         front-end-owned rather than engine-owned and so never had the
+         mirror/persist split. That asymmetry is defensible but is now unstated.
+
+      Raised by the implementer while working BUG-378.
+      Branch: bug-378  ·  Commit: 2278782  (PR link added on merge)
+    req_type: Task
+    status: Draft
+    priority: Medium
+clock: 681
 node_id: ''
