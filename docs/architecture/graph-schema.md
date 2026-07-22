@@ -65,6 +65,14 @@ target order matters.
 | `agrees` | `BELIEF -> BELIEF` | The source supports or is compatible with the target. |
 | `disagrees` | `BELIEF -> BELIEF` | The source rejects or stands against the target without strict logical contradiction. |
 
+Edge reads are ordered, and the order is a contract (TASK-221): `neighbors`
+and `neighbors_many` return a source's targets oldest-first by `created_at`,
+ties broken by `to_id` in lexical order. `edges.created_at` is a 1-second
+`TIMESTAMP`, so edges written in the same second — the common case for one
+batch of writes — are ordered entirely by the tie-break, which puts `Q-10`
+ahead of `Q-2`. Callers wanting a numeric or semantic order sort for
+themselves.
+
 These six kinds are the only values the `edges.kind` column admits. Links
 that are project intent rather than domain structure — e.g. a
 contradiction-resolution decision node pointing at project specs — stay in

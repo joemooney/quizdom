@@ -115,7 +115,17 @@ pub trait DomainStore {
     /// List the ids of every node of `kind` in the bank.
     fn list_node_ids(&self, kind: NodeKind) -> Result<Vec<String>>;
 
+    // trace:TASK-221 | ai:claude
     /// The targets of `id`'s outgoing `edge` edges — one hop.
+    ///
+    /// The order is part of the contract, not an accident of storage: oldest
+    /// edge first by creation time, ties broken by `to_id` in **lexical**
+    /// order. The Dolt backend's `created_at` is a 1-second TIMESTAMP, so a
+    /// batch of edges written together — the common case — falls entirely to
+    /// the tie-break and comes back `Q-10` before `Q-2`. Callers that want a
+    /// numeric or semantic order must sort for themselves.
+    ///
+    /// [`Self::neighbors_many`] returns exactly this order per source.
     fn neighbors(&self, id: &str, edge: EdgeKind) -> Result<Vec<String>>;
 
     /// Create a node, returning its freshly minted id.
