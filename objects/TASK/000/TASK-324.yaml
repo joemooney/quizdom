@@ -22,12 +22,12 @@ description: |
   and probe whichever remote points at the resolved backup directory.
 
   Raised in review of PR-102: https://github.com/joemooney/quizdom/pull/102#issuecomment-5049355015
-status: Draft
+status: Completed
 priority: Medium
 owner: ''
 feature: Uncategorized
 created_at: 2026-07-22T17:31:35.378587727Z
-modified_at: 2026-07-22T17:31:35.378587727Z
+modified_at: 2026-07-22T18:00:46.046103852Z
 req_type: Task
 tags:
 - backup
