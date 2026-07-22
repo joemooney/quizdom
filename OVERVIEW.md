@@ -174,27 +174,46 @@ The round trip (seed → backup → delete the repo → restore → count rows) 
 `real_dolt` acceptance tests now that the pipeline installs dolt.
 
 <!-- trace:BUG-277 | ai:claude -->
+<!-- trace:STORY-292 | ai:claude -->
 
 **A backup directory belongs to exactly one graph.** A file remote is just a
 directory, and it cannot tell which repo is entitled to it. Push two repos with
 unrelated roots at the same directory and dolt refuses the second — there is no
 common ancestor to reconcile them against. `db-backup` detects that refusal and
-names the ways out (back up elsewhere, inspect what is there, or move the
-foreign copy aside — never delete it), rather than forwarding dolt's
-`unknown push error; no common ancestor`.
-
-The way that happens in practice is a **verification run with no `--to`**: it
-resolves the default backup path and claims your real backup directory with a
-throwaway fixture. So when exercising `db-backup` / `db-restore` by hand, always
-pin a scratch directory:
+names the ways out, rather than forwarding dolt's `unknown push error; no common
+ancestor`:
 
 ```bash
-cargo run -p quizdom -- db-backup --path /tmp/scratch-graph --to /tmp/scratch-backup
+cargo run -p quizdom -- db-backup --to <fresh-empty-directory>   # back up elsewhere
+cargo run -p quizdom -- db-restore --path /tmp/check --from <backup>  # look first
+cargo run -p quizdom -- db-backup --force                        # take the directory
 ```
 
-Inside the test suite this is enforced, not merely advised: a `#[cfg(test)]`
-tripwire panics if any test aims either command outside the system temp
-directory. The tests cannot reach the real graph or its backup by any route.
+`--force` retires the lineage already in the backup directory to
+`<backup>.foreign-lineage` and pushes. It **moves; it never deletes** — the
+displaced copy stays recoverable, and a second `--force` lands on
+`.foreign-lineage.2` rather than on top of the first. Nothing on this path can
+lose a backup.
+
+The way a directory gets claimed by the wrong graph in practice is a
+**verification run with no `--to`**: it resolves the default backup path and
+hands your real backup directory to a throwaway fixture. Three guards, in the
+order they fire:
+
+- `db-backup` **refuses** a `--path` the settings chain did not choose unless
+  `--to` is given too. That mismatch — a scratch repo aimed at the real backup
+  directory — is the vector exactly, and it is caught before the push that would
+  claim the directory. Backing up the resolved default still needs no flags:
+  `quizdom db-backup`.
+- Inside the test suite the pinning is enforced rather than advised: a
+  `#[cfg(test)]` tripwire panics if any test aims `db-init`, `db-migrate`,
+  `db-backup`, `db-restore` or the domain store at a path outside the system
+  temp directory, and the store's config-resolved constructor — the one with no
+  `--path` to pin — is redirected there outright. No test can reach the real
+  graph or its backup by any route.
+- A guard test fails the build if `crates/quizdom/tests/`, `benches/` or
+  `examples/` ever appears, because those targets link the lib *without*
+  `cfg(test)` and would compile the tripwire down to a no-op.
 
 ## Non-goals (v1)
 
