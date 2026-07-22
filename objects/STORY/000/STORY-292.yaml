@@ -1,0 +1,31 @@
+id: 019f8a51-9d4f-7321-98bf-f43fab3256b7
+spec_id: STORY-292
+agreed_id: STORY-292
+title: 'Backup hardening: guard the real vector, stop parsing dolt prose, and clean up the operator surface'
+description: |-
+  Bundles TASK-283, TASK-280, TASK-282, TASK-284, TASK-276, TASK-278, TASK-275, TASK-279 — db_backup.rs and its tests.
+
+  TASK-283 (the one that matters): BUG-277's fix hardened TEST paths, but the actual vector that poisoned the real backup directory was an unpinned MANUAL db-backup run. That is still unguarded. Close the real hole — e.g. refuse to push a repo whose lineage is unrelated to the remote's without an explicit opt-in, and make the default backup path harder to claim by accident.
+  TASK-280: extend the real-path tripwire beyond db-backup to db-init / db-migrate / dolt_store tests, so no test can write to a resolved real location.
+  TASK-282: the db-backup test tripwire silently no-ops if a tests/ directory is ever added — a guard that can quietly stop guarding.
+  TASK-284: push_to_backup concatenates stderr and stdout with no separator before matching markers, so a marker can be formed across the seam.
+  TASK-276: clean-tree detection matches a literal dolt message string — it breaks silently on a dolt upgrade. Detect via exit status or structured output instead.
+  TASK-278: BUG-277 shipped the 'explicitly overwrite' option as a documented mv recipe rather than a real flag; add the flag so the documented escape hatch is executable.
+  TASK-275: db-backup/db-restore print unquoted paths in copy-paste hints — broken for any path with a space.
+  TASK-279: other dolt error surfaces still forward backspace control characters into messages (terminal corruption).
+
+  ## Acceptance
+  - A manual db-backup against a remote holding an unrelated lineage fails with the actionable error and cannot silently proceed; the documented overwrite path is a flag, not a prose recipe (test both).
+  - No test in the workspace can write to a resolved real backup/dolt path; the tripwire covers db-init, db-migrate and dolt_store, and cannot no-op if a tests/ dir appears (test asserting the guard itself is live).
+  - Clean-tree detection survives a changed dolt message (no literal prose match on the happy path).
+  - stderr/stdout are separated before marker matching.
+  - Printed paths are shell-quoted; a path containing a space round-trips through the printed command.
+  - No control characters reach user-facing messages from any dolt surface.
+  - cargo test green; real_dolt green; clippy clean.
+status: Approved
+priority: Medium
+owner: ''
+feature: Uncategorized
+created_at: 2026-07-22T14:53:52.335563751Z
+modified_at: 2026-07-22T14:53:52.335563751Z
+req_type: Story
