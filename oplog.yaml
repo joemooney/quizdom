@@ -6136,5 +6136,46 @@ operations:
     req_type: Story
     status: Approved
     priority: Medium
-clock: 506
+- id: 019f8a80-cbfa-7603-b34c-df7a8f4c6ccb
+  target_id: 019f8a80-ca52-71c3-b2d5-fcd604a238c4
+  author: aida
+  node_id: ''
+  lamport: 507
+  timestamp: 2026-07-22T15:45:24.474435583Z
+  kind: !Create
+    title: A missing dolt_path dir misdiagnoses as 'is dolt installed and on PATH?'
+    description: |
+      With dolt 2.2.1 present ON PATH, pointing `dolt_path` at a directory that does
+      not yet exist makes the session fail with:
+
+          error: failed to spawn `dolt`: No such file or directory (os error 2); is dolt installed and on PATH?
+
+      The message names the wrong cause. `Command::spawn` returns
+      `ErrorKind::NotFound` for BOTH "the binary is missing" and "the `current_dir`
+      we asked for does not exist", and the error text only covers the first
+      hypothesis — so the user goes and checks their PATH, which is fine.
+
+      Pre-existing, but TASK-263 (shipped in PR-99) makes it markedly likelier to
+      hit. An anchored relative `dolt_path` now resolves into `~/.config/quizdom/`,
+      where the user has no reason to have pre-created `graphs/main` or `data/dolt`.
+      Before the anchor change a relative path resolved against the cwd, where
+      `data/dolt` typically DID already exist in the checkout.
+
+      Distinct from TASK-301: that one is `db-init` not calling `create_dir_all` and
+      reporting a bare errno. This is the *session / store* spawn path, and the
+      problem is not a bare errno but an actively misleading diagnosis.
+
+      Suggested fix: when the spawn fails with `NotFound`, stat the working directory
+      first and, if it is missing, say so and name the path (plus which tier supplied
+      it — env, settings.toml, or the compiled default).
+
+      Reproduced against this build:
+        printf 'dolt_path = "data/dolt"\n' > $CFG/quizdom/settings.toml   # dir not created
+        XDG_CONFIG_HOME=$CFG quizdom
+
+      Raised in review of PR-99: https://github.com/joemooney/quizdom/pull/99#issuecomment-5048283389
+    req_type: Task
+    status: Draft
+    priority: Medium
+clock: 507
 node_id: ''
