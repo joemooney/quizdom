@@ -18,12 +18,12 @@ description: |-
   - The depth-limit error suggests something achievable under the per-spawn model.
   - The tie-break fixture cannot fire spuriously; it no longer depends on mint ordering.
   - cargo test green; real_dolt tests green; clippy clean.
-status: Done
+status: Completed
 priority: Medium
 owner: ''
 feature: Uncategorized
 created_at: 2026-07-22T14:53:35.261170619Z
-modified_at: 2026-07-22T15:12:56.728300936Z
+modified_at: 2026-07-22T15:19:43.840067641Z
 req_type: Story
 relationships:
 - rel_type: Child
