@@ -1,0 +1,39 @@
+id: 019f8b48-0659-7652-8c0d-6ebc382f48b9
+spec_id: TASK-354
+agreed_id: TASK-354
+title: A leading ~ expands in settings.toml and the env tier but not on the --path / --to / --from flags
+description: |
+  STORY-350/TASK-307 taught `tiered_path` to expand a leading `~` (settings.rs:846-878,
+  applied in `non_blank` at settings.rs:808), so `dolt_path = "~/graphs/main"` and
+  `QUIZDOM_DOLT_PATH='~/graphs/main'` both resolve under `$HOME`.
+
+  The CLI flags did not get the same treatment. `--path` is `PathBuf::from(next_arg(...))`
+  (db_init.rs:95) and `--to` / `--from` likewise (db_backup.rs:151), so:
+
+      quizdom db-init --path '~/graphs/main'
+
+  still CREATES a literal `~` directory — the exact failure mode TASK-307 named for the
+  config file, on the one tier that was left out.
+
+  Why it is minor rather than a blocker: an interactive shell expands an UNQUOTED `~`
+  before quizdom ever sees it, so the gap is reachable only from a quoted value or a
+  script/CI invocation that builds the argument itself. It is also outside STORY-350's
+  acceptance, which names the `dolt_path = "~/x"` tier explicitly and nothing else.
+
+  Fix shape: route the flag values through `settings::expand_tilde` (it is already the
+  single seam — `expand_tilde_from` is the pure half and is testable without touching the
+  environment), or state in the flags' `usage()` that `~` is the shell's job.
+
+  Raised in review of PR-106: https://github.com/joemooney/quizdom/pull/106#issuecomment-5050483733
+status: Draft
+priority: Medium
+owner: ''
+feature: Uncategorized
+created_at: 2026-07-22T19:23:01.081877873Z
+modified_at: 2026-07-22T19:23:01.081877873Z
+req_type: Task
+tags:
+- from-review:PR-106
+- paths
+- settings
+- severity:minor
