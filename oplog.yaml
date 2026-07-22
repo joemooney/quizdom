@@ -6507,5 +6507,31 @@ operations:
     req_type: Task
     status: Draft
     priority: Medium
-clock: 522
+- id: 019f8a97-239d-7491-bcf4-7007922296a1
+  target_id: 019f8a97-2092-7de3-b1de-2382d73ce5bb
+  author: aida
+  node_id: ''
+  lamport: 523
+  timestamp: 2026-07-22T16:09:48.701152163Z
+  kind: !Create
+    title: 'Review PR-100: STORY-292: backup hardening — guard the real vector, stop parsing dolt prose, clean up the operator surface'
+    description: |
+      Auto-filed by `aida pr auto-queue-review` (typically from /aida-pr) (session `019f8a82`) for branch `story-292`.
+
+      - PR: <https://github.com/joemooney/quizdom/pull/100>
+      - Branch: `story-292` → `main`
+
+      ## Covers
+
+      - STORY-292
+
+      ## Acceptance
+
+      - Generate a structured review prompt with `aida review prompt --pr 100` and verify each spec's acceptance criteria.
+      - Approve and merge, or request changes by spec id.
+      - Mark this story `completed` once the PR is merged.
+    req_type: Story
+    status: Approved
+    priority: Medium
+clock: 523
 node_id: ''
