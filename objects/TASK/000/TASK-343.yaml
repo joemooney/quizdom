@@ -1,0 +1,39 @@
+id: 019f8b27-42f0-7240-84c3-629ae6f4a2bd
+spec_id: TASK-343
+agreed_id: TASK-343
+title: Log rotation now copies-then-truncates under a File::lock rather than renaming
+description: |
+  TASK-333 asked for "atomic rename, or accept-and-document a single-writer
+  assumption". Neither was chosen: an atomic rename does not exist for this shape
+  (the race is check-then-rename across processes, and a rename changes the
+  inode other writers hold), and a single-writer assumption is false in practice
+  — a TUI session and a cron db-backup share the log.
+
+  What shipped instead (crates/quizdom/src/diagnostics.rs):
+  - every append takes an exclusive advisory lock (std File::lock, no new
+    dependency), making check + rotate + write one critical section;
+  - rotation copies the contents to a staging name, renames that into
+    <log>.1, then truncates the live file in place, so the live log keeps its
+    identity across a rotation and <log>.1 is never observable half-written.
+
+  Costs: one megabyte copied per megabyte logged (against ~zero for a rename),
+  and every append pays a lock/unlock. Both are irrelevant for a file that a
+  healthy install never writes to, but they are real and were traded knowingly.
+
+  Alternatives passed over: a sidecar <log>.lock file (adds a third file and
+  breaks the "bounded at two files" property) and an inode-identity check after
+  locking (unix-only, and needs a retry loop).
+
+  Raised by the implementer while working STORY-342.
+  Branch: story-342  ·  Commit: 99f2f0a  (PR link added on merge)
+status: Draft
+priority: Medium
+owner: ''
+feature: Uncategorized
+created_at: 2026-07-22T18:47:13.904718271Z
+modified_at: 2026-07-22T18:47:13.904718271Z
+req_type: Task
+tags:
+- from-implementer:STORY-342
+- kind:design-choice
+- severity:minor
