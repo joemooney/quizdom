@@ -18,12 +18,12 @@ description: |
   contrived-input hardening, not an observed bug.
 
   Raised in review of PR-84: https://github.com/joemooney/quizdom/pull/84#issuecomment-5017116687
-status: Draft
+status: Rejected
 priority: Medium
 owner: ''
 feature: Uncategorized
 created_at: 2026-07-19T19:40:24.582171971Z
-modified_at: 2026-07-22T05:42:34.541016503Z
+modified_at: 2026-07-22T05:42:36.743725482Z
 req_type: Task
 tags:
 - from-review:PR-84
