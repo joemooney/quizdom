@@ -23,3 +23,7 @@ feature: Uncategorized
 created_at: 2026-07-22T18:29:30.576506552Z
 modified_at: 2026-07-22T18:29:37.212521275Z
 req_type: Story
+relationships:
+- rel_type: Parent
+  target_id: 019f8b27-8518-7482-94d6-30bb21d29422
+  created_at: 2026-07-22T18:47:32.819445244Z
