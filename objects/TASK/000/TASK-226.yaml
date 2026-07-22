@@ -7,12 +7,12 @@ description: |
 
   Raised by the implementer while working STORY-208.
   Branch: epic-202-2  ·  Commit: 1cf0b84  (PR link added on merge)
-status: Draft
+status: Approved
 priority: Medium
 owner: ''
 feature: Uncategorized
 created_at: 2026-07-19T20:30:28.955635698Z
-modified_at: 2026-07-19T20:30:28.955635698Z
+modified_at: 2026-07-22T05:45:14.365833576Z
 req_type: Task
 tags:
 - from-implementer:STORY-208
