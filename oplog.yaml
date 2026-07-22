@@ -9044,5 +9044,43 @@ operations:
   timestamp: 2026-07-22T20:32:49.685094528Z
   kind: !SetStatus
     status: Done
-clock: 659
+- id: 019f8b89-5a2a-70e1-b6e4-1c8811dcbdad
+  target_id: 019f8b89-54fe-7b60-b5e0-6a518374120b
+  author: aida
+  node_id: ''
+  lamport: 660
+  timestamp: 2026-07-22T20:34:22.378354573Z
+  kind: !Create
+    title: 'Staged-as-provenance has one hole: a user''s own `dolt add` reads as quizdom''s leftovers'
+    description: |
+      BUG-366 decides "whose uncommitted rows are these?" from `dolt_status.staged`:
+      quizdom stages every write in the statement that makes it, so staged means ours
+      and unstaged means someone else's (`db_init::begin_write`).
+
+      The residual hole: a user who runs `dolt sql -q 'UPDATE nodes ...'` AND THEN
+      `dolt add nodes`, and leaves it uncommitted, has produced a state quizdom will
+      read as its own leftovers and carry into the next quizdom-labelled commit —
+      which is the TASK-297 failure the guard exists to prevent.
+
+      Judged acceptable at implementation time, and worth the advisor knowing it
+      shipped that way:
+
+      - The plain hand-edit shape `db-backup`'s docs actually invite (`dolt sql -q`,
+        no `dolt add`) is unstaged, and is refused.
+      - Someone who has run `dolt add` is mid-commit-workflow, not mid-exploration.
+      - The alternative considered (a breadcrumb file recording "quizdom was writing
+        here") has a strictly worse hole on the *documented* recovery path: abort →
+        `dolt reset --hard` → hand edit → the stale marker waves it through.
+
+      If it ever needs closing, the shape would be recording something about the
+      staged content itself (a working-set hash) rather than the flag alone —
+      version-dependent on Dolt's `dolt_hashof_*` functions, which is why it was not
+      done now.
+
+      Raised by the implementer while working BUG-366.
+      Branch: bug-366  ·  Commit: 1fb58b6  ·  PR: https://github.com/joemooney/quizdom/pull/109
+    req_type: Task
+    status: Draft
+    priority: Medium
+clock: 660
 node_id: ''
