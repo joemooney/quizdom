@@ -22,9 +22,41 @@ priority: Medium
 owner: ''
 feature: Uncategorized
 created_at: 2026-07-22T06:18:40.824186860Z
-modified_at: 2026-07-22T06:19:38.658499434Z
+modified_at: 2026-07-22T06:29:35.304098562Z
 req_type: Story
 relationships:
 - rel_type: Child
   target_id: 019f885d-96af-7591-80ec-cb27a5e08351
   created_at: 2026-07-22T06:18:42.476241874Z
+comments:
+- id: 019f8883-edc8-7d60-a828-17d9ac501853
+  author: joe
+  content: |-
+    Implemented on branch story-258 (commit c31f202):
+
+    - TASK-228: `settings::resolve_dolt_path()` is now the single env > settings >
+      default chain; `domain_store_from_config`, `db-init` and `db-migrate` all call
+      it, with `--path` layered on top by each subcommand's arg parser (parsers take
+      the resolved default as a parameter, so they stay pure and env-free in tests).
+    - TASK-218: `Settings::to_toml_merged` rewrites the modelled keys in place over
+      the existing file text and preserves every other line (comments, blanks,
+      foreign keys like `dolt_path` / `store`); `save` uses it instead of
+      round-tripping through the four modelled keys.
+    - TASK-222: one line-parser (`config_entry` — lowercase key, matched-pair
+      unquote) backs both `Settings::from_toml` and `config_value`, so case, quote
+      handling and repeated-key precedence (last-wins) cannot diverge.
+      `dolt_store.rs` lost its private copies of both helpers.
+
+    Test status: 587/587 lib tests green (4 new in settings.rs, 2 subcommand parse
+    tests updated); cargo fmt clean; no new clippy warnings. Verified end-to-end
+    against the real binary + real dolt: each chain tier targets the right repo,
+    `--path` beats the env var, `db-migrate` names the resolved repo in its error,
+    and a real headless `/settings set mouse off` left the comment, `dolt_path` and
+    `store` lines intact.
+
+    Follow-up: TASK-262 (design-choice: took TASK-218 option (a), so `dolt_path`
+    stays invisible in the /settings panel), TASK-263 (relative `dolt_path` still
+    resolves against cwd).
+  created_at: 2026-07-22T06:29:35.304098562Z
+  modified_at: 2026-07-22T06:29:35.304098562Z
+  session_id: 019f887a-d5df-7202-8ee0-066e949bae40
