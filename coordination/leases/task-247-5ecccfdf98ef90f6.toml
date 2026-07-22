@@ -1,0 +1,11 @@
+scope = "TASK-247"
+node_id = "JM"
+clone_path = "/home/joe/ai/quizdom"
+host = "imac"
+pid = 423172
+agent = "implementer"
+started_at = "2026-07-22T06:07:20.489268372+00:00"
+heartbeat_at = "2026-07-22T06:07:20.489268372+00:00"
+ttl_secs = 1800
+process_backed = false
+review_verb = false
