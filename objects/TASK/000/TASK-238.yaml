@@ -12,12 +12,12 @@ description: |
   Verdict: Approved (mergeStateStatus CLEAN confirmed on the fix-forward
   commit before approval).
   PR: https://github.com/joemooney/quizdom/pull/88
-status: Draft
+status: Rejected
 priority: Medium
 owner: ''
 feature: Uncategorized
 created_at: 2026-07-19T21:43:52.724869002Z
-modified_at: 2026-07-22T05:43:00.899481229Z
+modified_at: 2026-07-22T05:43:05.499353256Z
 req_type: Task
 tags:
 - from-review:PR-88
