@@ -66,3 +66,11 @@
   added_at: 2026-07-22T07:50:27.733255505Z
   for_role: reviewer
   added_by_machine: imac
+- user_id: joe
+  requirement_id: 019f88df-46ad-7f11-8b88-1ce7027b4a43
+  position: 17000
+  added_by: joe
+  note: auto-queued by `aida pr` (019f88d6); covers 1 spec
+  added_at: 2026-07-22T08:09:25.919539859Z
+  for_role: reviewer
+  added_by_machine: imac
