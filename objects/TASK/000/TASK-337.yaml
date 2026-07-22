@@ -41,9 +41,16 @@ priority: Medium
 owner: ''
 feature: Uncategorized
 created_at: 2026-07-22T18:18:42.844277172Z
-modified_at: 2026-07-22T18:18:42.844277172Z
+modified_at: 2026-07-22T18:29:02.904749870Z
 req_type: Task
 tags:
 - from-implementer:STORY-327
 - kind:design-choice
 - severity:minor
+comments:
+- id: 019f8b16-9d38-73c1-993f-9447767457fd
+  author: joe
+  content: 'Scope-record, not a defect: applying TurnJournal to all 11 helpers rather than only the 5 over the lint threshold is the consistent choice — a mixed convention would be worse than either extreme. No action.'
+  created_at: 2026-07-22T18:29:02.904749870Z
+  modified_at: 2026-07-22T18:29:02.904749870Z
+  session_id: 789bafdb-f673-41c5-affc-d550f95e51e5
