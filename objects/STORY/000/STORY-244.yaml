@@ -23,12 +23,12 @@ description: |-
   - Per-item fetch_node / list_node_ids / neighbors / update_weight_and_tags remain on the trait with unchanged behavior; new batch methods have default loop impls.
   - Batch and per-item paths return identical data for the same input (add a test asserting fetch_nodes matches looping fetch_node, and neighbors_many matches looping neighbors, including the ordering guarantees TASK-221 documents).
   - cargo test green; the ignored real_dolt tests green; no clippy regressions.
-status: InProgress
+status: Completed
 priority: Medium
 owner: ''
 feature: Uncategorized
 created_at: 2026-07-22T04:15:17.114492740Z
-modified_at: 2026-07-22T04:31:01.761939309Z
+modified_at: 2026-07-22T04:42:10.294682686Z
 req_type: Story
 relationships:
 - rel_type: References
@@ -54,3 +54,21 @@ comments:
   created_at: 2026-07-22T04:29:05.791363808Z
   modified_at: 2026-07-22T04:29:05.791363808Z
   session_id: 019f8809-7b78-7d03-87f9-a9f8f3049c97
+history:
+- id: 019f8821-95f6-7872-9db7-7881817637db
+  author: aida-auto-bump
+  timestamp: 2026-07-22T04:42:10.294362109Z
+  changes:
+  - field_name: status
+    old_value: InProgress
+    new_value: Completed
+processing_record:
+- id: 019f8821-95f6-7872-9db7-78930809fe18
+  timestamp: 2026-07-22T04:42:10.294682037Z
+  agent: aida
+  commit_sha: d8fa11c0517fa9ff4050223512413f565088d926
+  summary: Completed via merge d8fa11c0
+implementation_info:
+  implemented: false
+  completed_at: 2026-07-22T04:42:10.294232111Z
+  completion_sha: d8fa11c0517fa9ff4050223512413f565088d926
