@@ -39,7 +39,7 @@ priority: Medium
 owner: ''
 feature: Uncategorized
 created_at: 2026-07-22T04:39:39.715652627Z
-modified_at: 2026-07-22T06:07:25.886643064Z
+modified_at: 2026-07-22T06:09:34.433022601Z
 req_type: Task
 tags:
 - from-review:PR-90
@@ -50,3 +50,10 @@ relationships:
   target_id: 019f885d-96af-7591-80ec-cb27a5e08351
   created_at: 2026-07-22T05:47:58.541302701Z
   created_by: joe
+comments:
+- id: 019f8871-9ae1-7f93-ae70-d4fdad8e1827
+  author: joe
+  content: Commit 8a0a383 references this requirement
+  created_at: 2026-07-22T06:09:34.433022601Z
+  modified_at: 2026-07-22T06:09:34.433022601Z
+  session_id: 019f8869-2b57-71d2-bcf4-e6d9f9f55e43
