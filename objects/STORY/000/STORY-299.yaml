@@ -15,12 +15,12 @@ description: |-
   - A diagnostic log seam exists, is used by at least the load_probed_terms swallow site, and writes NOTHING to stdout/stderr while the TUI is active (test asserts the seam does not touch the terminal).
   - A forced store failure in a probes read produces a log entry rather than a silent empty definition list (test).
   - cargo test green; clippy clean under -D warnings.
-status: Approved
+status: InProgress
 priority: Medium
 owner: ''
 feature: Uncategorized
 created_at: 2026-07-22T15:30:20.017538708Z
-modified_at: 2026-07-22T15:30:20.017538708Z
+modified_at: 2026-07-22T16:58:42.249840643Z
 req_type: Story
 relationships:
 - rel_type: Child
