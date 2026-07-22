@@ -1,0 +1,11 @@
+scope = "BUG-378"
+node_id = "JM"
+clone_path = "/home/joe/ai/quizdom"
+host = "imac"
+pid = 2883829
+agent = "implementer"
+started_at = "2026-07-22T21:24:29.351279034+00:00"
+heartbeat_at = "2026-07-22T21:24:29.351279034+00:00"
+ttl_secs = 1800
+process_backed = false
+review_verb = false
