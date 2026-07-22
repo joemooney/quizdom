@@ -123,6 +123,20 @@ pub(crate) trait FrontEnd {
     /// records + echoes the resolved choice; the TUI rebuilds + retags the box.
     fn set_editor_choice(&mut self, token: &str);
 
+    // trace:TASK-266 | ai:claude
+    /// The PERSISTED score-gauge preference this front-end loaded at startup, so
+    /// the ENGINE can SEED its `score_gauge_on` from it.
+    ///
+    /// Without this the two halves of the STORY-194 bargain disagreed: the
+    /// front-end loaded `score = true` off disk, the engine hardcoded
+    /// `score_gauge_on = false`, and the first `/settings` pushed the engine's
+    /// default across the seam ([`sync_score`](FrontEnd::sync_score)) and SAVED
+    /// it — so a persisted score was both ignored on load and destroyed on the
+    /// next write. The default is `false` for a front-end that persists nothing.
+    fn persisted_score(&self) -> bool {
+        false
+    }
+
     // trace:STORY-194 | ai:claude
     /// KEEP the front-end's owned settings in sync when a DEDICATED shortcut
     /// (`/score`, `/mode`) flips the engine-owned state, so the `/settings` panel
@@ -301,6 +315,11 @@ impl<R: Read, W: Write> FrontEnd for LineFrontEnd<R, W> {
         }
     }
 
+    // trace:TASK-266 | ai:claude
+    fn persisted_score(&self) -> bool {
+        self.settings.score
+    }
+
     // trace:STORY-194 | ai:claude
     fn sync_score(&mut self, on: bool) {
         if self.settings.score != on {
@@ -387,9 +406,36 @@ mod tests {
         let mut fe = LineFrontEnd::new(Cursor::new(Vec::new()), Vec::new()).unwrap();
         let _ = fe.settings_surface("");
         let out = String::from_utf8(fe.into_output()).unwrap();
-        for label in ["Editor mode", "Mouse", "Score gauge", "Session mode"] {
+        for label in [
+            "Editor mode",
+            "Mouse",
+            "Score gauge",
+            "Session mode",
+            // trace:TASK-262 | ai:claude — plus the read-only domain-graph row:
+            // `dolt_path` decides which graph the session reads, so it is visible
+            // here even though `/settings` cannot change it.
+            crate::settings::DOLT_PATH_ROW_LABEL,
+        ] {
             assert!(out.contains(label), "list missing {label}:\n{out}");
         }
+    }
+
+    // trace:TASK-266 | ai:claude — the front-end EXPOSES the persisted score so the
+    // engine can seed `score_gauge_on` from it instead of hardcoding `false`.
+    // Without this seam the engine's default flowed BACK across `sync_score` on the
+    // first `/settings` and was SAVED over the user's file — the setting was ignored
+    // on load and then destroyed on the next write.
+    #[test]
+    fn the_persisted_score_crosses_the_seam_for_the_engine_to_seed_from() {
+        let mut fe = LineFrontEnd::new(Cursor::new(Vec::new()), Vec::new()).unwrap();
+        // Default settings: gauge off, so the seed is off (the common case).
+        assert!(!fe.persisted_score());
+
+        // A front-end that loaded `score = true` reports it, and the engine's
+        // matching `sync_score(true)` is then a no-op rather than a clobber.
+        fe.sync_score(true);
+        assert!(fe.persisted_score());
+        assert!(fe.settings_surface("").score);
     }
 
     // trace:STORY-194 | ai:claude — a bare `/editor` SHOWS the current model

@@ -30,7 +30,12 @@ data substrate.
   in a local Dolt repo (`quizdom db-init` bootstraps it, `quizdom
   db-migrate` re-imports from a legacy AIDA store; default path
   `data/dolt`, override with `QUIZDOM_DOLT_PATH` or `dolt_path = ...` in
-  `~/.config/quizdom/settings.toml`). AIDA remains canonical for project
+  `~/.config/quizdom/settings.toml` — a **relative** `dolt_path` anchors to
+  that settings file's directory, not the cwd, so one config line names one
+  graph from every worktree; the env var, the `--path` flag, and the compiled
+  `data/dolt` default stay cwd-relative. Rule and rationale: `OVERVIEW.md`
+  § *Settings, and how a relative path resolves* (`STORY-290`)).
+  AIDA remains canonical for project
   intent, including contradiction-resolution decision nodes and
   `references` edges (`AidaIntentStore` — the only runtime aida writes).
   Canonical schema: `docs/architecture/graph-schema.md` + `db/schema.sql`.
