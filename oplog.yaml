@@ -4058,5 +4058,17 @@ operations:
   timestamp: 2026-07-22T05:46:53.006892900Z
   kind: !RemoveTag
     tag: auto-drafted
-clock: 405
+- id: 019f885d-9bf9-7ad1-824f-cfc940bb87b0
+  target_id: 019f885d-96af-7591-80ec-cb27a5e08351
+  author: aida
+  node_id: ''
+  lamport: 406
+  timestamp: 2026-07-22T05:47:43.993400290Z
+  kind: !Create
+    title: 'Post-Dolt cleanup: reviewer findings, config-path resolution, store hardening, and CI/backup gaps'
+    description: 'Umbrella for the implementable backlog left after EPIC-202 shipped and the STORY-244 batching review landed. Groups the approved TASK-* follow-ups into file-disjoint clusters so implementers can be drained without colliding: (a) config/path resolution — db-init/db-migrate ignoring QUIZDOM_DOLT_PATH, settings save dropping store keys, config_value key-matching drift; (b) Dolt store hardening — neighbors ordering guarantees, weight:0 tag asymmetry, CTE recursion depth; (c) hygiene — decorative weight:N test fixtures, pre-existing clippy lints, renaming the AidaCli* types now backed by Dolt; (d) infra — dolt in CI so the real_dolt acceptance tests actually run, a Dolt remote/backup so the domain graph is not only local, and the stale session-log-promotion doc. Each child carries its own acceptance; this epic exists to cluster the drains, not to add scope.'
+    req_type: Epic
+    status: Approved
+    priority: Medium
+clock: 406
 node_id: ''
