@@ -40,10 +40,17 @@ priority: Medium
 owner: ''
 feature: Uncategorized
 created_at: 2026-07-22T17:50:19.215792051Z
-modified_at: 2026-07-22T17:50:19.215792051Z
+modified_at: 2026-07-22T18:29:13.379859818Z
 req_type: Task
 tags:
 - from-implementer:STORY-326
 - kind:design-choice
 - severity:minor
 - testing
+comments:
+- id: 019f8b16-c623-7853-87f4-fbaa4ce7bbd6
+  author: joe
+  content: 'Implementation-choice record: a child process is a legitimate way to capture terminal output for the safety test, and it proves the property. dup2 in-process would be marginally tighter, not more correct.'
+  created_at: 2026-07-22T18:29:13.379859818Z
+  modified_at: 2026-07-22T18:29:13.379859818Z
+  session_id: 789bafdb-f673-41c5-affc-d550f95e51e5
