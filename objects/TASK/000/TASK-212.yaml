@@ -12,9 +12,16 @@ priority: Medium
 owner: ''
 feature: Uncategorized
 created_at: 2026-07-19T19:08:17.168739241Z
-modified_at: 2026-07-19T19:08:17.168739241Z
+modified_at: 2026-07-22T05:42:38.756125271Z
 req_type: Task
 tags:
 - from-implementer:STORY-205
 - kind:followup-suggestion
 - severity:minor
+comments:
+- id: 019f8858-f3a4-7943-9b9f-0bafde798ea8
+  author: joe
+  content: 'Resolved by decision (a): contradiction-resolution Decision nodes and references edges stay in the AIDA store as project intent (ADR-201, documented in CLAUDE.md). The Dolt schema deliberately does not grow a decision kind.'
+  created_at: 2026-07-22T05:42:38.756125271Z
+  modified_at: 2026-07-22T05:42:38.756125271Z
+  session_id: 789bafdb-f673-41c5-affc-d550f95e51e5
