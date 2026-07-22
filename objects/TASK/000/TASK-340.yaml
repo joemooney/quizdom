@@ -35,9 +35,16 @@ priority: Medium
 owner: ''
 feature: Uncategorized
 created_at: 2026-07-22T18:26:54.137267413Z
-modified_at: 2026-07-22T18:26:54.137267413Z
+modified_at: 2026-07-22T18:29:11.448890039Z
 req_type: Task
 tags:
 - from-review:PR-104
 - kind:docs
 - severity:cosmetic
+comments:
+- id: 019f8b16-be98-7130-b31d-ce8cbd7d511d
+  author: joe
+  content: Doc-rationale nit on a correct invariant; the invariant holds and is tested. Not worth a PR on its own.
+  created_at: 2026-07-22T18:29:11.448890039Z
+  modified_at: 2026-07-22T18:29:11.448890039Z
+  session_id: 789bafdb-f673-41c5-affc-d550f95e51e5
