@@ -1,0 +1,46 @@
+id: 019f8a78-5735-7192-98de-f14404e38111
+spec_id: TASK-300
+agreed_id: TASK-300
+title: 'settings: a persisted `mode` is still clobbered the way `score` was (TASK-266''s twin)'
+description: |
+  STORY-290 / TASK-266 fixed the persisted `score` being ignored on load and then
+  overwritten by the engine's default. `mode` has the IDENTICAL defect and was not
+  in the bundle, so it still ships broken.
+
+  Reproduced against the STORY-290 build:
+
+      printf 'score = true\nmode = "debate"\n' > $XDG_CONFIG_HOME/quizdom/settings.toml
+      printf '/settings\nx\n' | quizdom session start --no-tui ...
+      # after: score = true (fixed), mode = "socratic" (clobbered)
+
+  Mechanism, same as score was: `session.rs` seeds `let mut mode = config.mode`
+  (crates/quizdom/src/session.rs:2682), which comes from the CLI and defaults to
+  `SessionMode::Socratic` — the settings file is never consulted. The `/settings`
+  handler then calls `fe.sync_mode(mode.as_str())` (session.rs:3108), which pushes
+  that default across the seam and SAVES it over the user's `mode = "debate"`.
+
+  Why it was NOT fixed here: unlike `score`, `mode` has two other legitimate
+  sources — the `--mode` flag (`config.mode_provided` already tracks it) and a
+  resumed session's logged mode. Deciding the precedence among settings-file /
+  flag / resume-log is a design call STORY-290's acceptance did not make, and the
+  story named only `score`. The likely shape is "settings file seeds the default
+  when `mode_provided` is false and the run is not a resume", but that is the
+  advisor's call, not the implementer's.
+
+  Blast radius is small (one preference resets per session) but it is user-visible
+  and it makes the settings file look unreliable right after a story whose title
+  is "a save that never loses keys".
+
+  Raised by the implementer while working STORY-290.
+  Branch: story-290  ·  Commit: cf4c24c  (PR link added on merge)
+status: Draft
+priority: Medium
+owner: ''
+feature: Uncategorized
+created_at: 2026-07-22T15:36:10.293858363Z
+modified_at: 2026-07-22T15:36:10.293858363Z
+req_type: Task
+tags:
+- from-implementer:STORY-290
+- kind:bug-spotted
+- severity:minor
