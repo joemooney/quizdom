@@ -4070,5 +4070,38 @@ operations:
     req_type: Epic
     status: Approved
     priority: Medium
-clock: 406
+- id: 019f8860-b666-7c01-b9df-af19b8bff43b
+  target_id: 019f8860-b1ff-7ce0-9d89-5cfea314329d
+  author: aida
+  node_id: ''
+  lamport: 407
+  timestamp: 2026-07-22T05:51:07.366602063Z
+  kind: !Create
+    title: Curate now hard-errors on a short batch load instead of silently degrading
+    description: |
+      TASK-246 offered two fixes: a length check, or pairing by id via a map. I
+      implemented the map-based pairing at BOTH seams in
+      `crates/quizdom/src/signals.rs` (`load_questions` and `reweight_questions`),
+      which subsumes the length check — a missing id is a `QuizdomError::Parse`
+      naming the seam and the id.
+
+      The design call worth knowing about: this makes strictness *enforced* for
+      `apply_log_signals`' callees, where before it was only a convention. If a
+      future `QuestionBank` override chooses leniency for `load_questions` — the
+      way `load_terms` deliberately does (`bank.rs:43-48`, `filter_map(.ok())`) —
+      `quizdom curate` will now fail the whole run rather than re-weight the
+      subset it could load. That is the right trade for a persisting operation
+      (TASK-246's whole point is that a partial batch must not be persisted as
+      if complete), but it is a behavioural tightening, not a pure refactor.
+
+      If leniency is ever wanted there, the fix is to make it explicit at the
+      trait level (a `load_questions_lenient`, or a documented "strict" marker)
+      rather than to relax the pairing back to positional.
+
+      Raised by the implementer while working TASK-246.
+      Branch: task-246  ·  Commit: a5724a6  (PR link added on merge)
+    req_type: Task
+    status: Draft
+    priority: Medium
+clock: 407
 node_id: ''
