@@ -4845,5 +4845,43 @@ operations:
     req_type: Story
     status: Approved
     priority: Medium
-clock: 441
+- id: 019f88a2-9362-7113-8eb4-b912e162ba19
+  target_id: 019f88a2-2816-70d1-9b71-7c2a8e318d0c
+  author: aida
+  node_id: ''
+  lamport: 442
+  timestamp: 2026-07-22T07:03:03.778870900Z
+  kind: !Create
+    title: reachable's depth-limit error suggests raising a session variable, which the per-spawn model makes impossible
+    description: |
+      crates/quizdom/src/dolt_store.rs:411-415 (TASK-248/STORY-259, PR-94).
+
+      The CTE depth-limit error tells the user to "raise that session variable to
+      walk a deeper chain". Under ADR-203 every query is its own `dolt sql` spawn,
+      so there is no persistent session for the user to raise anything in — a
+      `SET SESSION cte_max_recursion_depth = N` run in a separate `dolt sql`
+      invocation has no effect on quizdom's next spawn. The advice reads as
+      actionable but is not.
+
+      TASK-224's own note points at where the knob would actually have to live:
+      "Could SET SESSION cte_max_recursion_depth in the query if it ever matters"
+      — i.e. quizdom would have to prepend the SET to the same statement batch it
+      already sends, or expose a setting that does.
+
+      Secondary: CTE_MAX_RECURSION_DEPTH is a hardcoded 1000 (the engine default),
+      but the engine's own message is appended as the trailing detail. If the
+      limit is ever non-default, the output contradicts itself — "depth limit of
+      1000 hops ... Engine detail: recursive query aborted after 2001 iterations".
+      Either parse the number out of the engine text, or soften the wording to
+      "the default limit of 1000".
+
+      Not blocking: STORY-259's acceptance only asks that the error name the limit
+      rather than leak the raw engine string, which it does. This is about the
+      remediation advice being unreachable, not the error being wrong.
+
+      Raised in review of PR-94: https://github.com/joemooney/quizdom/pull/94#issuecomment-5042890190
+    req_type: Task
+    status: Draft
+    priority: Medium
+clock: 442
 node_id: ''
