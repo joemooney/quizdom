@@ -8049,5 +8049,41 @@ operations:
     req_type: Task
     status: Draft
     priority: Medium
-clock: 598
+- id: 019f8b30-2766-7ee1-a3f9-941fdb9a0adf
+  target_id: 019f8b30-25b4-76b2-adc9-4f4ebbdbcd6b
+  author: aida
+  node_id: ''
+  lamport: 599
+  timestamp: 2026-07-22T18:56:56.678425370Z
+  kind: !Create
+    title: The rotated-generation suffix is spelled twice (logs.rs literal vs diagnostics::ROTATED_SUFFIX)
+    description: |
+      Two modules independently compute the name of the kept previous generation:
+
+      - crates/quizdom/src/diagnostics.rs:151 — `const ROTATED_SUFFIX: &str = ".1"`,
+        private to the module, used by `rotate_if_full` to WRITE it
+      - crates/quizdom/src/logs.rs:173 — `previous_generation` re-spells it as a
+        literal: `format!("{}.1", path.file_name()?.to_string_lossy())`, to POINT AT it
+
+      They agree today, so nothing is broken. The concern is the failure mode if the
+      suffix ever changes: `quizdom logs` would stop finding the rotated generation
+      and simply stop printing the `(an earlier generation is in …)` line. No error,
+      no warning — a pointer that quietly disappears. That matters more than usual
+      here because the pointer exists precisely for the case a `--tail` never reaches
+      the live log's `-- rotated at … --` first line, so its absence is exactly what
+      the reader cannot detect.
+
+      Fix is small: make `ROTATED_SUFFIX` `pub(crate)` and have `logs.rs` use it, so
+      the writer and the reader of the rotated name share one definition.
+
+      Note this is the one weak spot found by the review's cross-reference probe —
+      the load-bearing instance of the same question passes cleanly: `logs.rs:106` and
+      `diagnostics.rs:114` both go through `settings::resolve_log_path()`, so the
+      reader and writer cannot disagree about which file the log IS.
+
+      Raised in review of PR-105: https://github.com/joemooney/quizdom/pull/105#issuecomment-5050208191
+    req_type: Task
+    status: Draft
+    priority: Medium
+clock: 599
 node_id: ''
