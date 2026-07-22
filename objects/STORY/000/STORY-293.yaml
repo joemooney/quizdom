@@ -17,12 +17,12 @@ description: |-
   - No #[allow(too_many_arguments)] or #[allow(dead_code)] remains in the touched code; the dead helpers are gone.
   - take_by_id's documented rationale matches reality and is covered.
   - cargo test green; clippy clean under -D warnings; no behavior change beyond the stated contract fixes.
-status: Done
+status: Completed
 priority: Medium
 owner: ''
 feature: Uncategorized
 created_at: 2026-07-22T14:54:12.562083496Z
-modified_at: 2026-07-22T16:50:45.248470164Z
+modified_at: 2026-07-22T16:58:32.235972682Z
 req_type: Story
 relationships:
 - rel_type: Child
