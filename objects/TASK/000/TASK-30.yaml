@@ -43,7 +43,7 @@ priority: Medium
 owner: joe
 feature: Uncategorized
 created_at: 2026-05-31T15:07:46.435019935Z
-modified_at: 2026-07-22T14:50:03.690606590Z
+modified_at: 2026-07-22T14:50:04.964454852Z
 req_type: Task
 tags:
 - upstream:aida
@@ -80,3 +80,5 @@ comments:
   created_at: 2026-07-22T14:50:03.690606590Z
   modified_at: 2026-07-22T14:50:03.690606590Z
   session_id: 789bafdb-f673-41c5-affc-d550f95e51e5
+archived: true
+archived_at: 2026-07-22T14:50:04.964454852Z
