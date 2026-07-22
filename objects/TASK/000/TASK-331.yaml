@@ -1,0 +1,35 @@
+id: 019f8af3-9a6e-74c3-bf4c-03ee901b9ab4
+spec_id: TASK-331
+agreed_id: TASK-331
+title: The diagnostic log still has no reader (quizdom logs / --tail)
+description: |
+  TASK-321 noted in passing that "there is no reader of the file yet either — no
+  `quizdom logs` / `--tail`", and STORY-326 did not close that: it bounded the
+  file (rotation at 1 MiB) and made the PATH discoverable (`/settings`'
+  `Diagnostics:` row, TASK-320), which shrinks the gap without removing it.
+
+  Today the full answer to "something degraded, where do I look?" is: open
+  `/settings`, read the path, leave quizdom, `tail` the file. A `quizdom logs
+  [--tail N]` subcommand would resolve the same chain the seam writes through
+  (`$QUIZDOM_LOG_PATH` > `log_path` > the platform data dir) and print the last
+  N lines — and, now that rotation exists, could fall back to `<log>.1` when the
+  live generation is short.
+
+  Small and self-contained: one subcommand next to `db-backup` / `db-restore`,
+  reading a file the seam already owns the path resolution for. Filed rather than
+  done because it is a new CLI surface, which is scope the spec did not name.
+
+  Raised by the implementer while working STORY-326.
+  Branch: story-326  ·  Commit: 99956f4  (PR link added on merge)
+status: Draft
+priority: Medium
+owner: ''
+feature: Uncategorized
+created_at: 2026-07-22T17:50:48.430451602Z
+modified_at: 2026-07-22T17:50:48.430451602Z
+req_type: Task
+tags:
+- diagnostics
+- from-implementer:STORY-326
+- kind:followup-suggestion
+- severity:minor
