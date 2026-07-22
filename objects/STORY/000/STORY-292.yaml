@@ -27,7 +27,7 @@ priority: Medium
 owner: ''
 feature: Uncategorized
 created_at: 2026-07-22T14:53:52.335563751Z
-modified_at: 2026-07-22T16:10:05.730404495Z
+modified_at: 2026-07-22T16:11:04.247532854Z
 req_type: Story
 relationships:
 - rel_type: Child
@@ -61,3 +61,11 @@ implementation_info:
   implemented: true
   implemented_at: 2026-07-22T16:10:05.730404495Z
   implemented_by: joe
+failure_reason:
+  phase: ci
+  phase_index: 2
+  kind: ci-red
+  detail: 'CI is red on PR-100: fmt · clippy · test'
+  recovery_hint: 'CI failed on run 29936743548 — view it: `gh run view 29936743548`. Push fixups to the same branch: `aida queue work STORY-292 --branch story-292 --steal`'
+  shelved_by: advisor
+  shelved_at: 2026-07-22T16:11:04.247532854Z
