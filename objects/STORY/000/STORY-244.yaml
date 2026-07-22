@@ -1,0 +1,32 @@
+id: 019f8808-f87a-7aa1-a80a-cb0aa25c9d0e
+spec_id: STORY-244
+agreed_id: STORY-244
+title: 'Batch DomainStore reads/writes: collapse the N+1 dolt spawns behind set-based queries'
+description: |-
+  Measured on main @ 3146ae3 with the real 75-node bank: 'quizdom curate' spawns 264 separate dolt processes and takes 2m09s wall for 12s of CPU — process startup (~0.37s each), not query time, is the cost. 'contradictions' is comparably slow. This is the ADR-203 ceiling: the recursive-CTE win on traversal is swamped by per-query process spawns everywhere else.
+
+  Root cause is N+1 at the trait seam. bank.rs all_questions() calls list_node_ids (1 spawn) then fetch_node per id (75 spawns); begets/probes call neighbors per question; persist.rs reweight_question calls update_weight_and_tags once per question.
+
+  Fix: add SET-BASED methods to DomainStore and use them on the hot paths, keeping the existing per-item methods as the single-lookup and test seam.
+  - fetch_nodes(ids: &[String]) -> Vec<NodeRecord> — one SELECT ... WHERE id IN (...)
+  - list_nodes(kind) -> Vec<NodeRecord> — one SELECT, replacing list_node_ids + N fetch_node in all_questions()
+  - neighbors_many(ids: &[String], edge) -> map id -> Vec<String> — one SELECT over edges
+  - update_weights(updates: &[(String, u32, Vec<String>)]) -> one batched write (multi-row upsert or a single dolt sql invocation with all statements)
+  Give each a DEFAULT implementation on the trait that loops the existing per-item method, so every impl and every test double stays correct without change; override them in the Dolt backend with the single-query forms. Then switch bank.rs all_questions(), the begets/probes fan-out, and the curate reweight loop to the batch methods.
+
+  Do NOT introduce dolt sql-server — ADR-203 keeps CLI spawns; this story is about spawn COUNT, not the spawn mechanism.
+
+  ## Acceptance
+  - 'quizdom curate' against the real data/dolt bank spawns <= 10 dolt processes (measured with a PATH shim that logs invocations; baseline 264) and completes in under 15s (baseline 129s).
+  - all_questions() issues ONE query for the node set; no per-id fetch in the loop.
+  - Reweighting the bank issues ONE batched write, not one per question.
+  - Per-item fetch_node / list_node_ids / neighbors / update_weight_and_tags remain on the trait with unchanged behavior; new batch methods have default loop impls.
+  - Batch and per-item paths return identical data for the same input (add a test asserting fetch_nodes matches looping fetch_node, and neighbors_many matches looping neighbors, including the ordering guarantees TASK-221 documents).
+  - cargo test green; the ignored real_dolt tests green; no clippy regressions.
+status: Approved
+priority: Medium
+owner: ''
+feature: Uncategorized
+created_at: 2026-07-22T04:15:17.114492740Z
+modified_at: 2026-07-22T04:15:17.114492740Z
+req_type: Story
