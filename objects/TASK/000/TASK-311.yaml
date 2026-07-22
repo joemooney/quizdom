@@ -1,0 +1,37 @@
+id: 019f8a95-e319-7643-b185-42821118d508
+spec_id: TASK-311
+agreed_id: TASK-311
+title: store.rs's aida error surfaces still forward raw stderr (the non-dolt half of TASK-279)
+description: |
+  STORY-292's acceptance says "No control characters reach user-facing messages
+  from any dolt surface", and TASK-279 enumerated the dolt ones. All are scrubbed
+  now (db_init.rs run_dolt + commit_all, db_migrate.rs run_dolt_sql, dolt_store.rs
+  sql_json), plus db_migrate.rs's run_aida since the helper is stream-agnostic.
+
+  Still raw, and out of scope by the acceptance's own wording:
+
+    crates/quizdom/src/store.rs:275
+    crates/quizdom/src/store.rs:323
+    crates/quizdom/src/store.rs:329 (lowercases raw stderr for matching)
+
+  These forward `aida` stderr, not dolt's. aida is not known to emit spinner
+  backspace runs the way dolt does, so this is speculative rather than an observed
+  defect — which is why I did not widen the change to cover it. If the advisor
+  wants one rule for every subprocess error surface in the crate, it is the same
+  one-line `clean_dolt_message(...)` wrap in three places (and the helper should
+  probably lose its `dolt` name at that point — see the db_init.rs extraction
+  follow-up).
+
+  Raised by the implementer while working STORY-292.
+  Branch: story-292  ·  Commit: aa43e69  (PR link added on merge)
+status: Draft
+priority: Medium
+owner: ''
+feature: Uncategorized
+created_at: 2026-07-22T16:08:26.649593348Z
+modified_at: 2026-07-22T16:08:26.649593348Z
+req_type: Task
+tags:
+- from-implementer:STORY-292
+- kind:followup-suggestion
+- severity:cosmetic
