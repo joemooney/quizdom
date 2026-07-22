@@ -3901,7 +3901,7 @@ fn quick_add_from_current(
         "Quick-add: authoring a new question linked from {}.",
         current.id
     )?;
-    // The dedup search is pure over the in-memory snapshot; an AIDA hiccup just
+    // The dedup search is pure over the in-memory snapshot; a domain-store hiccup just
     // yields no duplicate rather than aborting the session.
     let existing = bank.all_questions().unwrap_or_default();
     let topic = quick_add_topic(current);

@@ -6,7 +6,7 @@
 //!
 //! The command mirrors the `quizdom curate` / `quizdom contradictions` dispatch
 //! in `main.rs`: a thin public [`run_question_add`] entry point wires the real
-//! AIDA-backed bank + persister and an LLM strategy, then defers to a
+//! Dolt-backed bank + persister and an LLM strategy, then defers to a
 //! [`question_add`] seam that takes its collaborators by trait object so tests
 //! can drive the whole flow with fakes.
 //!
@@ -183,7 +183,7 @@ fn build_strategy(backend: LlmBackend) -> Box<dyn NextQuestionStrategy> {
 
 /// Public entry point for the standalone `quizdom question add` command.
 ///
-/// Wires the real AIDA-backed [`StoreQuestionBank`] and
+/// Wires the real Dolt-backed [`StoreQuestionBank`] and
 /// [`StoreUserAuthoredQuestionPersister`] plus an LLM strategy, then defers to
 /// the [`question_add`] seam. Reads prompts from `input` (so piped / non-TTY
 /// stdin works) and writes to `output`.
@@ -196,7 +196,7 @@ pub fn run_question_add(
     let config = QuestionAddConfig::parse(args)?;
     let bank = StoreQuestionBank::default();
     // The dedup search is pure over the in-memory bank snapshot; an empty bank
-    // (or an AIDA hiccup) simply yields no duplicate.
+    // (or a domain-store hiccup) simply yields no duplicate.
     let existing = bank.all_questions().unwrap_or_default();
     let strategy = build_strategy(config.backend);
     let persister = StoreUserAuthoredQuestionPersister::default();

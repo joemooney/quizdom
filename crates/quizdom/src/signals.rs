@@ -435,7 +435,7 @@ fn curate(
 
 /// Entry point for the standalone `quizdom curate` command. Reads the user's
 /// session log(s), derives per-question quality signals (STORY-68), and applies
-/// the STORY-66 re-weighting — persisting each change to AIDA — then prints a
+/// the STORY-66 re-weighting — persisting each change to the domain graph — then prints a
 /// summary of what moved. This is the wiring STORY-72 adds: the bank-evolution
 /// loop was built but, until now, nothing invoked it.
 // trace:STORY-72 | ai:claude
@@ -967,7 +967,7 @@ mod tests {
     fn run_curate_on_unknown_user_reports_nothing() {
         // End-to-end through the real default bank + reweighter: a user with no
         // session logs yields no outcomes, so neither the bank nor the
-        // reweighter ever shells out to aida.
+        // reweighter ever shells out to dolt.
         let mut output = Vec::new();
         run_curate(
             strings(["curate", "--user", "no-such-user-xyz"]),
