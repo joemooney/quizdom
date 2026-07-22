@@ -22,12 +22,12 @@ description: |
   dolt path — the mismatch is the tell that this is a scratch run.
 
   Raised in review of PR-96: https://github.com/joemooney/quizdom/pull/96#issuecomment-5043339135
-status: Draft
+status: Completed
 priority: Medium
 owner: ''
 feature: Uncategorized
 created_at: 2026-07-22T07:57:41.386224822Z
-modified_at: 2026-07-22T07:57:41.386224822Z
+modified_at: 2026-07-22T16:36:32.268210043Z
 req_type: Task
 tags:
 - from-review:PR-96
