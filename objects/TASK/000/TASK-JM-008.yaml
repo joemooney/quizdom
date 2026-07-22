@@ -8,7 +8,7 @@ priority: Medium
 owner: joe
 feature: Uncategorized
 created_at: 2026-06-01T05:32:30.759418105Z
-modified_at: 2026-07-22T05:45:55.366961434Z
+modified_at: 2026-07-22T14:49:48.757298935Z
 req_type: Task
 tags:
 - upstream:aida
@@ -19,3 +19,9 @@ comments:
   created_at: 2026-07-19T18:00:22.920459709Z
   modified_at: 2026-07-19T18:00:22.920459709Z
   session_id: 1f19a7e1-42b8-4b94-876e-c15a446ba581
+- id: 019f8a4d-e5d5-72f3-8130-8acb76645fdc
+  author: joe
+  content: 'Archived from quizdom 2026-07-22: this is an AIDA engine finding, not quizdom work. Routed upstream for triage via ~/aida-upstream-triage-prompt.md (tagged upstream:aida). Archived Draft deliberately — not rejected, not abandoned; the upstream advisor owns the verdict.'
+  created_at: 2026-07-22T14:49:48.757298935Z
+  modified_at: 2026-07-22T14:49:48.757298935Z
+  session_id: 789bafdb-f673-41c5-affc-d550f95e51e5
