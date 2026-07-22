@@ -29,9 +29,16 @@ priority: Medium
 owner: ''
 feature: Uncategorized
 created_at: 2026-07-22T17:59:26.390733024Z
-modified_at: 2026-07-22T17:59:26.390733024Z
+modified_at: 2026-07-22T19:00:49.542257275Z
 req_type: Task
 tags:
 - from-review:PR-103
 - settings
 - severity:cosmetic
+comments:
+- id: 019f8b33-b506-74a2-8b8c-0a9f5e866da0
+  author: joe
+  content: Prose-duplication nit in two footers. Cosmetic; no behavioural risk.
+  created_at: 2026-07-22T19:00:49.542257275Z
+  modified_at: 2026-07-22T19:00:49.542257275Z
+  session_id: 789bafdb-f673-41c5-affc-d550f95e51e5
