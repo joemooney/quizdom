@@ -31,12 +31,12 @@ description: |
   mode it logged — which is arguably the more correct reading of STORY-161 anyway.
 
   Raised in review of PR-106: https://github.com/joemooney/quizdom/pull/106#issuecomment-5050483733
-status: Draft
+status: Completed
 priority: Medium
 owner: ''
 feature: Uncategorized
 created_at: 2026-07-22T19:23:14.957347861Z
-modified_at: 2026-07-22T19:23:14.957347861Z
+modified_at: 2026-07-22T21:23:18.720635124Z
 req_type: Task
 tags:
 - from-review:PR-106
