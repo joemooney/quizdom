@@ -40,9 +40,24 @@ priority: Medium
 owner: ''
 feature: Uncategorized
 created_at: 2026-07-22T04:39:25.472639847Z
-modified_at: 2026-07-22T05:47:22.606895718Z
+modified_at: 2026-07-22T05:51:55.150935559Z
 req_type: Task
 tags:
 - from-review:PR-90
 - kind:correctness
 - severity:minor
+comments:
+- id: 019f8861-710e-7113-8fb1-d00e3ba78802
+  author: joe
+  content: |-
+    Implemented on branch task-246 (commit a5724a6):
+
+    - apply_log_signals now indexes both batch results by question id and claims each id by name, replacing the two positional `zip`s: `load_questions` -> signal pairing, and `reweight_questions` -> ReweightOutcome pairing.
+    - A batch result missing a requested id is now a QuizdomError::Parse naming the seam ("load_questions"/"reweight_questions") and the id, instead of a silently truncated result. A reordered result is paired correctly rather than swapped.
+    - Audited the other two batch call sites (strategy.rs:400 successor_questions, honing.rs:154 load_probed_terms) — neither pairs the result against a parallel list, so neither carries the same misattribution risk.
+
+    Test status: 581/581 tests green (cargo test --workspace); cargo fmt --all --check clean.
+    Tests added: bank drops the first question (errors), bank reverses its result (paired correctly by id), reweighter truncates its write (errors).
+  created_at: 2026-07-22T05:51:55.150935559Z
+  modified_at: 2026-07-22T05:51:55.150935559Z
+  session_id: 019f885d-4ee2-7343-8911-147fc943f22d
