@@ -28,7 +28,7 @@ priority: Medium
 owner: ''
 feature: Uncategorized
 created_at: 2026-07-22T04:15:17.114492740Z
-modified_at: 2026-07-22T04:42:10.294682686Z
+modified_at: 2026-07-22T04:43:00.083163056Z
 req_type: Story
 relationships:
 - rel_type: References
@@ -54,6 +54,12 @@ comments:
   created_at: 2026-07-22T04:29:05.791363808Z
   modified_at: 2026-07-22T04:29:05.791363808Z
   session_id: 019f8809-7b78-7d03-87f9-a9f8f3049c97
+- id: 019f8822-5873-75a3-82df-80641aa969c6
+  author: joe
+  content: 'Verified on merged main @ d8fa11c against the real 75-node data/dolt bank: 4 dolt spawns (baseline 264) and 8.2s wall on a debug build vs the 129s debug baseline — same build type both sides, ~16x. Reviewer independently measured 1.59-1.95s warm. Acceptance (<=10 spawns, <15s) met on both measurements.'
+  created_at: 2026-07-22T04:43:00.083163056Z
+  modified_at: 2026-07-22T04:43:00.083163056Z
+  session_id: 789bafdb-f673-41c5-affc-d550f95e51e5
 history:
 - id: 019f8821-95f6-7872-9db7-7881817637db
   author: aida-auto-bump
