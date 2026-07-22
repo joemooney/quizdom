@@ -4521,5 +4521,39 @@ operations:
     req_type: Task
     status: Draft
     priority: Medium
-clock: 424
+- id: 019f8883-5a47-7341-818c-71791ce3530e
+  target_id: 019f8883-5730-7db3-8520-88c88c41ac80
+  author: aida
+  node_id: ''
+  lamport: 425
+  timestamp: 2026-07-22T06:28:57.543824636Z
+  kind: !Create
+    title: A relative dolt_path in settings.toml still resolves against cwd, so one config selects a different repo per worktree
+    description: |
+      Noticed while unifying the path chain in STORY-258 (unchanged by it — the
+      behaviour predates the story and is now merely shared by three callers instead
+      of one).
+
+      `crates/quizdom/src/settings.rs::resolve_dolt_path` returns whatever string the
+      tier supplied, and every caller hands it to `std::process::Command::current_dir`
+      or `Path::join` without anchoring. The compiled default `data/dolt` and any
+      relative `dolt_path = "data/dolt"` in `~/.config/quizdom/settings.toml` therefore
+      resolve against the PROCESS cwd. The settings file is per-user and global; the
+      cwd is per-worktree. So the same config line selects a different Dolt repo from
+      each sibling worktree — the same class of confusion TASK-228 was filed about
+      ("especially confusing in worktree-heavy workflows"), just one layer down.
+
+      Not obviously a bug: `data/dolt` being project-relative is arguably the point,
+      and absolute paths sidestep it entirely. But the two tiers now differ in kind —
+      a compiled project-relative default vs a user-global config key — and it is
+      worth an explicit decision: anchor a relative `dolt_path` to the config file's
+      directory, anchor it to a discovered project root, or document that relative
+      values are cwd-relative and recommend absolute paths in settings.toml.
+
+      Raised by the implementer while working STORY-258.
+      Branch: story-258  ·  Commit: c31f202  (PR link added on merge)
+    req_type: Task
+    status: Draft
+    priority: Medium
+clock: 425
 node_id: ''
