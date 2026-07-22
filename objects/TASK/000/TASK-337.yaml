@@ -1,0 +1,49 @@
+id: 019f8b0d-271c-7a93-8d38-0bd1526cbd7f
+spec_id: TASK-337
+agreed_id: TASK-337
+title: STORY-327 applied TurnJournal to all 11 helpers, not only the 5 over the lint threshold
+description: |
+  A scope call the advisor should know shipped.
+
+  TASK-315's acceptance was "no clippy::too_many_arguments allow remains in
+  session.rs". Five helpers carried the allow. But eleven took the same
+  (config, logger, turn) triple — the five plus set_goal_in_session,
+  set_mode_in_session, maybe_propose_goal, request_goal_on_demand,
+  resolve_objection, and ask_contradiction_follow_up.
+
+  Converting only the five would have satisfied the acceptance while leaving
+  sibling helpers in the same call graph taking the triple loose — offer_goal_proposal
+  taking a journal and calling set_goal_in_session with three loose arguments. A
+  payload struct only earns its keep as a rule; a convention half the siblings
+  follow is worse than none, because the next reader cannot tell which form is
+  intended. So all eleven were converted.
+
+  The cost is a wider diff than the acceptance strictly required: ~30 call sites
+  including tests, all mechanical (the triple became
+  `&mut TurnJournal::new(config, &mut logger, turn)`). No behavior change —
+  680 tests green, and the emitted session-log events are unchanged.
+
+  Two smaller consolidations rode along for the same reason:
+
+  - `ReviewContext` had already bundled (observer, log_path, branch) as three
+    loose fields; it now embeds the new `SynopsisSource` rather than the new
+    struct being a one-off invented to dodge the lint.
+  - `resume_session_with_term_persister` built the same `Store*` defaults twice
+    (once per exit path); it now builds one `SessionWiring`.
+
+  Flagged in case the advisor would rather this kind of consistency work be its
+  own spec than ride along inside a lint-retirement story.
+
+  Raised by the implementer while working STORY-327.
+  Branch: story-327  ·  Commit: 4b52709  (PR link added on merge)
+status: Draft
+priority: Medium
+owner: ''
+feature: Uncategorized
+created_at: 2026-07-22T18:18:42.844277172Z
+modified_at: 2026-07-22T18:18:42.844277172Z
+req_type: Task
+tags:
+- from-implementer:STORY-327
+- kind:design-choice
+- severity:minor
