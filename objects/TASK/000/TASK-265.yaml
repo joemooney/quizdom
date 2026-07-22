@@ -40,12 +40,12 @@ description: |
   on the same input — and they now do, identically.
 
   Raised in review of PR-93: https://github.com/joemooney/quizdom/pull/93#issuecomment-5042707911
-status: Draft
+status: Completed
 priority: Medium
 owner: ''
 feature: Uncategorized
 created_at: 2026-07-22T06:38:14.012583492Z
-modified_at: 2026-07-22T06:38:14.012583492Z
+modified_at: 2026-07-22T15:46:56.995421083Z
 req_type: Task
 tags:
 - config
