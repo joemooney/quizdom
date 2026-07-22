@@ -22,6 +22,7 @@ use crate::error::{QuizdomError, Result};
 use crate::store::{DomainStore, EdgeKind, NewNode, NodeKind, NodeRecord};
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::PathBuf;
+use std::process::Output;
 
 // trace:STORY-244 | ai:claude
 /// How many ids ride in one `IN (...)` list or one batched `UPDATE`, so a bank
@@ -96,6 +97,20 @@ where
         }
     }
 
+    // trace:TASK-280 | ai:claude
+    /// Every dolt spawn this store makes, through the shared tripwire.
+    ///
+    /// The guard sits at the SPAWN, not at the constructor. The store is built
+    /// eagerly by several `Default` impls (`persist.rs`, `contradiction.rs`),
+    /// so dozens of offline session tests hold a real-path store they never run
+    /// a query through — and a store that is never asked anything cannot poison
+    /// anything. What must not happen is a test reaching the developer's actual
+    /// `data/dolt` with a real `dolt sql`, and that is exactly here.
+    fn run_dolt(&self, args: &[String]) -> Result<Output> {
+        crate::db_init::guard_test_path("the domain-graph path", &self.path);
+        self.runner.run(&self.path, args)
+    }
+
     /// The single query choke point: `dolt sql -r json -q <sql>`, parsed into
     /// the `rows` array of the JSON result format.
     fn sql_json(&self, sql: &str) -> Result<Vec<serde_json::Map<String, serde_json::Value>>> {
@@ -103,11 +118,12 @@ where
             .into_iter()
             .map(String::from)
             .collect();
-        let output = self.runner.run(&self.path, &args)?;
+        let output = self.run_dolt(&args)?;
         if !output.status.success() {
             return Err(QuizdomError::Dolt(format!(
                 "dolt sql failed: {}",
-                String::from_utf8_lossy(&output.stderr)
+                // trace:TASK-279 | ai:claude
+                crate::db_init::clean_dolt_message(&String::from_utf8_lossy(&output.stderr))
             )));
         }
         let stdout = String::from_utf8_lossy(&output.stdout);
@@ -162,6 +178,9 @@ where
     /// [`DomainStore::ensure_edge`] hitting an existing row) leaves nothing to
     /// commit — dolt's refusal for that case is success here.
     fn commit(&self, message: &str) -> Result<()> {
+        // trace:TASK-280 | ai:claude — the commit tail spawns dolt directly
+        // rather than through `run_dolt`, so it takes the tripwire itself.
+        crate::db_init::guard_test_path("the domain-graph path", &self.path);
         crate::db_init::commit_all(&self.runner, &self.path, message).map(|_| ())
     }
 }
@@ -545,7 +564,38 @@ where
 /// (with `--path` layered on top), so the bootstrap and the runtime can no
 /// longer disagree about which repo is "the" domain graph.
 pub fn domain_store_from_config() -> DoltDomainStore {
-    DoltDomainStore::new(crate::settings::resolve_dolt_path())
+    #[cfg(not(test))]
+    let path = crate::settings::resolve_dolt_path();
+    // trace:TASK-280 | ai:claude
+    #[cfg(test)]
+    let path = test_only_domain_graph_path();
+    DoltDomainStore::new(path)
+}
+
+// trace:TASK-280 | ai:claude
+/// Where a test's store points instead of the resolved real graph.
+///
+/// This constructor is the one with no `--path` escape hatch: `db-init`,
+/// `db-migrate` and `db-backup` all take a flag, so their tests pin a temp
+/// directory and always did. The store does not — it is built eagerly by the
+/// `Default` impls in `persist.rs` / `contradiction.rs`, so every session test
+/// that runs the loop was aiming `dolt sql` at whatever
+/// [`crate::settings::resolve_dolt_path`] returned. Under `cargo test` that
+/// resolves relative to the crate directory rather than the project root, so it
+/// has been landing on a `crates/quizdom/data/dolt` that does not exist and
+/// failing gracefully — a near miss, not a hit, and only by accident of the
+/// working directory.
+///
+/// Making the redirect structural is the point of TASK-280: no test can reach
+/// the real graph through the settings chain, so none of them has to remember
+/// not to. The path deliberately does not exist — these tests want the offline
+/// degrade they have always had, just aimed somewhere that could never matter.
+#[cfg(test)]
+fn test_only_domain_graph_path() -> PathBuf {
+    std::env::temp_dir().join(format!(
+        "quizdom-tests-never-a-real-graph-{}",
+        std::process::id()
+    ))
 }
 
 // trace:STORY-208 | ai:claude
@@ -613,6 +663,35 @@ mod tests {
 
     fn sql_of(call: &[String]) -> String {
         ScriptedDoltRunner::sql_of_call(call)
+    }
+
+    // trace:TASK-280 | ai:claude
+    /// The tripwire, live on the store. It guards the SPAWN rather than the
+    /// constructor — holding a real-path store costs nothing, asking it a
+    /// question is what would read (and, on a write, rewrite) the developer's
+    /// actual graph.
+    #[test]
+    #[should_panic(expected = "BUG-277 tripwire")]
+    fn querying_a_store_outside_the_temp_directory_trips_the_guard() {
+        let store = DoltDomainStore::with_runner(
+            "/var/lib/quizdom-must-never-be-touched",
+            ScriptedDoltRunner::new(vec![]),
+        );
+        let _ = store.fetch_node("Q-1");
+    }
+
+    // trace:TASK-280 | ai:claude
+    /// And the settings chain cannot hand a test the real graph in the first
+    /// place: the one constructor with no `--path` escape hatch is redirected
+    /// into the temp directory for the whole suite.
+    #[test]
+    fn the_config_resolved_store_never_points_at_a_real_graph() {
+        let path = domain_store_from_config().path;
+        assert!(
+            path.starts_with(std::env::temp_dir()),
+            "{} escaped the temp directory",
+            path.display()
+        );
     }
 
     #[test]

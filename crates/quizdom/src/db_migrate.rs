@@ -165,6 +165,9 @@ fn db_migrate(
     dolt: &dyn DoltRunner,
     output: &mut impl Write,
 ) -> Result<()> {
+    // trace:TASK-280 | ai:claude — a db-migrate test that forgot to pin would
+    // bulk-import over the real data/dolt; same tripwire as db-init/db-backup.
+    crate::db_init::guard_test_path("--path", &config.path);
     if !config.path.join(".dolt").exists() {
         return Err(QuizdomError::Dolt(format!(
             "no Dolt repo at {} — run `quizdom db-init --path {}` first",
@@ -520,7 +523,8 @@ fn run_aida(aida: &dyn CommandRunner, command: &str, args: &[&str]) -> Result<St
         return Err(QuizdomError::Aida(format!(
             "aida {} failed: {}",
             args.join(" "),
-            String::from_utf8_lossy(&output.stderr)
+            // trace:TASK-279 | ai:claude
+            crate::db_init::clean_dolt_message(&String::from_utf8_lossy(&output.stderr))
         )));
     }
     Ok(String::from_utf8_lossy(&output.stdout).to_string())
@@ -532,7 +536,8 @@ fn run_dolt_sql(dolt: &dyn DoltRunner, path: &Path, sql: &str) -> Result<String>
     if !output.status.success() {
         return Err(QuizdomError::Dolt(format!(
             "dolt sql failed: {}",
-            String::from_utf8_lossy(&output.stderr)
+            // trace:TASK-279 | ai:claude
+            crate::db_init::clean_dolt_message(&String::from_utf8_lossy(&output.stderr))
         )));
     }
     Ok(String::from_utf8_lossy(&output.stdout).to_string())
@@ -1295,6 +1300,22 @@ mod tests {
         assert_eq!(dolt.calls.borrow().len(), 6, "no spot-check query fired");
 
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    // trace:TASK-280 | ai:claude
+    /// The tripwire, live on `db-migrate` — the worst of the three to leave
+    /// unguarded, since a forgetful test would bulk-import over the real
+    /// `data/dolt` rather than merely pushing to the wrong backup.
+    #[test]
+    #[should_panic(expected = "BUG-277 tripwire")]
+    fn aiming_db_migrate_outside_the_temp_directory_trips_the_guard() {
+        let dolt = RecordingDolt::new(&[]);
+        let _ = db_migrate(
+            &config(Path::new("/var/lib/quizdom-must-never-be-touched"), None),
+            &scripted_store(),
+            &dolt,
+            &mut Vec::new(),
+        );
     }
 
     #[test]

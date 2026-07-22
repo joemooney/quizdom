@@ -47,8 +47,9 @@
 //! is the correct engine behaviour and a terrible user experience, so two
 //! guards live here:
 //!
-//! * [`guard_test_paths`] — a `#[cfg(test)]` tripwire. No test may aim
-//!   `db-backup` / `db-restore` at anything outside the system temp directory.
+//! * [`guard_test_paths`] — the `#[cfg(test)]` tripwire
+//!   ([`crate::db_init::guard_test_path`]). No test may aim `db-backup` /
+//!   `db-restore` at anything outside the system temp directory.
 //! * [`unrelated_history_message`] — when dolt *does* refuse, say why in
 //!   quizdom's vocabulary and name the ways out, instead of forwarding
 //!   `unknown push error; no common ancestor`.
@@ -59,15 +60,32 @@
 //! (`~/.local/share/quizdom/dolt-backup`). Every subsequent backup of the real
 //! 195-commit graph then failed on that opaque string, and the round-trip test
 //! stayed green throughout — it pins its own fixture and so never observes a
-//! pre-existing foreign remote. **Verification runs are the hazard**: when
-//! exercising these commands by hand, always pass `--to` / `--from` (or export
-//! `QUIZDOM_DOLT_BACKUP_PATH`) into a scratch directory.
+//! pre-existing foreign remote.
+//!
+//! ## Guarding the vector that actually fired (TASK-283)
+//!
+//! The tripwire above guards `cargo test`. The incident was a `cargo run`, and
+//! for a while the only defence there was a documentation line asking people to
+//! remember `--to`. Two guards now close it:
+//!
+//! * [`DbBackupConfig::parse`] REFUSES a `db-backup` that names a non-default
+//!   `--path` without also naming `--to`. That mismatch — a source repo the
+//!   settings chain did not choose, aimed at the backup directory it did — is
+//!   the scratch-run signature exactly, and it is the one shape where claiming
+//!   the default backup directory is never what was meant.
+//! * `--force` ([`retire_foreign_backup`]) makes the documented way out of a
+//!   foreign-lineage refusal executable rather than a prose recipe (TASK-278).
+//!   It MOVES the foreign copy aside; nothing here ever deletes a backup.
 
-use crate::db_init::{DoltRunner, SystemDoltRunner};
+use crate::db_init::{absolute, clean_dolt_message, DoltRunner, SystemDoltRunner};
 use crate::error::{QuizdomError, Result};
 use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::process::Output;
+use std::sync::atomic::{AtomicU64, Ordering};
+
+/// Distinguishes concurrent restores that share a parent directory.
+static RESTORE_SCRATCH_SEQ: AtomicU64 = AtomicU64::new(0);
 
 /// The remote name `db-backup` manages inside the domain-graph repo. Named
 /// (not `origin`) so it cannot collide with the `origin` that `dolt clone`
@@ -79,6 +97,7 @@ pub const BACKUP_REMOTE_NAME: &str = "backup";
 /// default branch; `db-init` never creates another.
 const BACKUP_BRANCH: &str = "main";
 
+#[derive(Debug)]
 struct DbBackupConfig {
     /// The domain-graph repo to push FROM (`db-restore`: to restore INTO).
     path: PathBuf,
@@ -86,6 +105,9 @@ struct DbBackupConfig {
     backup: PathBuf,
     remote: String,
     dolt_command: String,
+    /// `db-backup --force`: on a foreign-lineage refusal, retire the copy
+    /// already in the backup directory (a move, never a delete) and push.
+    force: bool,
 }
 
 impl DbBackupConfig {
@@ -101,10 +123,13 @@ impl DbBackupConfig {
         default_path: PathBuf,
         default_backup: PathBuf,
     ) -> Result<Self> {
-        let mut path = default_path;
+        let mut path = default_path.clone();
         let mut backup = default_backup;
         let mut remote = BACKUP_REMOTE_NAME.to_string();
         let mut dolt_command = "dolt".to_string();
+        let mut force = false;
+        let mut path_is_explicit = false;
+        let mut backup_is_explicit = false;
         let mut args = args.into_iter().peekable();
 
         if args.peek().map(String::as_str) == Some(subcommand) {
@@ -113,10 +138,17 @@ impl DbBackupConfig {
 
         while let Some(arg) = args.next() {
             match arg.as_str() {
-                "--path" => path = PathBuf::from(next_arg(&mut args, "--path")?),
-                "--to" | "--from" => backup = PathBuf::from(next_arg(&mut args, &arg)?),
+                "--path" => {
+                    path = PathBuf::from(next_arg(&mut args, "--path")?);
+                    path_is_explicit = true;
+                }
+                "--to" | "--from" => {
+                    backup = PathBuf::from(next_arg(&mut args, &arg)?);
+                    backup_is_explicit = true;
+                }
                 "--remote" => remote = next_arg(&mut args, "--remote")?,
                 "--dolt" => dolt_command = next_arg(&mut args, "--dolt")?,
+                "--force" if subcommand == "db-backup" => force = true,
                 "--help" | "-h" => return Err(QuizdomError::Usage(usage(subcommand))),
                 other => {
                     return Err(QuizdomError::Usage(format!(
@@ -127,13 +159,60 @@ impl DbBackupConfig {
             }
         }
 
+        // trace:TASK-283 | ai:claude
+        if subcommand == "db-backup"
+            && path_is_explicit
+            && !backup_is_explicit
+            && absolute(&path) != absolute(&default_path)
+        {
+            return Err(QuizdomError::Usage(unpinned_backup_message(
+                &path,
+                &backup,
+                &default_path,
+            )));
+        }
+
         Ok(Self {
             path,
             backup,
             remote,
             dolt_command,
+            force,
         })
     }
+}
+
+// trace:TASK-283 | ai:claude
+/// BUG-277's actual vector, refused at the argument parser.
+///
+/// A `--path` the settings chain did NOT choose, paired with the backup
+/// directory it DID, is a scratch run every time: a throwaway fixture about to
+/// claim the directory holding the real graph's only off-machine copy. A
+/// backup directory belongs to one lineage, and the first push is what claims
+/// it — so this has to be caught before the push, not translated after it.
+///
+/// The escape is `--to`, which is what the run meant anyway. Pointing `--path`
+/// at the resolved default is untouched, and so is a bare `db-backup`.
+fn unpinned_backup_message(path: &Path, backup: &Path, default_path: &Path) -> String {
+    format!(
+        "refusing to back up {} to the DEFAULT backup directory {}.\n\
+         \n\
+         `--path` names a repo the settings chain did not choose (it resolves \
+         {}), so this looks like a scratch or verification run — and the first \
+         push into a backup directory CLAIMS it for that repo's lineage. That \
+         is exactly how BUG-277 poisoned a real backup: every later backup of \
+         the genuine graph was then refused.\n\
+         \n\
+         Pin the destination too:\n\
+         \x20   quizdom db-backup --path {} --to <scratch-backup-directory>\n\
+         \n\
+         (backing up the resolved default repo needs no flags at all: \
+         `quizdom db-backup`)",
+        shell_quote(path),
+        shell_quote(backup),
+        shell_quote(default_path),
+        shell_quote(path),
+    )
 }
 
 fn next_arg(args: &mut impl Iterator<Item = String>, name: &str) -> Result<String> {
@@ -143,18 +222,41 @@ fn next_arg(args: &mut impl Iterator<Item = String>, name: &str) -> Result<Strin
 }
 
 fn usage(subcommand: &str) -> String {
-    let direction = if subcommand == "db-restore" {
-        "--from <backup-dir>"
+    let (direction, force) = if subcommand == "db-restore" {
+        ("--from <backup-dir>", "")
     } else {
-        "--to <backup-dir>"
+        ("--to <backup-dir>", " [--force]")
     };
     format!(
         "usage: quizdom {subcommand} [--path <dir>] [{direction}] \
-         [--remote {BACKUP_REMOTE_NAME}] [--dolt dolt]\n\
+         [--remote {BACKUP_REMOTE_NAME}] [--dolt dolt]{force}\n\
          (--path defaults to $QUIZDOM_DOLT_PATH, else dolt_path in settings.toml;\n\
          the backup directory defaults to $QUIZDOM_DOLT_BACKUP_PATH, else \
-         dolt_backup_path in settings.toml, else the platform data dir)"
+         dolt_backup_path in settings.toml, else the platform data dir;\n\
+         --path away from that default requires an explicit --to;\n\
+         --force retires a foreign lineage already in the backup directory \
+         (a move, never a delete))"
     )
+}
+
+// trace:TASK-275 | ai:claude
+/// POSIX-quote a path for the copy-paste command hints these two commands
+/// print. `OVERVIEW.md`'s durability section recommends a synced folder or a
+/// removable disk as the backup directory — "Google Drive", "My Passport" —
+/// and an unquoted path with a space in it makes the printed recovery command
+/// silently wrong at exactly the moment someone needs it to work.
+///
+/// Single quotes, because they suppress every other shell metacharacter; an
+/// embedded `'` closes, escapes, and reopens. Paths made of safe characters
+/// stay bare, so the common case reads the way it always did.
+fn shell_quote(path: &Path) -> String {
+    let rendered = path.display().to_string();
+    let is_safe =
+        |character: char| character.is_ascii_alphanumeric() || "._-/=:+,@".contains(character);
+    if !rendered.is_empty() && rendered.chars().all(is_safe) {
+        return rendered;
+    }
+    format!("'{}'", rendered.replace('\'', r"'\''"))
 }
 
 /// Entry point for `quizdom db-backup`.
@@ -246,14 +348,15 @@ fn db_backup(
         )?;
     }
 
-    push_to_backup(runner, config)?;
+    push_to_backup(runner, config, output)?;
     writeln!(
         output,
         "Pushed {} ({BACKUP_BRANCH}) to {url}.\n\
          Restore with: quizdom db-restore --path {} --from {}",
         config.path.display(),
-        config.path.display(),
-        config.backup.display()
+        // trace:TASK-275 | ai:claude — a printed command has to be runnable.
+        shell_quote(&config.path),
+        shell_quote(&config.backup)
     )?;
     Ok(())
 }
@@ -303,7 +406,17 @@ fn db_restore(
     // before doing anything, so a parent holding unrelated subdirectories can
     // fail the clone outright ("failed to load database names") — and does,
     // whenever a sibling directory disappears mid-scan.
-    let scratch = parent.join(format!(".quizdom-restore-{}", std::process::id()));
+    //
+    // The name must be unique per CALL, not per process: two restores sharing
+    // a parent (every `#[test]` under /tmp) would otherwise agree on one
+    // scratch path, and the first to finish deletes it out from under the
+    // other's running clone — which then dies on `getwd: no such file or
+    // directory`.
+    let scratch = parent.join(format!(
+        ".quizdom-restore-{}-{}",
+        std::process::id(),
+        RESTORE_SCRATCH_SEQ.fetch_add(1, Ordering::Relaxed)
+    ));
     std::fs::create_dir_all(&scratch)?;
     let cloned = run_dolt(
         runner,
@@ -317,7 +430,8 @@ fn db_restore(
         "Restored {} from {url}.\n\
          Verify with: cd {} && dolt sql -q 'SELECT COUNT(*) FROM nodes'",
         config.path.display(),
-        config.path.display()
+        // trace:TASK-275 | ai:claude
+        shell_quote(&config.path)
     )?;
     Ok(())
 }
@@ -334,30 +448,16 @@ const SNAPSHOT_MESSAGE: &str = "quizdom db-backup: snapshot working set";
 /// made outside quizdom — a `dolt sql -q` run by hand in the repo — which would
 /// otherwise be pushed-around rather than pushed.
 ///
-/// `dolt commit` exits non-zero with "no changes added to commit" on a clean
-/// tree; that is the ordinary case (nothing new since the last backup), not a
-/// failure.
+/// `dolt commit` exits non-zero on a clean tree; that is the ordinary case
+/// (nothing new since the last backup), not a failure. Since TASK-276 the
+/// shared tail settles that question against the `dolt_status` system table
+/// rather than by reading dolt's prose, so a reworded dolt release no longer
+/// turns an ordinary backup into a hard failure.
+///
+// trace:STORY-291 | ai:claude — one commit tail, shared with db-init /
+// db-migrate / the store.
 fn snapshot_working_set(runner: &dyn DoltRunner, repo: &Path) -> Result<bool> {
-    run_dolt(runner, repo, &["add", "-A"])?;
-    let args = ["commit", "-m", SNAPSHOT_MESSAGE].map(String::from);
-    let output = runner.run(repo, &args)?;
-    if output.status.success() {
-        return Ok(true);
-    }
-    let reported = format!(
-        "{}{}",
-        String::from_utf8_lossy(&output.stdout),
-        String::from_utf8_lossy(&output.stderr)
-    );
-    // trace:STORY-291 | ai:claude — one clean-tree predicate, shared with the
-    // commit tail db-init / db-migrate / the store all run.
-    if crate::db_init::is_nothing_to_commit(&reported) {
-        return Ok(false);
-    }
-    Err(QuizdomError::Dolt(format!(
-        "dolt commit failed: {}",
-        clean_dolt_message(&reported)
-    )))
+    crate::db_init::commit_all(runner, repo, SNAPSHOT_MESSAGE)
 }
 
 // trace:BUG-277 | ai:claude
@@ -385,15 +485,19 @@ fn is_unrelated_history(reported: &str) -> bool {
 /// refusal into [`unrelated_history_message`]. Every other push failure keeps
 /// [`run_dolt`]'s plain shape — this is a targeted translation, not a blanket
 /// rewrite of the engine's diagnostics.
-fn push_to_backup(runner: &dyn DoltRunner, config: &DbBackupConfig) -> Result<()> {
+fn push_to_backup(
+    runner: &dyn DoltRunner,
+    config: &DbBackupConfig,
+    output: &mut impl Write,
+) -> Result<()> {
     let args = ["push", config.remote.as_str(), BACKUP_BRANCH].map(String::from);
-    let output = runner.run(&config.path, &args)?;
-    if output.status.success() {
+    let pushed = runner.run(&config.path, &args)?;
+    if pushed.status.success() {
         return Ok(());
     }
 
-    let stderr = String::from_utf8_lossy(&output.stderr).to_string();
-    let stdout = String::from_utf8_lossy(&output.stdout).to_string();
+    let stderr = String::from_utf8_lossy(&pushed.stderr).to_string();
+    let stdout = String::from_utf8_lossy(&pushed.stdout).to_string();
     // Dolt puts the diagnosis on stderr and an `- Uploading...` spinner on
     // stdout. Scan BOTH for the marker (a future release could move it), but
     // report only the stream carrying the message, so the spinner never lands
@@ -404,10 +508,16 @@ fn push_to_backup(runner: &dyn DoltRunner, config: &DbBackupConfig) -> Result<()
         clean_dolt_message(&stderr)
     };
 
-    if is_unrelated_history(&format!("{stderr}{stdout}")) {
-        return Err(QuizdomError::Dolt(unrelated_history_message(
-            config, &reported,
-        )));
+    // trace:TASK-284 | ai:claude — separate the streams before matching. Joined
+    // edge-to-edge, a stderr ending `...no common` and a stdout opening
+    // `ancestor...` would form a marker that neither stream contains.
+    if is_unrelated_history(&format!("{stderr}\n{stdout}")) {
+        if !config.force {
+            return Err(QuizdomError::Dolt(unrelated_history_message(
+                config, &reported,
+            )));
+        }
+        return force_push_over_foreign_lineage(runner, config, &args, output);
     }
     Err(QuizdomError::Dolt(format!(
         "dolt {} failed: {reported}",
@@ -415,24 +525,67 @@ fn push_to_backup(runner: &dyn DoltRunner, config: &DbBackupConfig) -> Result<()
     )))
 }
 
-// trace:BUG-277 | ai:claude
-/// Dolt decorates its terminal output with backspace runs that erase the
-/// `- Uploading...` spinner in place, and `\x08` is not whitespace — so
-/// `str::trim` leaves it behind and a forwarded stream trails a line of
-/// control characters through the error. Strip the control characters, drop
-/// the lines that were nothing but spinner, and join what is left.
-fn clean_dolt_message(raw: &str) -> String {
-    raw.lines()
-        .map(|line| {
-            line.chars()
-                .filter(|character| !character.is_control())
-                .collect::<String>()
-                .trim()
-                .to_string()
-        })
-        .filter(|line| !line.is_empty())
-        .collect::<Vec<_>>()
-        .join("; ")
+// trace:TASK-278 | ai:claude
+// trace:TASK-283 | ai:claude
+/// `--force`: retire the foreign lineage sitting in the backup directory and
+/// push again.
+///
+/// BUG-277 shipped this as a two-line `mv` recipe inside the error message,
+/// which meant the one documented way out of a poisoned backup directory was
+/// something the tool described but could not do. It is a flag now — with the
+/// same semantics the advisor applied by hand when BUG-277 was found, and the
+/// same ones the message always promised: the displaced copy is MOVED to a
+/// suffixed sibling and stays recoverable. Nothing on this path deletes a
+/// backup, so a `--force` aimed at the wrong directory costs a rename.
+fn force_push_over_foreign_lineage(
+    runner: &dyn DoltRunner,
+    config: &DbBackupConfig,
+    args: &[String],
+    output: &mut impl Write,
+) -> Result<()> {
+    let retired = retire_foreign_backup(&config.backup)?;
+    writeln!(
+        output,
+        "--force: retired the foreign lineage in {} to {} (moved, not deleted).",
+        shell_quote(&config.backup),
+        shell_quote(&retired)
+    )?;
+    std::fs::create_dir_all(&config.backup)?;
+
+    let retried = runner.run(&config.path, args)?;
+    if retried.status.success() {
+        return Ok(());
+    }
+    let stderr = String::from_utf8_lossy(&retried.stderr).to_string();
+    let stdout = String::from_utf8_lossy(&retried.stdout).to_string();
+    let reported = if stderr.trim().is_empty() {
+        clean_dolt_message(&stdout)
+    } else {
+        clean_dolt_message(&stderr)
+    };
+    Err(QuizdomError::Dolt(format!(
+        "dolt {} still failed after --force retired the foreign lineage to {}: \
+         {reported}",
+        args.join(" "),
+        retired.display()
+    )))
+}
+
+// trace:TASK-278 | ai:claude
+/// Move a backup directory aside to a free `.foreign-lineage` sibling and
+/// report where it went. Never overwrites an earlier retirement — a second
+/// `--force` against the same directory lands on `.foreign-lineage.2`, so no
+/// sequence of forced backups can destroy a lineage.
+fn retire_foreign_backup(backup: &Path) -> Result<PathBuf> {
+    let base = format!("{}.foreign-lineage", backup.display());
+    let mut retired = PathBuf::from(&base);
+    let mut suffix = 2;
+    while retired.exists() {
+        retired = PathBuf::from(format!("{base}.{suffix}"));
+        suffix += 1;
+    }
+    std::fs::rename(backup, &retired)?;
+    Ok(retired)
 }
 
 // trace:BUG-277 | ai:claude
@@ -445,10 +598,17 @@ fn clean_dolt_message(raw: &str) -> String {
 ///
 /// None of the offered options destroy anything. The move-aside preserves the
 /// foreign copy under a suffix rather than deleting it, which is exactly what
-/// the advisor did by hand when BUG-277 was found.
+/// the advisor did by hand when BUG-277 was found — and since TASK-278 it is
+/// `--force`, a thing the tool does, rather than a recipe the user retypes.
+///
+/// Every suggested command spells out `--path` / `--to` even when they were not
+/// typed. This message is reached from a run that may have pinned either one,
+/// and a hint that silently means "the defaults" would send a user who did pin
+/// them at a different pair of directories than the failure they are reading
+/// about.
 fn unrelated_history_message(config: &DbBackupConfig, reported: &str) -> String {
-    let backup = config.backup.display();
-    let repo = config.path.display();
+    let backup = shell_quote(&config.backup);
+    let repo = shell_quote(&config.path);
     format!(
         "the backup directory {backup} already holds an UNRELATED Dolt \
          repository: its history shares no commit with {repo}, so the push was \
@@ -464,58 +624,29 @@ fn unrelated_history_message(config: &DbBackupConfig, reported: &str) -> String 
          \n\
          Pick one:\n\
          \x20 * back this graph up somewhere else:\n\
-         \x20     quizdom db-backup --to <fresh-empty-directory>\n\
+         \x20     quizdom db-backup --path {repo} --to <fresh-empty-directory>\n\
          \x20 * see what is in there first (clones it out, writes nothing):\n\
          \x20     quizdom db-restore --path /tmp/quizdom-foreign-check --from {backup}\n\
-         \x20 * retire the foreign copy, then back up here again (a move, \
-         never a delete —\n\
-         \x20   the other lineage stays recoverable):\n\
-         \x20     mv {backup} {backup}.foreign-lineage\n\
-         \x20     quizdom db-backup\n\
+         \x20 * retire the foreign copy and back up here anyway — it is moved \
+         to\n\
+         \x20   {backup}.foreign-lineage, never deleted, so that lineage stays \
+         recoverable:\n\
+         \x20     quizdom db-backup --path {repo} --to {backup} --force\n\
          \n\
          (dolt reported: {reported})"
     )
 }
 
 // trace:BUG-277 | ai:claude
-/// A test that writes to the REAL backup directory destroys the developer's
-/// only off-repo copy of the domain graph. That is not hypothetical — it is
-/// BUG-277: a verification run with no `--to` pushed a throwaway fixture to
-/// the default backup path, and every later backup of the real graph failed.
-///
-/// So under `cargo test` both directories must live under the system temp
-/// directory. A whitelist, deliberately, not a blacklist of known-real paths:
-/// a test that forgets to pin cannot reach `data/dolt`, the platform data
-/// dir, or anywhere else that matters by any route. Every test in this crate
-/// is an in-crate `#[cfg(test)]` unit test — there is no `tests/` directory
-/// compiling the lib without `cfg(test)` — so this covers the whole suite.
-///
-/// It compiles out entirely in a real build: the CLI is *supposed* to write
-/// to the real paths.
-#[cfg(test)]
+// trace:TASK-280 | ai:claude
+/// Both of this command's paths, through the shared tripwire
+/// ([`crate::db_init::guard_test_path`] — which `db-init`, `db-migrate` and the
+/// store constructor now call too, so no test in the workspace can reach a
+/// resolved real path by any route).
 fn guard_test_paths(config: &DbBackupConfig) {
-    for (flag, path) in [("--path", &config.path), ("--to/--from", &config.backup)] {
-        let resolved = absolute(path);
-        let temp = std::env::temp_dir();
-        let under_temp = resolved.starts_with(&temp)
-            || std::fs::canonicalize(&temp)
-                .map(|canonical| resolved.starts_with(canonical))
-                .unwrap_or(false);
-        assert!(
-            under_temp,
-            "BUG-277 tripwire: a test aimed {flag} at {}, outside {}. Tests \
-             must pin every db-backup / db-restore path into a temp directory \
-             — writing to the resolved real paths poisons the developer's \
-             actual domain graph and its backup.",
-            resolved.display(),
-            temp.display()
-        );
-    }
+    crate::db_init::guard_test_path("--path", &config.path);
+    crate::db_init::guard_test_path("--to/--from", &config.backup);
 }
-
-#[cfg(not(test))]
-#[inline]
-fn guard_test_paths(_config: &DbBackupConfig) {}
 
 /// The `file://` URL for a backup directory. Dolt requires an ABSOLUTE path
 /// after the scheme, so a relative `--to data/backup` is resolved against the
@@ -523,17 +654,6 @@ fn guard_test_paths(_config: &DbBackupConfig) {}
 fn file_remote_url(backup: &Path) -> Result<String> {
     let absolute = std::fs::canonicalize(backup).unwrap_or_else(|_| absolute(backup));
     Ok(format!("file://{}", absolute.display()))
-}
-
-/// A best-effort absolute path that does NOT require the path to exist
-/// (`canonicalize` does). Used for clone targets, which by definition don't.
-fn absolute(path: &Path) -> PathBuf {
-    if path.is_absolute() {
-        return path.to_path_buf();
-    }
-    std::env::current_dir()
-        .map(|cwd| cwd.join(path))
-        .unwrap_or_else(|_| path.to_path_buf())
 }
 
 /// The URL currently configured for `name`, or `None` when the repo has no
@@ -629,6 +749,15 @@ mod tests {
             backup: backup.to_path_buf(),
             remote: BACKUP_REMOTE_NAME.to_string(),
             dolt_command: "dolt".to_string(),
+            force: false,
+        }
+    }
+
+    // trace:TASK-278 | ai:claude
+    fn forcing_config(path: &Path, backup: &Path) -> DbBackupConfig {
+        DbBackupConfig {
+            force: true,
+            ..config(path, backup)
         }
     }
 
@@ -674,8 +803,13 @@ mod tests {
         let url = file_remote_url(&backup).unwrap();
         let runner = RecordingDoltRunner::new(vec![
             (0, &format!("backup {url} \n"), ""),
-            (0, "", ""),                                // add -A
-            (1 << 8, "no changes added to commit", ""), // nothing new since last backup
+            (0, "", ""), // add -A
+            // trace:TASK-276 | ai:claude — dolt refuses the commit in wording
+            // NO prose matcher would recognise; the `dolt_status` probe below
+            // is what settles it, so a reworded dolt release cannot turn an
+            // ordinary clean-tree backup into a hard failure.
+            (1 << 8, "", "commit aborted: the working set is up to date"),
+            (0, r#"{"rows":[{"pending":0}]}"#, ""), // dolt_status: nothing pending
         ]);
         let mut output = Vec::new();
 
@@ -688,6 +822,7 @@ mod tests {
                 "remote -v",
                 "add -A",
                 &format!("commit -m {SNAPSHOT_MESSAGE}"),
+                &format!("sql -r json -q {}", crate::db_init::PENDING_CHANGES_SQL),
                 "push backup main"
             ],
             "no re-add, and a clean tree is not a failure"
@@ -808,6 +943,22 @@ mod tests {
                         && message.contains(".foreign-lineage"),
                     "offers the ways out: {message}"
                 );
+                // trace:TASK-278 | ai:claude — the overwrite option is a flag
+                // the tool executes, not an `mv` recipe the user retypes, and
+                // the suggested command carries the paths this run used.
+                let forced = message
+                    .lines()
+                    .find(|line| line.contains("--force"))
+                    .expect("names the flag");
+                assert!(
+                    forced.contains(&format!("--path {}", repo.display()))
+                        && forced.contains(&format!("--to {}", backup.display())),
+                    "the hint is runnable as-is: {forced}"
+                );
+                assert!(
+                    !message.contains("mv "),
+                    "no hand-run recipe left in the message: {message}"
+                );
                 assert!(
                     !message.starts_with("dolt push"),
                     "not the raw engine string: {message}"
@@ -817,6 +968,137 @@ mod tests {
                     "the upload spinner is not a diagnosis: {message}"
                 );
             }
+            other => panic!("expected a Dolt error, got {other:?}"),
+        }
+
+        let _ = std::fs::remove_dir_all(&repo);
+        let _ = std::fs::remove_dir_all(&backup);
+    }
+
+    // trace:TASK-278 | ai:claude
+    // trace:TASK-283 | ai:claude
+    /// The other half of BUG-277's promised choice: `--force` retires the
+    /// lineage occupying the backup directory and pushes. It MOVES — the
+    /// displaced copy is still there afterwards, under a suffix.
+    #[test]
+    fn force_retires_the_foreign_lineage_then_pushes() {
+        let repo = temp_dir("forced");
+        std::fs::create_dir_all(repo.join(".dolt")).unwrap();
+        let backup = temp_dir("forced-dest");
+        std::fs::create_dir_all(&backup).unwrap();
+        // Something identifiable belonging to the foreign lineage.
+        std::fs::write(backup.join("foreign-marker"), "the other graph").unwrap();
+        let runner = RecordingDoltRunner::new(vec![
+            (0, "", ""), // remote -v
+            (0, "", ""), // remote add
+            (0, "", ""), // add -A
+            (0, "", ""), // commit
+            (1 << 8, "", "unknown push error; no common ancestor"),
+            (0, "", ""), // the retried push, into a now-unclaimed directory
+        ]);
+        let mut output = Vec::new();
+
+        db_backup(&forcing_config(&repo, &backup), &runner, &mut output)
+            .expect("--force should push over a retired lineage");
+
+        let retired = PathBuf::from(format!("{}.foreign-lineage", backup.display()));
+        assert_eq!(
+            std::fs::read_to_string(retired.join("foreign-marker")).unwrap(),
+            "the other graph",
+            "the displaced lineage is moved, not deleted"
+        );
+        assert!(
+            backup.exists() && !backup.join("foreign-marker").exists(),
+            "the backup directory is re-made empty for this graph"
+        );
+        let pushes = runner
+            .call_names()
+            .into_iter()
+            .filter(|call| call.starts_with("push"))
+            .count();
+        assert_eq!(pushes, 2, "refused once, then pushed after the retirement");
+        let rendered = String::from_utf8(output).unwrap();
+        assert!(
+            rendered.contains("retired the foreign lineage")
+                && rendered.contains("moved, not deleted"),
+            "says what it did with the other copy: {rendered}"
+        );
+
+        let _ = std::fs::remove_dir_all(&repo);
+        let _ = std::fs::remove_dir_all(&backup);
+        let _ = std::fs::remove_dir_all(&retired);
+    }
+
+    // trace:TASK-278 | ai:claude
+    /// No sequence of forced backups can destroy a lineage: a second `--force`
+    /// against the same directory lands beside the first retirement, never on
+    /// top of it.
+    #[test]
+    fn a_second_force_never_overwrites_the_first_retirement() {
+        let repo = temp_dir("forced-twice");
+        std::fs::create_dir_all(repo.join(".dolt")).unwrap();
+        let backup = temp_dir("forced-twice-dest");
+        std::fs::create_dir_all(&backup).unwrap();
+        std::fs::write(backup.join("second-lineage"), "newer").unwrap();
+        let first = PathBuf::from(format!("{}.foreign-lineage", backup.display()));
+        std::fs::create_dir_all(&first).unwrap();
+        std::fs::write(first.join("first-lineage"), "older").unwrap();
+        let runner = RecordingDoltRunner::new(vec![
+            (0, "", ""),
+            (0, "", ""),
+            (0, "", ""),
+            (0, "", ""),
+            (1 << 8, "", "unknown push error; no common ancestor"),
+            (0, "", ""),
+        ]);
+
+        db_backup(&forcing_config(&repo, &backup), &runner, &mut Vec::new())
+            .expect("--force should succeed");
+
+        let second = PathBuf::from(format!("{}.foreign-lineage.2", backup.display()));
+        assert_eq!(
+            std::fs::read_to_string(first.join("first-lineage")).unwrap(),
+            "older",
+            "the earlier retirement is untouched"
+        );
+        assert_eq!(
+            std::fs::read_to_string(second.join("second-lineage")).unwrap(),
+            "newer",
+            "the new one lands beside it"
+        );
+
+        let _ = std::fs::remove_dir_all(&repo);
+        let _ = std::fs::remove_dir_all(&backup);
+        let _ = std::fs::remove_dir_all(&first);
+        let _ = std::fs::remove_dir_all(&second);
+    }
+
+    // trace:TASK-284 | ai:claude
+    /// The marker scan reads stderr and stdout as separate streams. Joined
+    /// edge-to-edge they would spell `no common ancestor` between them, and the
+    /// push would be mis-diagnosed as a foreign lineage.
+    #[test]
+    fn a_marker_spanning_the_stream_seam_is_not_a_foreign_lineage() {
+        let repo = temp_dir("seam");
+        std::fs::create_dir_all(repo.join(".dolt")).unwrap();
+        let backup = temp_dir("seam-dest");
+        let runner = RecordingDoltRunner::new(vec![
+            (0, "", ""),
+            (0, "", ""),
+            (0, "", ""),
+            (0, "", ""),
+            (
+                1 << 8,
+                "ancestor lookup timed out",
+                "remote rejected: no common",
+            ),
+        ]);
+
+        match db_backup(&config(&repo, &backup), &runner, &mut Vec::new()) {
+            Err(QuizdomError::Dolt(message)) => assert!(
+                !message.contains("UNRELATED"),
+                "a marker formed across the seam is not a diagnosis: {message}"
+            ),
             other => panic!("expected a Dolt error, got {other:?}"),
         }
 
@@ -978,6 +1260,204 @@ mod tests {
         assert!(matches!(result, Err(QuizdomError::Usage(_))));
     }
 
+    // trace:TASK-283 | ai:claude
+    /// BUG-277's actual vector, refused before a single dolt spawn: a scratch
+    /// `--path` aimed at the DEFAULT backup directory. This is the run that
+    /// happened — `cargo run -p quizdom -- db-backup` over a throwaway fixture
+    /// — and until now only `cargo test` was guarded against it.
+    #[test]
+    fn an_unpinned_scratch_path_may_not_claim_the_default_backup() {
+        let refused = DbBackupConfig::parse(
+            ["db-backup", "--path", "/tmp/throwaway-fixture"].map(String::from),
+            "db-backup",
+            PathBuf::from("/home/dev/quizdom/data/dolt"),
+            PathBuf::from("/home/dev/.local/share/quizdom/dolt-backup"),
+        );
+        match refused {
+            Err(QuizdomError::Usage(message)) => {
+                assert!(
+                    message.contains("/tmp/throwaway-fixture")
+                        && message.contains("/home/dev/.local/share/quizdom/dolt-backup"),
+                    "names both sides of the mismatch: {message}"
+                );
+                assert!(message.contains("--to"), "names the escape: {message}");
+            }
+            other => panic!("expected a Usage error, got {other:?}"),
+        }
+    }
+
+    // trace:TASK-283 | ai:claude
+    /// ...and the shapes that are NOT the vector stay untouched: a bare run, a
+    /// `--path` that names the resolved default anyway, and a scratch run that
+    /// pinned its destination like it was supposed to.
+    #[test]
+    fn pinned_and_default_backups_are_left_alone() {
+        let default_path = PathBuf::from("/home/dev/quizdom/data/dolt");
+        let default_backup = PathBuf::from("/home/dev/.local/share/quizdom/dolt-backup");
+        let accepted = |args: &[&str]| {
+            DbBackupConfig::parse(
+                args.iter().map(|arg| arg.to_string()),
+                "db-backup",
+                default_path.clone(),
+                default_backup.clone(),
+            )
+            .unwrap_or_else(|error| panic!("{args:?} should parse, got {error:?}"))
+        };
+
+        assert_eq!(accepted(&["db-backup"]).path, default_path, "bare run");
+        assert_eq!(
+            accepted(&["db-backup", "--path", "/home/dev/quizdom/data/dolt"]).backup,
+            default_backup,
+            "--path naming the resolved default is not a mismatch"
+        );
+        assert_eq!(
+            accepted(&[
+                "db-backup",
+                "--path",
+                "/tmp/scratch-graph",
+                "--to",
+                "/tmp/scratch-backup",
+            ])
+            .backup,
+            PathBuf::from("/tmp/scratch-backup"),
+            "a scratch run that pinned its destination"
+        );
+        // `db-restore` READS the backup, so the same pairing is harmless there.
+        assert!(DbBackupConfig::parse(
+            ["db-restore", "--path", "/tmp/somewhere-else"].map(String::from),
+            "db-restore",
+            default_path,
+            default_backup,
+        )
+        .is_ok());
+    }
+
+    // trace:TASK-278 | ai:claude
+    #[test]
+    fn force_is_a_backup_flag_only() {
+        assert!(
+            DbBackupConfig::parse(
+                ["db-backup", "--force"].map(String::from),
+                "db-backup",
+                PathBuf::from("/tmp/x"),
+                PathBuf::from("/tmp/b"),
+            )
+            .unwrap()
+            .force
+        );
+        // Nothing to force on the read side — restore refuses an occupied
+        // target for reasons `--force` must not be able to wave away.
+        assert!(matches!(
+            DbBackupConfig::parse(
+                ["db-restore", "--force"].map(String::from),
+                "db-restore",
+                PathBuf::from("/tmp/x"),
+                PathBuf::from("/tmp/b"),
+            ),
+            Err(QuizdomError::Usage(_))
+        ));
+    }
+
+    // trace:TASK-275 | ai:claude
+    /// The durability doc recommends a synced folder or a removable disk for
+    /// the backup — "Google Drive", "My Passport". An unquoted path makes the
+    /// printed recovery command silently wrong at the moment it is needed.
+    #[test]
+    fn printed_paths_survive_a_space() {
+        assert_eq!(shell_quote(Path::new("/tmp/plain-path")), "/tmp/plain-path");
+        let quoted = shell_quote(Path::new("/tmp/My Drive/quizdom bk"));
+        assert_eq!(quoted, "'/tmp/My Drive/quizdom bk'");
+        assert_eq!(
+            unquote(&quoted),
+            "/tmp/My Drive/quizdom bk",
+            "round-trips back through a shell's quote removal"
+        );
+        // An embedded apostrophe closes, escapes, and reopens.
+        let apostrophe = shell_quote(Path::new("/tmp/joe's backup"));
+        assert_eq!(apostrophe, r"'/tmp/joe'\''s backup'");
+        assert_eq!(unquote(&apostrophe), "/tmp/joe's backup");
+    }
+
+    // trace:TASK-275 | ai:claude
+    /// A shell's quote removal, enough of it to prove the round trip: strip
+    /// single-quote pairs, honour `\'` outside them.
+    fn unquote(text: &str) -> String {
+        let mut out = String::new();
+        let mut chars = text.chars();
+        let mut inside = false;
+        while let Some(character) = chars.next() {
+            match character {
+                '\'' => inside = !inside,
+                '\\' if !inside => out.push(chars.next().expect("escaped character")),
+                other => out.push(other),
+            }
+        }
+        assert!(!inside, "unbalanced quotes in {text}");
+        out
+    }
+
+    // trace:TASK-275 | ai:claude
+    #[test]
+    fn the_hints_quote_the_paths_they_interpolate() {
+        let repo = temp_dir("spaced graph");
+        std::fs::create_dir_all(repo.join(".dolt")).unwrap();
+        let backup = temp_dir("spaced backup");
+        let runner = RecordingDoltRunner::new(vec![(0, "", "")]);
+        let mut output = Vec::new();
+
+        db_backup(&config(&repo, &backup), &runner, &mut output).expect("backup should succeed");
+
+        let rendered = String::from_utf8(output).unwrap();
+        let hint = rendered
+            .lines()
+            .find(|line| line.contains("Restore with:"))
+            .expect("prints the recovery command");
+        assert!(
+            hint.contains(&shell_quote(&repo)) && hint.contains(&shell_quote(&backup)),
+            "both paths quoted: {hint}"
+        );
+
+        let mut restored = Vec::new();
+        let empty = temp_dir("spaced restored");
+        db_restore(&config(&empty, &backup), &runner, &mut restored)
+            .expect("restore should succeed");
+        let rendered = String::from_utf8(restored).unwrap();
+        assert!(
+            rendered.contains(&format!("cd {}", shell_quote(&empty))),
+            "the verify hint is runnable: {rendered}"
+        );
+
+        let _ = std::fs::remove_dir_all(&repo);
+        let _ = std::fs::remove_dir_all(&backup);
+        let _ = std::fs::remove_dir_all(&empty);
+    }
+
+    // trace:TASK-282 | ai:claude
+    /// The tripwire is `#[cfg(test)]`, so it exists only while the lib is
+    /// compiled AS a test target. An integration test under `tests/` links the
+    /// lib WITHOUT `cfg(test)` — the guard compiles to its no-op and any
+    /// `db-backup` call from there resolves the real settings chain unguarded.
+    /// That is the shape of test most likely to drive the CLI end-to-end
+    /// without pinning `--to`, i.e. the BUG-277 vector exactly.
+    ///
+    /// So the invariant the guard's own doc comment asserts — every test in
+    /// this crate is an in-crate unit test — is checked rather than assumed.
+    /// If this fails, the fix is not to delete the assert: it is to make the
+    /// tripwire survive without `cfg(test)` before adding the directory.
+    #[test]
+    fn no_out_of_crate_test_target_can_silently_disable_the_tripwire() {
+        let crate_root = Path::new(env!("CARGO_MANIFEST_DIR"));
+        for kind in ["tests", "benches", "examples"] {
+            assert!(
+                !crate_root.join(kind).exists(),
+                "crates/quizdom/{kind}/ links the lib WITHOUT cfg(test), so the \
+                 BUG-277 tripwire compiles to its no-op there and those targets \
+                 can reach the real domain graph and its backup. Make \
+                 guard_test_path work outside cfg(test) before adding {kind}/."
+            );
+        }
+    }
+
     /// The STORY-261 acceptance criterion as a test: seed a real Dolt repo,
     /// back it up, DELETE the repo, restore it, and prove the rows came back.
     /// Runs in CI now that the pipeline installs dolt (TASK-219); locally with:
@@ -1100,8 +1580,33 @@ mod tests {
             other => panic!("a foreign-lineage backup must be refused, got {other:?}"),
         }
 
+        // trace:TASK-278 | ai:claude — ...until `--force`, which retires the
+        // throwaway lineage and lets the genuine graph through. Against the
+        // real engine, because the whole point is that the documented way out
+        // is now executable rather than a recipe.
+        let mut rendered = Vec::new();
+        db_backup(&forcing_config(&genuine, &backup), &runner, &mut rendered)
+            .expect("--force should push over the retired lineage");
+        let retired = PathBuf::from(format!("{}.foreign-lineage", backup.display()));
+        assert!(
+            retired.join("manifest").exists() || retired.exists(),
+            "the throwaway lineage is still on disk at {}",
+            retired.display()
+        );
+        assert!(String::from_utf8(rendered)
+            .unwrap()
+            .contains("retired the foreign lineage"));
+
+        // And the graph really is in there now: restore it and count the rows.
+        let restored = temp_dir("lineage-restored");
+        db_restore(&config(&restored, &backup), &runner, &mut Vec::new())
+            .expect("the forced backup should restore");
+        assert!(restored.join(".dolt").exists(), "a real repo came back");
+
         let _ = std::fs::remove_dir_all(&claimed);
         let _ = std::fs::remove_dir_all(&genuine);
         let _ = std::fs::remove_dir_all(&backup);
+        let _ = std::fs::remove_dir_all(&retired);
+        let _ = std::fs::remove_dir_all(&restored);
     }
 }

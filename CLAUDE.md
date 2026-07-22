@@ -65,7 +65,12 @@ CI installs a pinned dolt and runs the `real_dolt` acceptance tests
 verified in the pipeline, not only on a developer's machine (STORY-261).
 The domain graph's durability path — a file-based Dolt remote defaulting to
 `~/.local/share/quizdom/dolt-backup`, with the recovery steps spelled out — is
-documented in `OVERVIEW.md` § *Durability and recovery*.
+documented in `OVERVIEW.md` § *Durability and recovery*. Exercising `db-backup`
+by hand: a `--path` away from the resolved default now REQUIRES `--to`, so a
+scratch run cannot claim the real backup directory (`STORY-292`), and
+`db-backup --force` is the executable way past a backup directory already held
+by another lineage — it moves the foreign copy to `<backup>.foreign-lineage`,
+never deletes it.
 
 Clippy **gates** CI (`-D warnings`) as of STORY-260 — the lint backlog is at
 zero, so a new warning is a new regression, not a known debt. Run

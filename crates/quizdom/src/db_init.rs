@@ -10,6 +10,16 @@
 //!
 //! This slice bootstraps the empty database only; the exporter (STORY-206)
 //! and the Dolt-backed `DomainStore` (STORY-207) build on it.
+//!
+//! ## Shared dolt plumbing
+//!
+//! This module also hosts the pieces every dolt caller needs, because it
+//! already owns the [`DoltRunner`] seam they all spawn through: the commit tail
+//! ([`commit_all`]), the structured clean-tree probe behind it
+//! ([`working_set_is_clean`], TASK-276), the control-character scrub every error
+//! surface applies ([`clean_dolt_message`], TASK-279), and the `#[cfg(test)]`
+//! real-path tripwire ([`guard_test_path`], TASK-280). Keeping one copy of each
+//! is the point — four hand-copied variants is how they drift.
 
 use crate::error::{QuizdomError, Result};
 use std::io::Write;
@@ -130,6 +140,9 @@ const SCHEMA_COMMIT_MESSAGE: &str = "quizdom db-init: apply domain-graph schema"
 /// `.dolt/` repo is already present, apply the idempotent schema DDL, and
 /// commit it.
 fn db_init(path: &Path, runner: &dyn DoltRunner, output: &mut impl Write) -> Result<()> {
+    // trace:TASK-280 | ai:claude — `db-init` resolves the same settings chain
+    // `db-backup` does, so it needs the same tripwire.
+    guard_test_path("--path", path);
     std::fs::create_dir_all(path)?;
 
     if path.join(".dolt").exists() {
@@ -165,10 +178,148 @@ fn db_init(path: &Path, runner: &dyn DoltRunner, output: &mut impl Write) -> Res
 /// saying so — which is success for every caller here. Matched loosely: dolt
 /// says "no changes added to commit" in some paths and "nothing to commit" in
 /// others, and neither wording is a stable API.
+///
+/// **This is the fallback, not the answer** (TASK-276). [`is_clean_tree_refusal`]
+/// asks the `dolt_status` system table first and only reaches for this when the
+/// probe itself cannot run.
 pub(crate) fn is_nothing_to_commit(reported: &str) -> bool {
     let text = reported.to_ascii_lowercase();
     text.contains("nothing to commit") || text.contains("no changes added")
 }
+
+// trace:TASK-276 | ai:claude
+/// The SQL behind [`working_set_is_clean`]. `dolt_status` is Dolt's system
+/// table of pending changes (staged and unstaged both); an empty one is a clean
+/// tree, by definition rather than by wording.
+pub(crate) const PENDING_CHANGES_SQL: &str = "SELECT COUNT(*) AS pending FROM dolt_status";
+
+// trace:TASK-276 | ai:claude
+/// Whether `repo`'s working set holds nothing to commit, answered from Dolt's
+/// `dolt_status` SYSTEM TABLE.
+///
+/// The predicate this replaces read dolt's prose ("no changes added to
+/// commit"). CI pins dolt 2.2.1 so the pipeline was stable, but a developer on
+/// a dolt whose wording had moved would have seen an ordinary clean-tree
+/// `db-backup` fail hard instead of pushing. A system table is an interface;
+/// a diagnostic sentence is not.
+fn working_set_is_clean(runner: &dyn DoltRunner, repo: &Path) -> Result<bool> {
+    let args = ["sql", "-r", "json", "-q", PENDING_CHANGES_SQL].map(String::from);
+    let output = runner.run(repo, &args)?;
+    if !output.status.success() {
+        return Err(QuizdomError::Dolt(format!(
+            "dolt sql {PENDING_CHANGES_SQL} failed: {}",
+            clean_dolt_message(&String::from_utf8_lossy(&output.stderr))
+        )));
+    }
+    let stdout = String::from_utf8_lossy(&output.stdout).to_string();
+    let value: serde_json::Value = serde_json::from_str(stdout.trim())
+        .map_err(|error| QuizdomError::Parse(format!("dolt_status probe was not JSON: {error}")))?;
+    value
+        .get("rows")
+        .and_then(serde_json::Value::as_array)
+        .and_then(|rows| rows.first())
+        .and_then(|row| row.get("pending"))
+        .and_then(|pending| {
+            pending
+                .as_u64()
+                .or_else(|| pending.as_str().and_then(|text| text.parse().ok()))
+        })
+        .map(|pending| pending == 0)
+        .ok_or_else(|| QuizdomError::Parse(format!("dolt_status probe had no count: {stdout}")))
+}
+
+// trace:TASK-276 | ai:claude
+/// Whether a failed `dolt commit` was the ordinary clean-tree refusal.
+///
+/// Structured first: after `add -A` a genuinely empty working set leaves
+/// `dolt_status` empty, while a commit that failed for a real reason (an
+/// unknown author identity, say) leaves the staged rows sitting there. The
+/// prose match survives only for the case where the probe itself cannot run —
+/// then the old behaviour is strictly better than declaring a real failure.
+fn is_clean_tree_refusal(runner: &dyn DoltRunner, repo: &Path, reported: &str) -> bool {
+    match working_set_is_clean(runner, repo) {
+        Ok(clean) => clean,
+        Err(_) => is_nothing_to_commit(reported),
+    }
+}
+
+// trace:TASK-279 | ai:claude
+/// Dolt decorates its terminal output with backspace runs that erase the
+/// `- Uploading...` spinner in place, and `\x08` is not whitespace — so
+/// `str::trim` leaves it behind and a forwarded stream trails a line of
+/// control characters through the error. Strip the control characters, drop
+/// the lines that were nothing but spinner, and join what is left.
+///
+/// Every dolt (and aida) error surface in the crate runs its raw stream through
+/// this. BUG-277 fixed the three surfaces in `db_backup.rs`; TASK-279 lifted the
+/// helper here and applied it to the rest rather than copying it four times.
+pub(crate) fn clean_dolt_message(raw: &str) -> String {
+    raw.lines()
+        .map(|line| {
+            line.chars()
+                .filter(|character| !character.is_control())
+                .collect::<String>()
+                .trim()
+                .to_string()
+        })
+        .filter(|line| !line.is_empty())
+        .collect::<Vec<_>>()
+        .join("; ")
+}
+
+// trace:TASK-280 | ai:claude
+/// A best-effort absolute path that does NOT require the path to exist
+/// (`canonicalize` does). Used for clone targets, which by definition don't,
+/// and by [`guard_test_path`], which must resolve a path it refuses to touch.
+pub(crate) fn absolute(path: &Path) -> PathBuf {
+    if path.is_absolute() {
+        return path.to_path_buf();
+    }
+    std::env::current_dir()
+        .map(|cwd| cwd.join(path))
+        .unwrap_or_else(|_| path.to_path_buf())
+}
+
+// trace:BUG-277 | ai:claude
+// trace:TASK-280 | ai:claude
+/// A test that writes to a REAL resolved path destroys the developer's working
+/// data. That is not hypothetical — it is BUG-277: a verification run with no
+/// `--to` pushed a throwaway fixture to the default backup path, and every
+/// later backup of the real graph failed.
+///
+/// So under `cargo test` every path a dolt command is aimed at must live under
+/// the system temp directory. A whitelist, deliberately, not a blacklist of
+/// known-real paths: a test that forgets to pin cannot reach `data/dolt`, the
+/// platform data dir, or anywhere else that matters by any route.
+///
+/// BUG-277 guarded `db-backup` / `db-restore` only, which was the command that
+/// caused the incident. TASK-280 extended it to `db-init`, `db-migrate` and the
+/// store constructor — a `db-migrate` test that forgot to pin would import over
+/// the real `data/dolt`, which is strictly worse than the backup poisoning.
+///
+/// It compiles out entirely in a real build: the CLI is *supposed* to write to
+/// the real paths.
+#[cfg(test)]
+pub(crate) fn guard_test_path(flag: &str, path: &Path) {
+    let resolved = absolute(path);
+    let temp = std::env::temp_dir();
+    let under_temp = resolved.starts_with(&temp)
+        || std::fs::canonicalize(&temp)
+            .map(|canonical| resolved.starts_with(canonical))
+            .unwrap_or(false);
+    assert!(
+        under_temp,
+        "BUG-277 tripwire: a test aimed {flag} at {}, outside {}. Tests must \
+         pin every dolt path into a temp directory — writing to the resolved \
+         real paths poisons the developer's actual domain graph and its backup.",
+        resolved.display(),
+        temp.display()
+    );
+}
+
+#[cfg(not(test))]
+#[inline]
+pub(crate) fn guard_test_path(_flag: &str, _path: &Path) {}
 
 // trace:STORY-291 | ai:claude
 /// Stage and commit everything in `repo`'s working set, returning whether a
@@ -186,16 +337,20 @@ pub(crate) fn commit_all(runner: &dyn DoltRunner, repo: &Path, message: &str) ->
     if output.status.success() {
         return Ok(true);
     }
+    // trace:TASK-284 | ai:claude — separate the streams before anything reads
+    // across them; concatenated edge-to-edge, a marker can be formed at the seam.
     let reported = format!(
-        "{}{}",
+        "{}\n{}",
         String::from_utf8_lossy(&output.stdout),
         String::from_utf8_lossy(&output.stderr)
     );
-    if is_nothing_to_commit(&reported) {
+    // trace:TASK-276 | ai:claude — the system table decides, not dolt's prose.
+    if is_clean_tree_refusal(runner, repo, &reported) {
         return Ok(false);
     }
     Err(QuizdomError::Dolt(format!(
-        "dolt commit failed: {reported}"
+        "dolt commit failed: {}",
+        clean_dolt_message(&reported)
     )))
 }
 
@@ -206,7 +361,8 @@ fn run_dolt(runner: &dyn DoltRunner, cwd: &Path, args: &[&str]) -> Result<Output
         return Err(QuizdomError::Dolt(format!(
             "dolt {} failed: {}",
             args.first().map(String::as_str).unwrap_or(""),
-            String::from_utf8_lossy(&output.stderr)
+            // trace:TASK-279 | ai:claude
+            clean_dolt_message(&String::from_utf8_lossy(&output.stderr))
         )));
     }
     Ok(output)
@@ -379,6 +535,107 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
     }
 
+    // trace:TASK-276 | ai:claude
+    /// The clean-tree case decided by the `dolt_status` system table, in
+    /// wording no prose matcher would recognise. This is the regression the
+    /// task was filed for: a developer on a dolt whose message had moved would
+    /// have seen an ordinary no-op re-run fail hard.
+    #[test]
+    fn a_reworded_clean_tree_refusal_is_still_not_a_failure() {
+        let dir = temp_dir("reworded");
+        std::fs::create_dir_all(dir.join(".dolt")).unwrap();
+        let runner = RecordingDoltRunner::new(vec![
+            (0, "", ""), // schema DDL
+            (0, "", ""), // add -A
+            (1 << 8, "", "commit aborted: the working set is up to date"),
+            (0, r#"{"rows":[{"pending":0}]}"#, ""), // dolt_status: clean
+        ]);
+        let mut output = Vec::new();
+
+        db_init(&dir, &runner, &mut output).expect("a clean tree is not a failure");
+
+        let calls = runner.calls.borrow();
+        assert_eq!(
+            calls[3].1,
+            ["sql", "-r", "json", "-q", PENDING_CHANGES_SQL].map(String::from),
+            "the system table is what answers the question"
+        );
+        assert!(String::from_utf8(output)
+            .unwrap()
+            .contains("Schema already committed"));
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    // trace:TASK-276 | ai:claude
+    /// ...and the probe cannot swallow a real failure: pending rows are still
+    /// sitting there after the refused commit, so it surfaces.
+    #[test]
+    fn a_commit_failure_with_pending_changes_still_surfaces() {
+        let dir = temp_dir("still-dirty");
+        std::fs::create_dir_all(dir.join(".dolt")).unwrap();
+        let runner = RecordingDoltRunner::new(vec![
+            (0, "", ""),
+            (0, "", ""),
+            (1 << 8, "", "author identity unknown"),
+            (0, r#"{"rows":[{"pending":3}]}"#, ""),
+        ]);
+
+        match db_init(&dir, &runner, &mut Vec::new()) {
+            Err(QuizdomError::Dolt(message)) => {
+                assert!(message.contains("author identity unknown"), "{message}")
+            }
+            other => panic!("expected a Dolt error, got {other:?}"),
+        }
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    // trace:TASK-276 | ai:claude
+    /// When the probe itself cannot run, the prose match is still there as a
+    /// fallback — strictly better than declaring a real failure.
+    #[test]
+    fn an_unusable_probe_falls_back_to_the_prose_match() {
+        let dir = temp_dir("no-probe");
+        std::fs::create_dir_all(dir.join(".dolt")).unwrap();
+        let runner = RecordingDoltRunner::new(vec![
+            (0, "", ""),
+            (0, "", ""),
+            (1 << 8, "no changes added to commit", ""),
+            (1 << 8, "", "unknown system table dolt_status"),
+        ]);
+
+        db_init(&dir, &runner, &mut Vec::new()).expect("the fallback still recognises it");
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    // trace:TASK-279 | ai:claude
+    /// Dolt pads stderr with backspace runs to erase its spinner in place, and
+    /// `\x08` is not whitespace — so an unscrubbed stream drags control
+    /// characters through the middle of the error the user reads.
+    #[test]
+    fn dolt_spinner_control_characters_never_reach_a_message() {
+        let cleaned = clean_dolt_message("- Uploading...\x08\x08\x08\x08\ncannot open remote\n");
+        assert_eq!(cleaned, "- Uploading...; cannot open remote");
+        assert!(!cleaned.chars().any(char::is_control));
+    }
+
+    // trace:TASK-280 | ai:claude
+    /// The tripwire, live on `db-init`: BUG-277 guarded `db-backup` only, but a
+    /// `db-init` that resolved the real path would `dolt init` over the
+    /// developer's actual graph directory.
+    #[test]
+    #[should_panic(expected = "BUG-277 tripwire")]
+    fn aiming_db_init_outside_the_temp_directory_trips_the_guard() {
+        let runner = RecordingDoltRunner::new(vec![]);
+        let _ = db_init(
+            Path::new("/var/lib/quizdom-must-never-be-touched"),
+            &runner,
+            &mut Vec::new(),
+        );
+    }
+
     #[test]
     fn dolt_failure_surfaces_with_stderr() {
         let dir = temp_dir("failing");
@@ -435,6 +692,43 @@ mod tests {
         let defaulted =
             DbInitConfig::parse(["db-init".to_string()], PathBuf::from("/from/env")).unwrap();
         assert_eq!(defaulted.path, PathBuf::from("/from/env"));
+    }
+
+    // trace:TASK-276 | ai:claude
+    /// The clean-tree probe against the real engine. The mock tests above pin
+    /// the decision; this one pins the *interface* — that `dolt_status` still
+    /// exists, still answers `dolt sql -r json`, and still discriminates a
+    /// clean tree from a dirty one. Without it a dolt release could move the
+    /// system table and the whole suite would stay green on the prose fallback.
+    #[test]
+    #[ignore = "requires the dolt binary on PATH"]
+    fn real_dolt_status_probe_discriminates_clean_from_dirty() {
+        let dir = temp_dir("probe");
+        let runner = SystemDoltRunner::new("dolt".to_string());
+        db_init(&dir, &runner, &mut Vec::new()).expect("bootstrap should succeed");
+
+        assert!(
+            working_set_is_clean(&runner, &dir).expect("the probe should run"),
+            "db-init commits its own schema, so it leaves a clean tree"
+        );
+
+        run_dolt(
+            &runner,
+            &dir,
+            &[
+                "sql",
+                "-q",
+                "INSERT INTO nodes (id, kind, title, body, tags, weight) \
+                 VALUES ('Q-1', 'question', 'by hand', '', '', 0)",
+            ],
+        )
+        .expect("hand-run write should land");
+        assert!(
+            !working_set_is_clean(&runner, &dir).expect("the probe should run"),
+            "an uncommitted hand-run write is exactly what the snapshot rescues"
+        );
+
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     /// End-to-end acceptance check against a real dolt binary: init a fresh
