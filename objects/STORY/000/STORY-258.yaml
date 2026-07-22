@@ -17,12 +17,12 @@ description: |-
   - A /settings save round-trip preserves store/dolt_path keys (test asserting save-after-load keeps them).
   - config_value and from_toml agree on key matching for the same input (test covering case and quoted values).
   - cargo test green; no new clippy warnings.
-status: Approved
+status: InProgress
 priority: Medium
 owner: ''
 feature: Uncategorized
 created_at: 2026-07-22T06:18:40.824186860Z
-modified_at: 2026-07-22T06:18:40.824186860Z
+modified_at: 2026-07-22T06:19:38.658499434Z
 req_type: Story
 relationships:
 - rel_type: Child
