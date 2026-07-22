@@ -20,8 +20,13 @@ priority: Medium
 owner: ''
 feature: Uncategorized
 created_at: 2026-07-22T20:10:21.176535970Z
-modified_at: 2026-07-22T20:33:55.884294018Z
+modified_at: 2026-07-22T20:34:41.457406145Z
 req_type: Bug
+relationships:
+- rel_type: Parent
+  target_id: 019f8b89-54fe-7b60-b5e0-6a518374120b
+  created_at: 2026-07-22T20:34:41.457402930Z
+  created_by: joe
 comments:
 - id: 019f8b88-2e44-7383-8cbe-da1ecc71cc54
   author: joe
