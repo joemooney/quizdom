@@ -30,8 +30,8 @@ pub trait GeneratedQuestionPersister {
 /// A user can author a question that springs from an existing origin question
 /// (`Begets`), that pressure-tests an existing term (`Probes`), or that stands
 /// alone as a hand-authored seed with no inbound/outbound edge (`Standalone`).
-/// The variant decides which (if any) `aida rel add` is issued after the
-/// Q-object is created.
+/// The variant decides which (if any) edge is written after the Q-object is
+/// created.
 #[derive(Debug, Clone, Eq, PartialEq)]
 pub enum QuestionLink {
     /// `origin -> new` `begets` edge: the new question follows from `origin`.
@@ -43,13 +43,13 @@ pub enum QuestionLink {
 }
 
 // trace:STORY-85 | ai:claude
-/// Persist a user-authored question as a real Q-object in the AIDA bank.
+/// Persist a user-authored question as a real Q-object in the domain graph.
 ///
-/// Reuses STORY-38's persister shape (create via `aida add --prefix Q --type
-/// functional`, then optionally wire an edge) but for hand-authored questions:
-/// the Q-object is tagged `source:user-authored`, `answer:<shape>`,
-/// `topic:<t>`, and a neutral `weight:50`, and linked according to
-/// [`QuestionLink`].
+/// Reuses STORY-38's persister shape (create the node, then optionally wire an
+/// edge) but for hand-authored questions:
+/// the Q-object is tagged `source:user-authored`, `answer:<shape>` and
+/// `topic:<t>`, carries a neutral weight of 50 in its `weight` column, and is
+/// linked according to [`QuestionLink`].
 pub trait UserAuthoredQuestionPersister {
     fn persist_user_authored_question(
         &self,
@@ -60,11 +60,11 @@ pub trait UserAuthoredQuestionPersister {
 }
 
 // trace:STORY-85 | ai:claude
-/// Build the user-authored question in memory without touching AIDA.
+/// Build the user-authored question in memory without touching the store.
 ///
 /// Mirrors [`NoopGeneratedQuestionPersister`]: returns the question with the
-/// canonical user-authored tag set applied and a neutral `weight:50`, but
-/// issues no `aida` commands and assigns no real id.
+/// canonical user-authored tag set applied and a neutral weight of 50, but
+/// writes nothing to the domain graph and assigns no real id.
 pub struct NoopUserAuthoredQuestionPersister;
 
 impl UserAuthoredQuestionPersister for NoopUserAuthoredQuestionPersister {
@@ -121,11 +121,11 @@ impl GeneratedQuestionPersister for NoopGeneratedQuestionPersister {
     }
 }
 
-pub(crate) struct AidaCliGeneratedQuestionPersister<S = DoltDomainStore> {
+pub(crate) struct StoreGeneratedQuestionPersister<S = DoltDomainStore> {
     store: S,
 }
 
-impl Default for AidaCliGeneratedQuestionPersister {
+impl Default for StoreGeneratedQuestionPersister {
     fn default() -> Self {
         Self {
             store: domain_store_from_config(),
@@ -133,11 +133,11 @@ impl Default for AidaCliGeneratedQuestionPersister {
     }
 }
 
-pub(crate) struct AidaCliUserSpecificTermPersister<S = DoltDomainStore> {
+pub(crate) struct StoreUserSpecificTermPersister<S = DoltDomainStore> {
     store: S,
 }
 
-impl Default for AidaCliUserSpecificTermPersister {
+impl Default for StoreUserSpecificTermPersister {
     fn default() -> Self {
         Self {
             store: domain_store_from_config(),
@@ -146,7 +146,7 @@ impl Default for AidaCliUserSpecificTermPersister {
 }
 
 #[cfg(test)]
-impl<S> AidaCliUserSpecificTermPersister<S>
+impl<S> StoreUserSpecificTermPersister<S>
 where
     S: DomainStore,
 {
@@ -155,7 +155,7 @@ where
     }
 }
 
-impl<S> UserSpecificTermPersister for AidaCliUserSpecificTermPersister<S>
+impl<S> UserSpecificTermPersister for StoreUserSpecificTermPersister<S>
 where
     S: DomainStore,
 {
@@ -200,7 +200,7 @@ where
 }
 
 #[cfg(test)]
-impl<S> AidaCliGeneratedQuestionPersister<S>
+impl<S> StoreGeneratedQuestionPersister<S>
 where
     S: DomainStore,
 {
@@ -209,7 +209,7 @@ where
     }
 }
 
-impl<S> GeneratedQuestionPersister for AidaCliGeneratedQuestionPersister<S>
+impl<S> GeneratedQuestionPersister for StoreGeneratedQuestionPersister<S>
 where
     S: DomainStore,
 {
@@ -262,11 +262,11 @@ const USER_SPECIFIC_TERM_WEIGHT: u32 = 40;
 // Foundational persister (per the spec): the type + edge wiring land here. The
 // standalone `quizdom question add` command (STORY-87) and the in-session
 // quick-add control (STORY-88) both drive it via the shared authoring core.
-pub(crate) struct AidaCliUserAuthoredQuestionPersister<S = DoltDomainStore> {
+pub(crate) struct StoreUserAuthoredQuestionPersister<S = DoltDomainStore> {
     store: S,
 }
 
-impl Default for AidaCliUserAuthoredQuestionPersister {
+impl Default for StoreUserAuthoredQuestionPersister {
     fn default() -> Self {
         Self {
             store: domain_store_from_config(),
@@ -275,7 +275,7 @@ impl Default for AidaCliUserAuthoredQuestionPersister {
 }
 
 #[cfg(test)]
-impl<S> AidaCliUserAuthoredQuestionPersister<S>
+impl<S> StoreUserAuthoredQuestionPersister<S>
 where
     S: DomainStore,
 {
@@ -284,7 +284,7 @@ where
     }
 }
 
-impl<S> UserAuthoredQuestionPersister for AidaCliUserAuthoredQuestionPersister<S>
+impl<S> UserAuthoredQuestionPersister for StoreUserAuthoredQuestionPersister<S>
 where
     S: DomainStore,
 {
@@ -403,7 +403,7 @@ pub trait QuestionReweighter {
     }
 }
 
-/// Compute the re-weighted question in memory without touching AIDA.
+/// Compute the re-weighted question in memory without touching the store.
 ///
 /// Useful for previewing a re-weight or for tests; mirrors
 /// [`NoopGeneratedQuestionPersister`].
@@ -426,12 +426,12 @@ fn apply_reweight(question: &Question, signal: QualitySignal) -> Question {
 }
 
 #[allow(dead_code)]
-pub(crate) struct AidaCliQuestionReweighter<S = DoltDomainStore> {
+pub(crate) struct StoreQuestionReweighter<S = DoltDomainStore> {
     store: S,
 }
 
 #[allow(dead_code)]
-impl Default for AidaCliQuestionReweighter {
+impl Default for StoreQuestionReweighter {
     fn default() -> Self {
         Self {
             store: domain_store_from_config(),
@@ -440,7 +440,7 @@ impl Default for AidaCliQuestionReweighter {
 }
 
 #[cfg(test)]
-impl<S> AidaCliQuestionReweighter<S>
+impl<S> StoreQuestionReweighter<S>
 where
     S: DomainStore,
 {
@@ -449,7 +449,7 @@ where
     }
 }
 
-impl<S> QuestionReweighter for AidaCliQuestionReweighter<S>
+impl<S> QuestionReweighter for StoreQuestionReweighter<S>
 where
     S: DomainStore,
 {
@@ -526,12 +526,12 @@ mod reweight_tests {
     fn reweighter_with(
         responses: Vec<(i32, &str, &str)>,
     ) -> (
-        AidaCliQuestionReweighter<DoltDomainStore<ScriptedDoltRunner>>,
+        StoreQuestionReweighter<DoltDomainStore<ScriptedDoltRunner>>,
         ScriptedDoltRunner,
     ) {
         let runner = ScriptedDoltRunner::new(responses);
         let handle = runner.clone();
-        let reweighter = AidaCliQuestionReweighter::with_store(DoltDomainStore::with_runner(
+        let reweighter = StoreQuestionReweighter::with_store(DoltDomainStore::with_runner(
             "/tmp/quizdom-dolt",
             runner,
         ));
@@ -642,12 +642,12 @@ mod user_authored_tests {
     fn persister_with(
         responses: Vec<(i32, &str, &str)>,
     ) -> (
-        AidaCliUserAuthoredQuestionPersister<DoltDomainStore<ScriptedDoltRunner>>,
+        StoreUserAuthoredQuestionPersister<DoltDomainStore<ScriptedDoltRunner>>,
         ScriptedDoltRunner,
     ) {
         let runner = ScriptedDoltRunner::new(responses);
         let handle = runner.clone();
-        let persister = AidaCliUserAuthoredQuestionPersister::with_store(
+        let persister = StoreUserAuthoredQuestionPersister::with_store(
             DoltDomainStore::with_runner("/tmp/quizdom-dolt", runner),
         );
         (persister, handle)
@@ -665,7 +665,7 @@ mod user_authored_tests {
     fn persister_minting(
         highest: &str,
     ) -> (
-        AidaCliUserAuthoredQuestionPersister<DoltDomainStore<ScriptedDoltRunner>>,
+        StoreUserAuthoredQuestionPersister<DoltDomainStore<ScriptedDoltRunner>>,
         ScriptedDoltRunner,
     ) {
         let (status, out, err) = mint_scan(highest);

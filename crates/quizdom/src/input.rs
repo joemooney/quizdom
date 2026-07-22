@@ -365,7 +365,7 @@ impl FreeTextInput {
             .edit_mode(editor_edit_mode())
             .build();
         let editor = DefaultEditor::with_config(config)
-            .map_err(|error| QuizdomError::Io(io::Error::new(io::ErrorKind::Other, error)))?;
+            .map_err(|error| QuizdomError::Io(io::Error::other(error)))?;
         Ok(Self::Interactive(Box::new(editor)))
     }
 
@@ -395,10 +395,7 @@ impl FreeTextInput {
                 }
                 Err(rustyline::error::ReadlineError::Interrupted)
                 | Err(rustyline::error::ReadlineError::Eof) => Ok(None),
-                Err(error) => Err(QuizdomError::Io(io::Error::new(
-                    io::ErrorKind::Other,
-                    error,
-                ))),
+                Err(error) => Err(QuizdomError::Io(io::Error::other(error))),
             },
         }
     }
@@ -606,8 +603,7 @@ fn read_single_key_answer(
         return Ok(None);
     };
     loop {
-        let event = event::read()
-            .map_err(|error| QuizdomError::Io(io::Error::new(io::ErrorKind::Other, error)))?;
+        let event = event::read().map_err(|error| QuizdomError::Io(io::Error::other(error)))?;
         let Event::Key(key) = event else {
             continue;
         };
@@ -654,7 +650,7 @@ fn read_single_key_answer(
             },
             KeyCode::Char(character) if matches!(kind, AnswerKind::Choice(_)) => {
                 if character.is_ascii_digit() {
-                    write!(output, "{character}\n")?;
+                    writeln!(output, "{character}")?;
                     output.flush()?;
                     return Ok(Some(character.to_string()));
                 }

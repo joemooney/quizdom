@@ -1,8 +1,8 @@
-use crate::bank::{AidaCliQuestionBank, QuestionBank};
+use crate::bank::{QuestionBank, StoreQuestionBank};
 use crate::contradiction::{
-    beliefs_from_session_log, detect_graph_contradictions, AidaCliContradictionResolutionPersister,
-    AidaCliContradictsEdges, Contradiction, ContradictionResolution,
-    ContradictionResolutionPersister, ContradictsEdges,
+    beliefs_from_session_log, detect_graph_contradictions, Contradiction, ContradictionResolution,
+    ContradictionResolutionPersister, ContradictsEdges, StoreContradictionResolutionPersister,
+    StoreContradictsEdges,
 };
 use crate::error::{QuizdomError, Result};
 use crate::honing::{
@@ -23,14 +23,14 @@ use crate::observer::{answer_help, HelpAnswer};
 // trace:STORY-165 | ai:claude
 use crate::observer::{read_tutor, TutorContext, TutorReading};
 // trace:STORY-128 | ai:claude
-use crate::persist::{
-    AidaCliGeneratedQuestionPersister, AidaCliQuestionReweighter,
-    AidaCliUserAuthoredQuestionPersister, AidaCliUserSpecificTermPersister, QuestionLink,
-    QuestionReweighter, UserAuthoredQuestionPersister, UserSpecificTermPersister,
-};
 #[cfg(test)]
 use crate::persist::{
     NoopQuestionReweighter, NoopUserAuthoredQuestionPersister, NoopUserSpecificTermPersister,
+};
+use crate::persist::{
+    QuestionLink, QuestionReweighter, StoreGeneratedQuestionPersister, StoreQuestionReweighter,
+    StoreUserAuthoredQuestionPersister, StoreUserSpecificTermPersister,
+    UserAuthoredQuestionPersister, UserSpecificTermPersister,
 };
 use crate::strategy::{
     different_topic_punt_question, AnsweredQuestion, QualitySignal, SessionMode, StrategyContext,
@@ -403,7 +403,7 @@ pub fn run_cli(
     // trace:STORY-76 | ai:claude — gate styled output on a real TTY + NO_COLOR.
     crate::style::init_from_env();
     let config = CliConfig::parse(args)?;
-    let bank = AidaCliQuestionBank::default();
+    let bank = StoreQuestionBank::default();
     let deterministic = DeterministicNextQuestionStrategy;
     match config.command {
         SessionCommand::Start => match build_strategy(&config) {
@@ -411,7 +411,7 @@ pub fn run_cli(
                 &config,
                 &bank,
                 strategy.as_ref(),
-                &AidaCliUserSpecificTermPersister::default(),
+                &StoreUserSpecificTermPersister::default(),
                 input,
                 &mut output,
             ),
@@ -419,7 +419,7 @@ pub fn run_cli(
                 &config,
                 &bank,
                 &deterministic,
-                &AidaCliUserSpecificTermPersister::default(),
+                &StoreUserSpecificTermPersister::default(),
                 input,
                 &mut output,
             ),
@@ -431,7 +431,7 @@ pub fn run_cli(
                     &config,
                     &bank,
                     strategy.as_ref(),
-                    &AidaCliUserSpecificTermPersister::default(),
+                    &StoreUserSpecificTermPersister::default(),
                     input,
                     &mut output,
                 ),
@@ -439,7 +439,7 @@ pub fn run_cli(
                     &config,
                     &bank,
                     &deterministic,
-                    &AidaCliUserSpecificTermPersister::default(),
+                    &StoreUserSpecificTermPersister::default(),
                     input,
                     &mut output,
                 ),
@@ -740,14 +740,14 @@ fn build_strategy(config: &CliConfig) -> Option<Box<dyn NextQuestionStrategy>> {
                 Some(
                     Box::new(LlmNextQuestionStrategy::with_generated_question_persister(
                         client,
-                        AidaCliGeneratedQuestionPersister::default(),
+                        StoreGeneratedQuestionPersister::default(),
                     )) as Box<dyn NextQuestionStrategy>,
                 )
             }
             LlmBackendKind::Anthropic => AnthropicClient::from_env().ok().map(|client| {
                 Box::new(LlmNextQuestionStrategy::with_generated_question_persister(
                     client,
-                    AidaCliGeneratedQuestionPersister::default(),
+                    StoreGeneratedQuestionPersister::default(),
                 )) as Box<dyn NextQuestionStrategy>
             }),
         },
@@ -2440,11 +2440,11 @@ pub(crate) fn run_session_with_term_persister(
     input: impl Read,
     output: &mut dyn Write,
 ) -> Result<()> {
-    let contradiction_edges = AidaCliContradictsEdges::default();
-    let contradiction_resolution_persister = AidaCliContradictionResolutionPersister::default();
-    let question_reweighter = AidaCliQuestionReweighter::default();
+    let contradiction_edges = StoreContradictsEdges::default();
+    let contradiction_resolution_persister = StoreContradictionResolutionPersister::default();
+    let question_reweighter = StoreQuestionReweighter::default();
     // trace:STORY-88 | ai:claude — real persister for the in-session quick-add.
-    let user_authored_persister = AidaCliUserAuthoredQuestionPersister::default();
+    let user_authored_persister = StoreUserAuthoredQuestionPersister::default();
     run_session_from_current(
         config,
         bank,
@@ -2524,7 +2524,7 @@ pub(crate) fn run_session_with_user_authored_persister(
         bank,
         strategy,
         &NoopUserSpecificTermPersister,
-        &AidaCliContradictsEdges::default(),
+        &StoreContradictsEdges::default(),
         &crate::contradiction::NoopContradictionResolutionPersister,
         &NoopQuestionReweighter,
         user_authored_persister,
@@ -2550,7 +2550,7 @@ pub(crate) fn run_session_with_question_reweighter(
         bank,
         strategy,
         &NoopUserSpecificTermPersister,
-        &AidaCliContradictsEdges::default(),
+        &StoreContradictsEdges::default(),
         &crate::contradiction::NoopContradictionResolutionPersister,
         question_reweighter,
         &NoopUserAuthoredQuestionPersister,
@@ -4320,9 +4320,9 @@ fn resume_session_with_term_persister(
     replay.render(output)?;
 
     let recent_path = replay.recent_path();
-    let question_reweighter = AidaCliQuestionReweighter::default();
+    let question_reweighter = StoreQuestionReweighter::default();
     // trace:STORY-88 | ai:claude — resumed sessions get the same quick-add path.
-    let user_authored_persister = AidaCliUserAuthoredQuestionPersister::default();
+    let user_authored_persister = StoreUserAuthoredQuestionPersister::default();
 
     // Normal resume: a saved follow-up question exists, present it.
     if let Some(next_question_ref) = replay.next_question_ref.as_ref() {
@@ -4333,8 +4333,8 @@ fn resume_session_with_term_persister(
             bank,
             strategy,
             term_persister,
-            &AidaCliContradictsEdges::default(),
-            &AidaCliContradictionResolutionPersister::default(),
+            &StoreContradictsEdges::default(),
+            &StoreContradictionResolutionPersister::default(),
             &question_reweighter,
             &user_authored_persister,
             input,
@@ -4447,8 +4447,8 @@ fn resume_session_with_term_persister(
         bank,
         strategy,
         term_persister,
-        &AidaCliContradictsEdges::default(),
-        &AidaCliContradictionResolutionPersister::default(),
+        &StoreContradictsEdges::default(),
+        &StoreContradictionResolutionPersister::default(),
         &question_reweighter,
         &user_authored_persister,
         &mut input,
@@ -5042,6 +5042,11 @@ impl SessionLogger {
         }))
     }
 
+    // trace:STORY-260 | ai:claude — like `session_started` above, this method's
+    // parameter list mirrors the event's JSON schema field-for-field. Bundling
+    // a subset into a payload struct would make two of the ten writers read
+    // differently from the rest for no gain at the call site.
+    #[allow(clippy::too_many_arguments)]
     fn contradiction_resolved(
         &mut self,
         session_id: &str,
@@ -5121,6 +5126,9 @@ impl SessionLogger {
         }))
     }
 
+    // trace:STORY-260 | ai:claude — parameter list mirrors the event schema; see
+    // the note on `contradiction_resolved`.
+    #[allow(clippy::too_many_arguments)]
     fn next_question_selected(
         &mut self,
         session_id: &str,

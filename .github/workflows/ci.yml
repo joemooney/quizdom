@@ -26,8 +26,11 @@ jobs:
       - name: Format
         run: cargo fmt --all --check
       - name: Clippy
-        # Informational: surfaces lints without failing the build (no -D warnings).
-        run: cargo clippy --workspace --all-targets
+        # trace:STORY-260 | ai:claude — TASK-233 cleared the last six lints, so
+        # the step now GATES (`-D warnings`) instead of merely reporting. It was
+        # informational only because a standing backlog would have made it red
+        # on every PR; with the backlog at zero, a new lint is a new regression.
+        run: cargo clippy --workspace --all-targets -- -D warnings
       - name: Test
         # Ignored live-API smoke tests (claude-cli / anthropic) do not run here,
         # so no secrets are required.

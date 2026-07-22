@@ -17,11 +17,11 @@
 
 // trace:STORY-87 | ai:claude
 
-use crate::bank::{AidaCliQuestionBank, QuestionBank};
+use crate::bank::{QuestionBank, StoreQuestionBank};
 use crate::error::{QuizdomError, Result};
 use crate::model::{AnswerKind, Question};
 use crate::persist::{
-    AidaCliUserAuthoredQuestionPersister, QuestionLink, UserAuthoredQuestionPersister,
+    QuestionLink, StoreUserAuthoredQuestionPersister, UserAuthoredQuestionPersister,
 };
 use crate::strategy::{
     assist_user_question, DeterministicNextQuestionStrategy, LlmNextQuestionStrategy,
@@ -183,8 +183,8 @@ fn build_strategy(backend: LlmBackend) -> Box<dyn NextQuestionStrategy> {
 
 /// Public entry point for the standalone `quizdom question add` command.
 ///
-/// Wires the real AIDA-backed [`AidaCliQuestionBank`] and
-/// [`AidaCliUserAuthoredQuestionPersister`] plus an LLM strategy, then defers to
+/// Wires the real AIDA-backed [`StoreQuestionBank`] and
+/// [`StoreUserAuthoredQuestionPersister`] plus an LLM strategy, then defers to
 /// the [`question_add`] seam. Reads prompts from `input` (so piped / non-TTY
 /// stdin works) and writes to `output`.
 // trace:STORY-87 | ai:claude
@@ -194,12 +194,12 @@ pub fn run_question_add(
     mut output: impl Write,
 ) -> Result<()> {
     let config = QuestionAddConfig::parse(args)?;
-    let bank = AidaCliQuestionBank::default();
+    let bank = StoreQuestionBank::default();
     // The dedup search is pure over the in-memory bank snapshot; an empty bank
     // (or an AIDA hiccup) simply yields no duplicate.
     let existing = bank.all_questions().unwrap_or_default();
     let strategy = build_strategy(config.backend);
-    let persister = AidaCliUserAuthoredQuestionPersister::default();
+    let persister = StoreUserAuthoredQuestionPersister::default();
     let mut reader = BufReader::new(input);
     question_add(
         &config,

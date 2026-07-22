@@ -51,15 +51,15 @@ mod synopsis;
 mod transcript;
 
 pub use bank::{
-    find_near_duplicate, rewrite_quality_tags, AidaCliQuestionBank, NearDuplicate, QuestionBank,
+    find_near_duplicate, rewrite_quality_tags, NearDuplicate, QuestionBank, StoreQuestionBank,
     DEDUP_SIMILARITY_THRESHOLD,
 };
 pub use contradiction::{
     beliefs_from_session_log, detect_graph_contradictions, detect_semantic_contradictions,
-    merge_contradictions, run_contradictions, AdoptedBelief,
-    AidaCliContradictionResolutionPersister, AidaCliContradictsEdges, Contradiction,
-    ContradictionKind, ContradictionResolution, ContradictionResolutionPersister, ContradictsEdges,
-    NoopContradictionResolutionPersister,
+    merge_contradictions, run_contradictions, AdoptedBelief, Contradiction, ContradictionKind,
+    ContradictionResolution, ContradictionResolutionPersister, ContradictsEdges,
+    NoopContradictionResolutionPersister, StoreContradictionResolutionPersister,
+    StoreContradictsEdges,
 };
 // trace:STORY-205 | ai:claude
 pub use db_init::{run_db_init, DEFAULT_DOLT_DB_PATH, DOLT_SCHEMA_SQL};

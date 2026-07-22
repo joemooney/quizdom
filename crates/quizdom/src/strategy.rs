@@ -335,7 +335,7 @@ impl WeightSampler for XorShiftWeightSampler {
 // trace:STORY-67 | ai:claude
 /// Selects the next question by sampling eligible `begets`-successors in
 /// proportion to their weight, so heavier questions surface more often while
-/// lighter ones still get a turn and variety emerges (STORY-67). `weight:0`
+/// lighter ones still get a turn and variety emerges (STORY-67). Zero-weight
 /// successors are never selected, and STORY-48 from-answer filtering is honored
 /// first (only the highest relevance tier participates). The `WeightSampler`
 /// seam keeps the choice deterministic under test.
@@ -510,7 +510,7 @@ fn relevant_successors(
 // trace:STORY-67 | ai:claude
 /// Successors eligible for *weighted-probabilistic* selection: the highest
 /// available STORY-48 relevance tier only — so answer-conditioned branches keep
-/// strict precedence over unconditional follow-ons — with every `weight:0`
+/// strict precedence over unconditional follow-ons — with every zero-weight
 /// successor excluded, since a zero-weight question is never auto-selected.
 /// Ordered by id so a given roll maps to a stable choice.
 fn eligible_for_sampling(
