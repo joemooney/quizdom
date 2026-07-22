@@ -5276,5 +5276,42 @@ operations:
     req_type: Task
     status: Draft
     priority: Medium
-clock: 465
+- id: 019f88cc-b312-7a91-8eb4-a3aad444728f
+  target_id: 019f88cc-b0fd-7ac1-8745-40ae2a628d91
+  author: aida
+  node_id: ''
+  lamport: 466
+  timestamp: 2026-07-22T07:49:04.402528849Z
+  kind: !Create
+    title: Extend BUG-277's real-path tripwire to db-init / db-migrate / dolt_store tests
+    description: |
+      BUG-277 added `guard_test_paths` (crates/quizdom/src/db_backup.rs), a
+      `#[cfg(test)]` tripwire that panics unless db-backup / db-restore are aimed
+      under the system temp directory. It closes the exact accident that caused the
+      bug — a run that resolved the DEFAULT path and wrote to the user's real
+      backup.
+
+      The same accident is still reachable through the other Dolt commands, which
+      have no such guard:
+
+        - db_init.rs      (`run_db_init` resolves `resolve_dolt_path()`)
+        - db_migrate.rs   (same chain, and it bulk-imports)
+        - dolt_store.rs   (`domain_store_from_config` at :554)
+
+      Today every test in those modules does pin its own temp dir, so nothing is
+      broken — this is about making that structural rather than conventional. A
+      db-migrate test that forgot to pin would import over the real data/dolt, which
+      is a strictly worse outcome than the backup poisoning BUG-277 was filed for.
+
+      Shape: lift `guard_test_paths` out of db_backup.rs into a shared home (it
+      takes two paths and asserts both are under `std::env::temp_dir()`) and call
+      it from `db_init` / `db_migrate` / the store constructor. Half an hour,
+      and it retires a whole class of accident.
+
+      Raised by the implementer while working BUG-277.
+      Branch: bug-277  ·  Commit: 3bf8e0b  (PR link added on merge)
+    req_type: Task
+    status: Draft
+    priority: Medium
+clock: 466
 node_id: ''
