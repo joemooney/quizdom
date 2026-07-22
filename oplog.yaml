@@ -4405,5 +4405,33 @@ operations:
     req_type: Story
     status: Approved
     priority: Medium
-clock: 419
+- id: 019f887a-4c72-7a22-b137-8a927dc72184
+  target_id: 019f887a-480e-7360-86b2-9a3264fbf72e
+  author: aida
+  node_id: ''
+  lamport: 420
+  timestamp: 2026-07-22T06:19:04.178932963Z
+  kind: !Create
+    title: 'Dolt store hardening: byte-aware batch chunking, documented neighbor ordering, weight:0 symmetry, recursion depth'
+    description: |-
+      Bundles TASK-248, TASK-221, TASK-223, TASK-224 — all inside dolt_store.rs (plus its tests), file-disjoint from the config and hygiene batches.
+
+      TASK-248: MAX_BATCH_IDS=500 bounds the id COUNT, not the SQL byte length. nodes.tags is VARCHAR(2048), so a worst-case chunk could exceed Linux's 128 KiB MAX_ARG_STRLEN for a single argv element (E2BIG). Real bank is ~45 KB/chunk. Fix: chunk on accumulated byte length as well as id count.
+
+      TASK-221: cross-backend neighbors ordering drift — Dolt orders by created_at (1s granularity) with to_id as tie-break; the retired aida backend returned insertion order. Now that Dolt is the only backend this is a guarantee to DOCUMENT and TEST rather than reconcile: state the ordering contract on the trait method and cover the same-second tie-break.
+
+      TASK-223: weight:0 tag asymmetry — dolt fetch_node drops the tag that split_weight_tag consumed, so a node with weight:0 round-trips differently from one with weight:5.
+
+      TASK-224: reachable inherits Dolt's cte_max_recursion_depth (~1000), so a very deep begets chain errors with a raw SQL message. Fix: surface a clear quizdom-level error naming the depth limit rather than leaking the engine text.
+
+      ## Acceptance
+      - Batch chunking splits on accumulated bytes AND id count; a synthetic wide-tags batch that would exceed MAX_ARG_STRLEN is split and succeeds (test).
+      - neighbors/neighbors_many ordering contract documented on the trait and covered by a same-second tie-break test.
+      - weight:0 and weight:N round-trip symmetrically through fetch_node/fetch_nodes (test).
+      - Exceeding CTE recursion depth produces a quizdom error naming the limit, not a raw engine string (test).
+      - cargo test green; ignored real_dolt tests still green; no new clippy warnings.
+    req_type: Story
+    status: Approved
+    priority: Medium
+clock: 420
 node_id: ''
