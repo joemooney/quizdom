@@ -30,7 +30,23 @@
 //!
 //! Belief-NEUTRAL throughout: a setting decides HOW input flows / what chrome is
 //! shown, never WHAT is asked or which belief is true.
+//!
+//! ## The file is shared, so this module owns the whole of it (STORY-258)
+//!
+//! Keys outside the `/settings` surface live in the same file — `dolt_path`
+//! selects the Dolt domain-graph repo. Two consequences, both handled here so
+//! no second reader/writer of the file can drift from this one:
+//!
+//! * **Foreign keys survive a save.** [`Settings::to_toml_merged`] rewrites the
+//!   modelled keys IN PLACE and keeps every other line verbatim, so saving from
+//!   `/settings` no longer drops a hand-added `dolt_path` (TASK-218).
+//! * **One parser, one resolution chain.** [`config_value`] and
+//!   [`Settings::from_toml`] share [`config_entry`], so the same file resolves
+//!   identically whichever reader sees it (TASK-222), and
+//!   [`resolve_dolt_path`] is the single env/settings/default chain the runtime
+//!   store and the `db-init` / `db-migrate` subcommands all call (TASK-228).
 
+use crate::db_init::DEFAULT_DOLT_DB_PATH;
 use crate::editor::{editor_model_from_editor, EditorModel};
 use crate::strategy::SessionMode;
 use std::env;
@@ -135,6 +151,15 @@ impl Default for Settings {
         }
     }
 }
+
+/// The config keys [`Settings`] models, in write order. Every OTHER key in the
+/// file is foreign — read by someone else (`dolt_path`) or written by a future
+/// version — and [`Settings::to_toml_merged`] preserves it untouched.
+const MODELLED_KEYS: [&str; 4] = ["editor", "mouse", "score", "mode"];
+
+/// The comment line at the top of a freshly written config file.
+const CONFIG_HEADER: &str =
+    "# quizdom settings (STORY-194) — edited live by /settings; other keys are preserved\n";
 
 /// The four settings the `/settings` panel rows toggle/cycle in place.
 #[derive(Debug, Clone, Copy, Eq, PartialEq)]
@@ -259,38 +284,87 @@ impl Settings {
         out
     }
 
-    /// Serialize to the small flat config schema (`key = value` per line). Only
-    /// the KNOWN keys are written; loading ignores any others (forward-compatible).
+    /// Serialize to the small flat config schema (`key = value` per line) as a
+    /// FRESH file. Only the modelled keys are written — use
+    /// [`Settings::to_toml_merged`] when a file already exists, or the keys it
+    /// carries that this struct does not model are lost.
     /// Takes `self` by value ([`Settings`] is `Copy`).
     pub(crate) fn to_toml(self) -> String {
-        format!(
-            "# quizdom settings (STORY-194) — edited live by /settings; unknown keys are ignored\n\
-             editor = \"{}\"\n\
-             mouse = {}\n\
-             score = {}\n\
-             mode = \"{}\"\n",
-            self.editor.as_str(),
-            self.mouse,
-            self.score,
-            self.mode.as_str(),
-        )
+        let mut out = String::from(CONFIG_HEADER);
+        for key in MODELLED_KEYS {
+            out.push_str(&self.rendered_line(key));
+        }
+        out
+    }
+
+    // trace:TASK-218 | ai:claude
+    /// Serialize OVER the `existing` file text: each modelled key is rewritten
+    /// IN PLACE with the current value, and every other line — comments, blanks,
+    /// and foreign keys like `dolt_path` — is kept verbatim. Modelled keys the
+    /// file omits are appended. An empty (or absent) file degrades to
+    /// [`Settings::to_toml`].
+    ///
+    /// This is what keeps `/settings` from silently dropping a hand-added
+    /// `dolt_path` line: STORY-194's schema promises unknown keys are ignored on
+    /// LOAD, and the save path has to honour the other half of that bargain.
+    pub(crate) fn to_toml_merged(self, existing: &str) -> String {
+        if existing.trim().is_empty() {
+            return self.to_toml();
+        }
+        let mut rewritten: Vec<String> = Vec::with_capacity(MODELLED_KEYS.len());
+        let mut out = String::new();
+        for line in existing.lines() {
+            let modelled = config_entry(line)
+                .map(|(key, _)| key)
+                .filter(|key| MODELLED_KEYS.contains(&key.as_str()));
+            match modelled {
+                // A modelled key: rewrite the first occurrence, drop any later
+                // duplicate — `from_toml` is last-wins, so leaving a stale
+                // duplicate behind would resurrect it on the next load.
+                Some(key) => {
+                    if !rewritten.contains(&key) {
+                        out.push_str(&self.rendered_line(&key));
+                        rewritten.push(key);
+                    }
+                }
+                None => {
+                    out.push_str(line);
+                    out.push('\n');
+                }
+            }
+        }
+        for key in MODELLED_KEYS {
+            if !rewritten.iter().any(|written| written == key) {
+                out.push_str(&self.rendered_line(key));
+            }
+        }
+        out
+    }
+
+    /// The `key = value` line for one modelled key — the single renderer behind
+    /// both [`Settings::to_toml`] and [`Settings::to_toml_merged`], so a fresh
+    /// write and an in-place rewrite can never format a value differently.
+    fn rendered_line(self, key: &str) -> String {
+        match key {
+            "editor" => format!("editor = \"{}\"\n", self.editor.as_str()),
+            "mouse" => format!("mouse = {}\n", self.mouse),
+            "score" => format!("score = {}\n", self.score),
+            "mode" => format!("mode = \"{}\"\n", self.mode.as_str()),
+            // Unreachable for MODELLED_KEYS; a nothing-line is the safe degrade.
+            _ => String::new(),
+        }
     }
 
     /// Parse the config schema, IGNORING unknown keys and unparseable values
     /// (forward-compatible: a newer file with extra keys still loads). Any key the
     /// file omits keeps the [`Default`] value, so a partial/old file round-trips.
+    /// A repeated key is LAST-wins — [`config_value`] matches that.
     pub(crate) fn from_toml(text: &str) -> Self {
         let mut settings = Settings::default();
         for line in text.lines() {
-            let line = line.trim();
-            if line.is_empty() || line.starts_with('#') {
-                continue;
-            }
-            let Some((raw_key, raw_value)) = line.split_once('=') else {
+            let Some((key, value)) = config_entry(line) else {
                 continue;
             };
-            let key = raw_key.trim().to_ascii_lowercase();
-            let value = unquote(raw_value.trim());
             match key.as_str() {
                 "editor" => {
                     if let Some(choice) = EditorChoice::parse(&value) {
@@ -318,6 +392,88 @@ impl Settings {
         }
         settings
     }
+}
+
+// trace:TASK-222 | ai:claude
+/// Parse ONE line of the flat config schema into a normalised
+/// `(key, value)` — key lowercased, value unquoted. Comments, blank lines and
+/// lines without an `=` yield `None`.
+///
+/// The single line-parser for this file: both [`Settings::from_toml`] and
+/// [`config_value`] go through it, so `Store = "dolt"` and `store = dolt`
+/// cannot resolve differently depending on which reader looks. (Before
+/// TASK-222 the two readers disagreed on case AND on quote stripping —
+/// `config_value` used `trim_matches('"')`, which also ate unmatched and
+/// repeated quotes.)
+fn config_entry(line: &str) -> Option<(String, String)> {
+    let line = line.trim();
+    if line.is_empty() || line.starts_with('#') {
+        return None;
+    }
+    let (raw_key, raw_value) = line.split_once('=')?;
+    Some((
+        raw_key.trim().to_ascii_lowercase(),
+        unquote(raw_value.trim()),
+    ))
+}
+
+// trace:TASK-222 | ai:claude
+/// Read one key out of the flat config schema, matching [`Settings::from_toml`]
+/// exactly: case-insensitive keys, matched-pair unquoting, and LAST occurrence
+/// wins on a repeated key. Returns `None` when the key is absent.
+pub(crate) fn config_value(text: &str, key: &str) -> Option<String> {
+    let key = key.to_ascii_lowercase();
+    text.lines()
+        .filter_map(config_entry)
+        .rfind(|(name, _)| *name == key)
+        .map(|(_, value)| value)
+}
+
+// trace:TASK-228 | ai:claude
+/// THE resolution chain for the Dolt domain-graph repo path:
+/// `QUIZDOM_DOLT_PATH` (env) > `dolt_path` (settings.toml) >
+/// [`DEFAULT_DOLT_DB_PATH`]. Blank values fall through to the next tier.
+///
+/// One helper, three callers — the runtime store
+/// ([`crate::domain_store_from_config`]) plus the `db-init` / `db-migrate`
+/// subcommands. The CLI `--path` flag sits ON TOP: each subcommand's arg parser
+/// takes this as its default and lets `--path` override it, so the full
+/// precedence is flag > env > settings > default. Before TASK-228 the two
+/// subcommands skipped the middle two tiers entirely, so
+/// `QUIZDOM_DOLT_PATH=/tmp/x quizdom db-init` bootstrapped `data/dolt` and the
+/// next session read `/tmp/x` and found nothing.
+pub(crate) fn resolve_dolt_path() -> PathBuf {
+    dolt_path_from(
+        env::var("QUIZDOM_DOLT_PATH").ok().as_deref(),
+        &config_text(),
+    )
+}
+
+/// The pure tier-selection behind [`resolve_dolt_path`], split from the env and
+/// file reads so it is testable without touching the process environment (the
+/// same pattern as [`EditorChoice::resolve`]).
+fn dolt_path_from(env_path: Option<&str>, config: &str) -> PathBuf {
+    fn non_blank(value: &str) -> Option<PathBuf> {
+        let trimmed = value.trim();
+        (!trimmed.is_empty()).then(|| PathBuf::from(trimmed))
+    }
+    env_path
+        .and_then(non_blank)
+        .or_else(|| {
+            config_value(config, "dolt_path")
+                .as_deref()
+                .and_then(non_blank)
+        })
+        .unwrap_or_else(|| PathBuf::from(DEFAULT_DOLT_DB_PATH))
+}
+
+/// The settings file's text, or empty when it is absent / unreadable — the
+/// read half of [`resolve_dolt_path`], kept separate so the selection above
+/// stays pure.
+fn config_text() -> String {
+    config_path()
+        .and_then(|path| std::fs::read_to_string(path).ok())
+        .unwrap_or_default()
 }
 
 /// The platform config path for the settings file:
@@ -351,10 +507,17 @@ pub(crate) fn load_or_seed() -> Settings {
     }
 }
 
+// trace:TASK-218 | ai:claude
 /// SAVE the settings to the config file (best-effort, creating the parent dir).
 /// Returns `Ok(())` even when there is no config path (nothing to persist to);
 /// an IO error is returned so an interactive caller could surface it, but callers
 /// generally treat persistence as best-effort.
+///
+/// The write MERGES over whatever is already on disk
+/// ([`Settings::to_toml_merged`]) rather than round-tripping the file through
+/// the four modelled keys — otherwise the first `/settings` toggle of a session
+/// would silently delete a hand-added `dolt_path` line and repoint the app at
+/// `data/dolt`.
 pub(crate) fn save(settings: &Settings) -> std::io::Result<()> {
     let Some(path) = config_path() else {
         return Ok(());
@@ -362,7 +525,8 @@ pub(crate) fn save(settings: &Settings) -> std::io::Result<()> {
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent)?;
     }
-    std::fs::write(path, settings.to_toml())
+    let existing = std::fs::read_to_string(&path).unwrap_or_default();
+    std::fs::write(path, settings.to_toml_merged(&existing))
 }
 
 /// First-run seed: editor choice inferred from `$VISUAL`/`$EDITOR`, everything
@@ -513,6 +677,134 @@ mod tests {
         // Omitted keys keep the defaults.
         assert!(!s.score);
         assert_eq!(s.mode, SessionMode::default());
+    }
+
+    // trace:TASK-218 | ai:claude — the SAVE path preserves every key the settings
+    // surface does not model. A hand-added `dolt_path` (plus its comment) must
+    // survive a `/settings` toggle, or the next launch silently repoints at
+    // `data/dolt`; the modelled keys are still rewritten with current values.
+    #[test]
+    fn save_preserves_keys_the_settings_surface_does_not_model() {
+        let existing = "# hand-edited\n\
+                        editor = \"emacs\"\n\
+                        # the domain graph lives on the big disk\n\
+                        dolt_path = \"/mnt/data/dolt\"\n\
+                        store = \"dolt\"\n\
+                        mouse = on\n";
+        let toggled = Settings {
+            editor: EditorChoice::Vim,
+            mouse: false,
+            score: true,
+            mode: SessionMode::Debate,
+        };
+
+        let saved = toggled.to_toml_merged(existing);
+
+        // The foreign keys and comments ride through untouched, in place.
+        assert!(saved.contains("dolt_path = \"/mnt/data/dolt\""), "{saved}");
+        assert!(saved.contains("store = \"dolt\""), "{saved}");
+        assert!(saved.contains("# hand-edited"), "{saved}");
+        assert!(
+            saved.contains("# the domain graph lives on the big disk"),
+            "{saved}"
+        );
+        // ...and the resolver still reads the same path back out of the file.
+        assert_eq!(
+            dolt_path_from(None, &saved),
+            PathBuf::from("/mnt/data/dolt")
+        );
+        // The modelled keys were rewritten, not appended alongside the old ones.
+        assert_eq!(Settings::from_toml(&saved), toggled);
+        assert!(!saved.contains("editor = \"emacs\""), "{saved}");
+        assert_eq!(saved.matches("editor =").count(), 1, "{saved}");
+
+        // A save-after-load round trip is a fixed point: nothing decays on the
+        // second write either.
+        let again = Settings::from_toml(&saved).to_toml_merged(&saved);
+        assert_eq!(again, saved);
+    }
+
+    // trace:TASK-218 | ai:claude — with no file yet (or an empty one) the merge
+    // degrades to a plain fresh write, header and all.
+    #[test]
+    fn merged_save_of_an_empty_file_is_a_fresh_write() {
+        let settings = Settings::default();
+        assert_eq!(settings.to_toml_merged(""), settings.to_toml());
+        assert_eq!(settings.to_toml_merged("\n  \n"), settings.to_toml());
+        assert!(settings.to_toml().starts_with('#'));
+    }
+
+    // trace:TASK-222 | ai:claude — the two readers of this file agree: keys are
+    // case-insensitive, only a MATCHED quote pair is stripped, and a repeated key
+    // is last-wins. Before TASK-222 `config_value` compared keys exactly and used
+    // `trim_matches('"')`, so `Dolt_Path` was invisible to it and `""x""` parsed
+    // differently in each reader.
+    #[test]
+    fn config_value_matches_from_toml_on_case_quotes_and_repeats() {
+        let text = "Editor = \"VIM\"\nDOLT_PATH = \"/tmp/graph\"\n";
+        assert_eq!(
+            config_value(text, "dolt_path").as_deref(),
+            Some("/tmp/graph")
+        );
+        assert_eq!(
+            config_value(text, "DOLT_PATH").as_deref(),
+            Some("/tmp/graph")
+        );
+        // Same file, same case-insensitivity in the settings loader.
+        assert_eq!(Settings::from_toml(text).editor, EditorChoice::Vim);
+
+        // Unmatched / doubled quotes survive intact in BOTH readers.
+        let odd = "editor = \"vim\ndolt_path = \"\"/tmp/x\"\"\n";
+        assert_eq!(
+            config_value(odd, "dolt_path").as_deref(),
+            Some("\"/tmp/x\"")
+        );
+        assert_eq!(Settings::from_toml(odd).editor, EditorChoice::Auto);
+
+        // A repeated key is last-wins in both.
+        let repeated = "dolt_path = /first\ndolt_path = /second\nmouse = on\nmouse = off\n";
+        assert_eq!(
+            config_value(repeated, "dolt_path").as_deref(),
+            Some("/second")
+        );
+        assert!(!Settings::from_toml(repeated).mouse);
+
+        // Comments and unparseable lines are skipped, not matched.
+        assert_eq!(
+            config_value("# dolt_path = /nope\nno-equals-here\n", "dolt_path"),
+            None
+        );
+    }
+
+    // trace:TASK-228 | ai:claude — THE resolution chain: env beats the settings
+    // key beats the compiled default, and a blank tier falls through instead of
+    // resolving to an empty path.
+    #[test]
+    fn dolt_path_chain_is_env_then_settings_then_default() {
+        let config = "editor = \"vim\"\ndolt_path = \"/tmp/graph\"\n";
+        assert_eq!(
+            dolt_path_from(None, ""),
+            PathBuf::from(DEFAULT_DOLT_DB_PATH)
+        );
+        assert_eq!(dolt_path_from(None, config), PathBuf::from("/tmp/graph"));
+        assert_eq!(
+            dolt_path_from(Some("/env/path"), config),
+            PathBuf::from("/env/path")
+        );
+        // Surrounding whitespace is trimmed off the env value.
+        assert_eq!(
+            dolt_path_from(Some("  /env/path  "), config),
+            PathBuf::from("/env/path")
+        );
+        // A blank tier is not a selection — fall through to the next one.
+        assert_eq!(
+            dolt_path_from(Some("   "), config),
+            PathBuf::from("/tmp/graph")
+        );
+        assert_eq!(
+            dolt_path_from(Some(""), "dolt_path = \"\"\n"),
+            PathBuf::from(DEFAULT_DOLT_DB_PATH)
+        );
     }
 
     // trace:STORY-194 | ai:claude — the printed list (headless panel degrade) shows

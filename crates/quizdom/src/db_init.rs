@@ -63,8 +63,15 @@ struct DbInitConfig {
 }
 
 impl DbInitConfig {
-    fn parse(args: impl IntoIterator<Item = String>) -> Result<Self> {
-        let mut path = PathBuf::from(DEFAULT_DOLT_DB_PATH);
+    // trace:TASK-228 | ai:claude
+    /// Parse the argv tail over a `default_path` the caller resolved through
+    /// [`crate::settings::resolve_dolt_path`] (env > settings > compiled
+    /// default) — so `--path` stays the top-priority override while an unflagged
+    /// run targets the SAME repo the runtime store will later read. Taking the
+    /// default as a parameter keeps this pure: the tests pin argument handling
+    /// without the ambient environment leaking in.
+    fn parse(args: impl IntoIterator<Item = String>, default_path: PathBuf) -> Result<Self> {
+        let mut path = default_path;
         let mut dolt_command = "dolt".to_string();
         let mut args = args.into_iter().peekable();
 
@@ -97,12 +104,16 @@ fn next_arg(args: &mut impl Iterator<Item = String>, name: &str) -> Result<Strin
 }
 
 fn usage() -> String {
-    format!("usage: quizdom db-init [--path {DEFAULT_DOLT_DB_PATH}] [--dolt dolt]")
+    format!(
+        "usage: quizdom db-init [--path <dir>] [--dolt dolt]\n\
+         (--path defaults to $QUIZDOM_DOLT_PATH, else dolt_path in settings.toml, \
+         else {DEFAULT_DOLT_DB_PATH})"
+    )
 }
 
 /// Entry point for `quizdom db-init`.
 pub fn run_db_init(args: impl IntoIterator<Item = String>, output: &mut impl Write) -> Result<()> {
-    let config = DbInitConfig::parse(args)?;
+    let config = DbInitConfig::parse(args, crate::settings::resolve_dolt_path())?;
     let runner = SystemDoltRunner {
         command: config.dolt_command.clone(),
     };
@@ -276,18 +287,28 @@ mod tests {
 
     #[test]
     fn unknown_argument_is_a_usage_error() {
-        let result = DbInitConfig::parse(["db-init".to_string(), "--bogus".to_string()]);
+        let result = DbInitConfig::parse(
+            ["db-init".to_string(), "--bogus".to_string()],
+            PathBuf::from(DEFAULT_DOLT_DB_PATH),
+        );
         assert!(matches!(result, Err(QuizdomError::Usage(_))));
     }
 
+    // trace:TASK-228 | ai:claude — `--path` overrides the resolved default; an
+    // unflagged run keeps whatever the env/settings chain handed the parser.
     #[test]
     fn parse_reads_path_and_dolt_overrides() {
         let config = DbInitConfig::parse(
             ["db-init", "--path", "/tmp/x", "--dolt", "dolt2"].map(String::from),
+            PathBuf::from("/from/env"),
         )
         .unwrap();
-        assert_eq!(config.path, PathBuf::from("/tmp/x"));
+        assert_eq!(config.path, PathBuf::from("/tmp/x"), "--path wins over env");
         assert_eq!(config.dolt_command, "dolt2");
+
+        let defaulted =
+            DbInitConfig::parse(["db-init".to_string()], PathBuf::from("/from/env")).unwrap();
+        assert_eq!(defaulted.path, PathBuf::from("/from/env"));
     }
 
     /// End-to-end acceptance check against a real dolt binary: init a fresh

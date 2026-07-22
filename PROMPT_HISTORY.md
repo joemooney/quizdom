@@ -160,3 +160,51 @@ clippy warnings.
 
 **Not done, deliberately.** No `dolt sql-server` — ADR-203 keeps CLI spawns;
 this story was about spawn *count*, not the spawn *mechanism*.
+
+## 2026-07-21 — STORY-258: one path-resolution chain, and a settings save that stops eating keys
+
+**Request.** Headless `--auto-complete` drain of STORY-258 (bundling TASK-228,
+TASK-218, TASK-222 — the settings/path-resolution lane of EPIC-249).
+
+**The three defects were one defect wearing three hats:** `settings.toml` had
+two readers and one writer, and none of them agreed about it.
+
+- `db-init` / `db-migrate` resolved the Dolt repo from `--path` or the compiled
+  default only, while the runtime store honored `QUIZDOM_DOLT_PATH` and
+  `dolt_path`. `QUIZDOM_DOLT_PATH=/tmp/x quizdom db-init` bootstrapped
+  `data/dolt`; the next session read `/tmp/x` and found nothing (TASK-228).
+- `settings::save` serialized only its four modelled keys, so the first
+  `/settings` toggle of a session silently deleted a hand-added `dolt_path`
+  line — STORY-194 promised unknown keys are ignored on *load*, and the save
+  path never honored the other half of that bargain (TASK-218).
+- `dolt_store::config_value` compared keys case-sensitively and stripped quotes
+  with `trim_matches('"')`, where `Settings::from_toml` lowercased keys and
+  required a matched pair. `Dolt_Path = ...` was visible to one reader and
+  invisible to the other (TASK-222).
+
+**Fix.** `settings.rs` now owns the whole file. One line-parser (`config_entry`
+— lowercase key, matched-pair unquote) backs both `from_toml` and
+`config_value`, so the two readers cannot diverge on case, quotes, or
+repeated-key precedence (both are last-wins). `Settings::to_toml_merged`
+rewrites the modelled keys *in place* over the existing text and keeps every
+other line verbatim — comments, blanks, foreign keys — so `save` merges instead
+of round-tripping. `resolve_dolt_path()` is the single env > settings > default
+chain; `domain_store_from_config`, `db-init`, and `db-migrate` all call it, with
+`--path` layered on top by each subcommand's arg parser (the parsers take the
+resolved default as a *parameter*, which keeps them pure and their tests free of
+ambient env). `dolt_store.rs` lost its private copy of both helpers.
+
+**Verified end-to-end, not just in unit tests.** Against the real binary and a
+real `dolt`: `QUIZDOM_DOLT_PATH=<p> quizdom db-init` created `<p>`; `--path`
+beat the env var; a `dolt_path` in a temp `XDG_CONFIG_HOME` settings file was
+honored when neither was set; `db-migrate` named the resolved repo in its
+"no Dolt repo at ..." error under both tiers. Then a real headless session
+(`/settings set mouse off` against a scratch copy of the domain graph) left the
+hand-written comment, `dolt_path`, and `store` lines intact while flipping
+`mouse` in place — the exact round-trip TASK-218 filed.
+
+**Tests.** 587 lib tests green (4 new in `settings.rs`: the foreign-key-preserving
+save plus its fixed-point second write, the empty-file degrade, reader agreement
+on case/quotes/repeats, and the full resolution chain including blank-tier
+fall-through; the two subcommand parse tests now pin `--path` over a resolved
+default). No new clippy warnings.
