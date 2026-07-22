@@ -1,0 +1,33 @@
+id: 019f8a68-9faf-7ba1-9a0d-42b17e3f82de
+spec_id: TASK-297
+agreed_id: TASK-297
+title: commit_all's blanket 'dolt add -A' absorbs hand-made edits into a quizdom-labelled commit
+description: |
+  `commit_all` (crates/quizdom/src/db_init.rs:174) stages the entire working set
+  with `dolt add -A` before committing under a message that describes only what
+  quizdom itself did.
+
+  This PR's own documentation makes the collision concrete: db_backup.rs:33-40
+  now states that data/dolt "is a database a user can also write to directly"
+  and that a hand-run `dolt sql -q 'UPDATE nodes ...'` leaves changes in the
+  working set. If the user then runs `quizdom db-migrate`, their edit is
+  committed as "quizdom db-migrate: import N nodes / M edges" — attributed to a
+  command that did not make it.
+
+  Nothing is lost (the edit is committed, which beats the pre-STORY-291 state of
+  sitting untracked), so this is cosmetic. If it is worth tightening, the options
+  are to scope the staging to the tables the command actually wrote, or to
+  mention foreign working-set changes in the commit body.
+
+  Raised in review of PR-98: https://github.com/joemooney/quizdom/pull/98
+status: Draft
+priority: Medium
+owner: ''
+feature: Uncategorized
+created_at: 2026-07-22T15:19:00.271582846Z
+modified_at: 2026-07-22T15:19:00.271582846Z
+req_type: Task
+tags:
+- dolt
+- from-review:PR-98
+- severity:cosmetic
