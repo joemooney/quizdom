@@ -208,3 +208,54 @@ save plus its fixed-point second write, the empty-file degrade, reader agreement
 on case/quotes/repeats, and the full resolution chain including blank-tier
 fall-through; the two subcommand parse tests now pin `--path` over a resolved
 default). No new clippy warnings.
+
+## 2026-07-21 — STORY-259: Dolt store hardening (the four dolt_store review findings)
+
+**Request.** `/aida-pickup STORY-259` — the file-disjoint `dolt_store.rs` bundle
+from EPIC-249: TASK-248, TASK-221, TASK-223, TASK-224.
+
+**The one with teeth (TASK-248).** `MAX_BATCH_IDS = 500` said in its doc comment
+that it "bounds the SQL text handed to a single `dolt` spawn", but it bounds the
+id *count* — and for `update_weights` the ids are not the dominant term. Each
+`CASE` arm carries a whole `tags` column, and `nodes.tags` is `VARCHAR(2048)`, so
+a worst-case 500-row chunk is ~1 MB of SQL handed to `dolt sql -q` as **one argv
+element**. Linux caps a single argv element at `MAX_ARG_STRLEN` = 128 KiB — a
+separate and far lower limit than the ~2 MB `ARG_MAX` for the whole command line
+— and blowing it fails `execve` with `E2BIG`: an opaque spawn error, not a SQL
+error. The real 61-question bank is already ~45 KB per statement, so the headroom
+was ~3x on payload, not the ~8x the id count implied.
+
+**Fix.** `chunk_by_sql_bytes` splits on accumulated SQL bytes *and* id count,
+against `db_migrate`'s existing `SQL_BATCH_BUDGET` (64 KiB) — promoted to
+`pub(crate)` so the importer and the runtime store share one budget with one
+rationale rather than growing two. `update_weights` now builds each row's `CASE`
+arms *before* chunking, so the chunker measures the SQL it will actually spawn
+instead of guessing from the id count. An item wider than the whole budget still
+ships alone, matching the importer's chunker rather than looping forever.
+
+**The three parity findings.** TASK-221 was a guarantee to document, not
+reconcile, now that Dolt is the only backend: `neighbors` returns oldest-first by
+`created_at` with ties broken by `to_id` *lexically*, and since `created_at` is a
+1-second `TIMESTAMP`, a batch of edges written together is ordered entirely by the
+tie-break — `Q-10` before `Q-2`. That is now on the trait and in
+`graph-schema.md`. TASK-223's `weight:0` asymmetry died with ADR-22's tag
+encoding, so the work was a test that pins the symmetry and fails if tag-encoded
+weight ever comes back. TASK-224: `reachable` inherits Dolt's
+`cte_max_recursion_depth`, so a >1000-hop chain aborted with a raw engine string;
+it now maps to a quizdom error naming the limit and how to raise it, with the
+engine text as a trailing detail, while unrelated dolt failures pass through
+untouched.
+
+**Tests.** 600 workspace tests green. New: the chunker's two caps (count, bytes,
+oversized-alone, empty); a 100-row wide-tags batch proving every spawn stays under
+`MAX_ARG_STRLEN` while every row lands exactly once under a *single* add + commit
+(chunking is a spawn detail, not extra Dolt history); the same-second tie-break;
+the weight round-trip through both read paths; both recursion-depth error paths.
+`real_dolt_full_trait_surface` gained same-second-insert coverage — the edges go
+in as one statement so they genuinely share a `created_at`, which a loop of
+`create_edge` (a dolt commit each) could never stage reliably — plus the weight
+symmetry check. All 3 ignored `real_dolt` tests pass locally against dolt 2.2.1.
+No new clippy warnings.
+
+**Git.** Committed on `story-259`, pushed, PR #94 open against `main`. The four
+tasks and the story stay `in-progress` until it merges.

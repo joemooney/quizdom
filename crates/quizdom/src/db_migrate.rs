@@ -518,9 +518,14 @@ fn run_dolt_sql(dolt: &dyn DoltRunner, path: &Path, sql: &str) -> Result<String>
 }
 
 /// Byte budget per `dolt sql -q` invocation. Linux caps a single argv string
-/// at 128 KiB (`MAX_ARG_STRLEN`); staying well under it leaves headroom for
-/// the rest of the command line.
-const SQL_BATCH_BUDGET: usize = 64 * 1024;
+/// at 128 KiB (`MAX_ARG_STRLEN`) — a separate, much lower limit than the
+/// ~2 MB total `ARG_MAX`, and exceeding it fails `execve` with `E2BIG` rather
+/// than producing a SQL error. Staying well under it leaves headroom for the
+/// rest of the command line.
+///
+/// Shared with [`crate::dolt_store`] (TASK-248), so the migration importer and
+/// the runtime store bound their SQL against one budget with one rationale.
+pub(crate) const SQL_BATCH_BUDGET: usize = 64 * 1024;
 
 /// Pack statements into batches whose joined length stays within `budget`
 /// (a statement larger than the budget still gets its own batch).

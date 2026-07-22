@@ -17,17 +17,57 @@
 //! written through [`crate::store::AidaIntentStore`].
 
 use crate::db_init::{DoltRunner, SystemDoltRunner};
-use crate::db_migrate::sql_quote;
+use crate::db_migrate::{sql_quote, SQL_BATCH_BUDGET};
 use crate::error::{QuizdomError, Result};
 use crate::store::{DomainStore, EdgeKind, NewNode, NodeKind, NodeRecord};
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::PathBuf;
 
 // trace:STORY-244 | ai:claude
-/// How many ids ride in one `IN (...)` list or one batched `UPDATE`. Bounds
-/// the SQL text handed to a single `dolt` spawn, so a bank far larger than
-/// this costs one extra spawn per chunk rather than one per row.
+/// How many ids ride in one `IN (...)` list or one batched `UPDATE`, so a bank
+/// far larger than this costs one extra spawn per chunk rather than one per
+/// row. This is a row-count cap only — what bounds the *SQL text* is
+/// [`SQL_BATCH_BUDGET`], applied alongside it by [`chunk_by_sql_bytes`].
 const MAX_BATCH_IDS: usize = 500;
+
+// trace:TASK-248 | ai:claude
+/// Split `items` into chunks bounded by both caps: at most [`MAX_BATCH_IDS`]
+/// items, and at most [`SQL_BATCH_BUDGET`] bytes of the SQL they will build
+/// (`sql_bytes` per item).
+///
+/// The count cap alone is not enough: for [`DomainStore::update_weights`] the
+/// dominant term is the tags payload, not the ids, and `nodes.tags` is
+/// `VARCHAR(2048)` — so 500 wide rows would be ~1 MB of SQL in a single argv
+/// element, which `execve` refuses with `E2BIG` (an opaque spawn failure, not
+/// a SQL error). Bounding on bytes turns that into one extra spawn.
+///
+/// An item whose own SQL exceeds the budget still ships, alone — matching
+/// [`crate::db_migrate`]'s statement chunker rather than looping forever.
+fn chunk_by_sql_bytes<T>(items: &[T], sql_bytes: impl Fn(&T) -> usize) -> Vec<&[T]> {
+    let mut chunks = Vec::new();
+    let mut start = 0;
+    let mut bytes = 0;
+    for (index, item) in items.iter().enumerate() {
+        let cost = sql_bytes(item);
+        if index > start && (index - start >= MAX_BATCH_IDS || bytes + cost > SQL_BATCH_BUDGET) {
+            chunks.push(&items[start..index]);
+            start = index;
+            bytes = 0;
+        }
+        bytes += cost;
+    }
+    if start < items.len() {
+        chunks.push(&items[start..]);
+    }
+    chunks
+}
+
+// trace:TASK-248 | ai:claude
+/// What one id costs inside an `IN (...)` list: its quoted literal plus the
+/// `, ` joining it to the next.
+fn id_list_bytes(id: &str) -> usize {
+    sql_quote(id).len() + 2
+}
 
 /// The Dolt backend: every operation spawns `dolt` in the domain-graph repo.
 pub struct DoltDomainStore<R = SystemDoltRunner> {
@@ -103,7 +143,8 @@ where
             .into_iter()
             .collect();
         let mut found: BTreeMap<String, NodeRecord> = BTreeMap::new();
-        for chunk in distinct.chunks(MAX_BATCH_IDS) {
+        // trace:TASK-248 | ai:claude — bounded by id count *and* SQL bytes.
+        for chunk in chunk_by_sql_bytes(&distinct, |id| id_list_bytes(id)) {
             for row in self.sql_json(&format!(
                 "SELECT {NODE_COLUMNS} FROM nodes WHERE id IN ({});",
                 sql_id_list(chunk)
@@ -190,6 +231,41 @@ fn node_from_row(row: &serde_json::Map<String, serde_json::Value>) -> NodeRecord
         weight: u32_column(row, "weight"),
         body: string_column(row, "body"),
     }
+}
+
+// trace:TASK-248 | ai:claude
+/// One row's contribution to the batched re-weight `UPDATE`: its quoted id
+/// and the two `CASE` arms naming it. Built ahead of chunking so the chunker
+/// measures real SQL rather than guessing from the id count.
+struct CaseArms {
+    id: String,
+    tag_arm: String,
+    weight_arm: String,
+}
+
+impl CaseArms {
+    /// Everything this row adds to the statement: both arms plus its entry in
+    /// the trailing `IN (...)` list.
+    fn sql_bytes(&self) -> usize {
+        self.tag_arm.len() + self.weight_arm.len() + self.id.len() + 2
+    }
+}
+
+// trace:TASK-224 | ai:claude
+/// Dolt inherits MySQL's `cte_max_recursion_depth`, whose default is 1000
+/// iterations — the ceiling on how deep [`DomainStore::reachable`]'s recursive
+/// CTE can walk before the engine aborts it.
+const CTE_MAX_RECURSION_DEPTH: u32 = 1000;
+
+// trace:TASK-224 | ai:claude
+/// Whether a dolt failure is the recursion-depth abort rather than a real
+/// query error. Matched loosely on purpose: MySQL says "Recursive query
+/// aborted after N iterations", go-mysql-server says the iteration limit was
+/// exceeded, and neither wording is a stable API.
+fn is_cte_depth_failure(message: &str) -> bool {
+    let text = message.to_ascii_lowercase();
+    text.contains("recursi")
+        && (text.contains("depth") || text.contains("iteration") || text.contains("limit"))
 }
 
 // trace:STORY-244 | ai:claude
@@ -311,24 +387,40 @@ where
         self.commit(&format!("quizdom: reweight {id}"))
     }
 
+    // trace:TASK-224 | ai:claude — name the depth limit instead of leaking it.
     /// The STORY-207 multi-hop read: one recursive CTE instead of a per-hop
     /// walk. `UNION` (not `UNION ALL`) deduplicates rows, so the walk
     /// terminates on cyclic graphs — visited-set semantics, sorted results.
+    ///
+    /// Pushing the walk into the engine means inheriting the engine's ceiling:
+    /// a chain longer than [`CTE_MAX_RECURSION_DEPTH`] aborts mid-traversal.
+    /// That is not reachable by the current domain graph, but when it happens
+    /// the caller gets a quizdom error naming the limit and how to raise it,
+    /// not a raw engine string about CTE iterations.
     fn reachable(&self, root: &str, edge: EdgeKind) -> Result<Vec<String>> {
         let kind = edge.as_str();
-        Ok(self
+        let rows = self
             .sql_json(&format!(
                 "WITH RECURSIVE reachable (id) AS (\
-                 SELECT CAST({root} AS CHAR(64)) \
+                 SELECT CAST({quoted_root} AS CHAR(64)) \
                  UNION \
                  SELECT e.to_id FROM edges e JOIN reachable r ON e.from_id = r.id \
                  WHERE e.kind = '{kind}') \
                  SELECT id FROM reachable ORDER BY id;",
-                root = sql_quote(root)
-            ))?
-            .iter()
-            .map(|row| string_column(row, "id"))
-            .collect())
+                quoted_root = sql_quote(root)
+            ))
+            .map_err(|error| match &error {
+                QuizdomError::Dolt(message) if is_cte_depth_failure(message) => {
+                    QuizdomError::Dolt(format!(
+                        "traversal from {root} over {kind} edges exceeded Dolt's recursive-CTE \
+                         depth limit of {CTE_MAX_RECURSION_DEPTH} hops \
+                         (cte_max_recursion_depth); raise that session variable to walk a \
+                         deeper chain. Engine detail: {message}"
+                    ))
+                }
+                _ => error,
+            })?;
+        Ok(rows.iter().map(|row| string_column(row, "id")).collect())
     }
 
     // trace:STORY-244 | ai:claude
@@ -386,7 +478,8 @@ where
         let mut targets: BTreeMap<String, Vec<String>> =
             ids.iter().map(|id| (id.clone(), Vec::new())).collect();
         let distinct: Vec<String> = targets.keys().cloned().collect();
-        for chunk in distinct.chunks(MAX_BATCH_IDS) {
+        // trace:TASK-248 | ai:claude — bounded by id count *and* SQL bytes.
+        for chunk in chunk_by_sql_bytes(&distinct, |id| id_list_bytes(id)) {
             for row in self.sql_json(&format!(
                 "SELECT from_id, to_id FROM edges WHERE from_id IN ({}) AND kind = '{kind}' \
                  ORDER BY from_id, created_at, to_id;",
@@ -401,10 +494,15 @@ where
     }
 
     // trace:STORY-244 | ai:claude
-    /// One multi-row `UPDATE ... CASE id WHEN ...` per [`MAX_BATCH_IDS`] ids,
-    /// then a single add + commit — so re-weighting a whole bank costs three
-    /// spawns instead of three per question. A `CASE` arm per id keeps this a
-    /// single statement, which `dolt sql -r json -q` renders as one document.
+    // trace:TASK-248 | ai:claude — chunked on SQL bytes, not just id count.
+    /// One multi-row `UPDATE ... CASE id WHEN ...` per chunk, then a single
+    /// add + commit — so re-weighting a whole bank costs three spawns instead
+    /// of three per question. A `CASE` arm per id keeps this a single
+    /// statement, which `dolt sql -r json -q` renders as one document.
+    ///
+    /// The arms are built before the chunking so [`chunk_by_sql_bytes`] can
+    /// bound a chunk by the bytes it will actually hand to `dolt`: here the
+    /// tags payload, not the id count, is what can blow past `MAX_ARG_STRLEN`.
     fn update_weights(&self, updates: &[(String, u32, Vec<String>)]) -> Result<()> {
         // Last entry per id wins, matching a loop over update_weight_and_tags.
         let mut latest: BTreeMap<&str, (u32, String)> = BTreeMap::new();
@@ -415,21 +513,28 @@ where
             return Ok(());
         }
         let count = latest.len();
-        let rows: Vec<(&str, (u32, String))> = latest.into_iter().collect();
-        for chunk in rows.chunks(MAX_BATCH_IDS) {
-            let mut tag_arms = String::new();
-            let mut weight_arms = String::new();
-            let mut ids = Vec::with_capacity(chunk.len());
-            for (id, (weight, tags)) in chunk {
+        let rows: Vec<CaseArms> = latest
+            .into_iter()
+            .map(|(id, (weight, tags))| {
                 let quoted = sql_quote(id);
-                tag_arms.push_str(&format!(" WHEN {quoted} THEN {}", sql_quote(tags)));
-                weight_arms.push_str(&format!(" WHEN {quoted} THEN {weight}"));
-                ids.push(*id);
-            }
+                CaseArms {
+                    tag_arm: format!(" WHEN {quoted} THEN {}", sql_quote(&tags)),
+                    weight_arm: format!(" WHEN {quoted} THEN {weight}"),
+                    id: quoted,
+                }
+            })
+            .collect();
+        for chunk in chunk_by_sql_bytes(&rows, CaseArms::sql_bytes) {
+            let tag_arms: String = chunk.iter().map(|row| row.tag_arm.as_str()).collect();
+            let weight_arms: String = chunk.iter().map(|row| row.weight_arm.as_str()).collect();
+            let ids = chunk
+                .iter()
+                .map(|row| row.id.as_str())
+                .collect::<Vec<_>>()
+                .join(", ");
             self.sql_json(&format!(
                 "UPDATE nodes SET tags = CASE id{tag_arms} END, \
-                 weight = CASE id{weight_arms} END WHERE id IN ({});",
-                sql_id_list(&ids)
+                 weight = CASE id{weight_arms} END WHERE id IN ({ids});"
             ))?;
         }
         self.commit(&format!("quizdom: reweight {count} node(s)"))
@@ -549,6 +654,56 @@ mod tests {
         }
     }
 
+    // trace:TASK-223 | ai:claude
+    /// weight 0 and weight N are the same shape on the way out. The
+    /// asymmetry this closes was ADR-22-era: `weight:0` was consumed off the
+    /// tag list on write and then not synthesized back, so an unweighted node
+    /// round-tripped differently from a weighted one. Since STORY-208 the
+    /// weight is a column and tags are only tags — assert that, so a future
+    /// change that reintroduces tag-encoded weight fails here.
+    #[test]
+    fn weight_zero_and_weight_n_round_trip_the_same_shape() {
+        const ROWS: &str = r#"{"rows":[
+            {"id":"Q-0","title":"unweighted","body":"b","tags":"topic:x","weight":0},
+            {"id":"Q-5","title":"weighted","body":"b","tags":"topic:x","weight":5}]}"#;
+        let per_item = store_with(vec![
+            (
+                0,
+                r#"{"rows":[{"id":"Q-0","title":"unweighted","body":"b","tags":"topic:x","weight":0}]}"#,
+                "",
+            ),
+            (
+                0,
+                r#"{"rows":[{"id":"Q-5","title":"weighted","body":"b","tags":"topic:x","weight":5}]}"#,
+                "",
+            ),
+        ]);
+
+        let unweighted = per_item.fetch_node("Q-0").expect("fetch weight-0 node");
+        let weighted = per_item.fetch_node("Q-5").expect("fetch weight-5 node");
+
+        assert_eq!(unweighted.weight, 0);
+        assert_eq!(weighted.weight, 5);
+        assert_eq!(
+            unweighted.tags, weighted.tags,
+            "identical tag columns decode identically at either weight"
+        );
+        assert_eq!(
+            unweighted.tags,
+            ["topic:x".to_string()],
+            "no weight:N synthesized in, none dropped out"
+        );
+
+        // The set-based read decodes both the same way (shared node_from_row).
+        let batched = store_with(vec![(0, ROWS, "")]);
+        assert_eq!(
+            batched
+                .fetch_nodes(&["Q-0".to_string(), "Q-5".to_string()])
+                .expect("batch fetch"),
+            [unweighted, weighted]
+        );
+    }
+
     #[test]
     fn list_node_ids_selects_by_kind() {
         let store = store_with(vec![(0, r#"{"rows":[{"id":"Q-1"},{"id":"Q-2"}]}"#, "")]);
@@ -577,6 +732,37 @@ mod tests {
         assert!(sql.contains("kind = 'begets'"));
     }
 
+    // trace:TASK-221 | ai:claude
+    /// The documented ordering contract: `created_at` is a 1-second TIMESTAMP,
+    /// so same-second edges are ordered entirely by the `to_id` tie-break —
+    /// lexically, which puts `Q-10` ahead of `Q-2`. The clause is what makes
+    /// that true, and the store passes the engine's order through untouched.
+    /// `real_dolt_full_trait_surface` proves it against a real dolt.
+    #[test]
+    fn neighbors_same_second_edges_tie_break_lexically_on_to_id() {
+        let store = store_with(vec![(
+            0,
+            r#"{"rows":[{"to_id":"Q-10"},{"to_id":"Q-2"},{"to_id":"Q-9"}]}"#,
+            "",
+        )]);
+
+        let targets = store
+            .neighbors("Q-1", EdgeKind::Begets)
+            .expect("neighbors should succeed");
+
+        assert_eq!(
+            targets,
+            ["Q-10", "Q-2", "Q-9"].map(String::from),
+            "lexical, not numeric — and not re-sorted by the store"
+        );
+        let calls = store.runner.calls.borrow();
+        assert!(
+            sql_of(&calls[0]).contains("ORDER BY created_at, to_id"),
+            "the tie-break is in the query: {}",
+            sql_of(&calls[0])
+        );
+    }
+
     #[test]
     fn reachable_runs_a_single_recursive_cte() {
         let store = store_with(vec![(
@@ -595,6 +781,49 @@ mod tests {
         let sql = sql_of(&calls[0]);
         assert!(sql.contains("WITH RECURSIVE"));
         assert!(sql.contains("e.kind = 'begets'"));
+    }
+
+    // trace:TASK-224 | ai:claude
+    #[test]
+    fn reachable_names_the_recursion_depth_limit_instead_of_leaking_it() {
+        let store = store_with(vec![(
+            1 << 8,
+            "",
+            "error analyzing query: recursive query aborted after 1001 iterations; \
+             try increasing @@cte_max_recursion_depth",
+        )]);
+
+        match store.reachable("Q-1", EdgeKind::Begets) {
+            Err(QuizdomError::Dolt(message)) => {
+                assert!(message.contains("Q-1"), "names the root: {message}");
+                assert!(
+                    message.contains("cte_max_recursion_depth"),
+                    "names the limit: {message}"
+                );
+                assert!(
+                    message.contains(&CTE_MAX_RECURSION_DEPTH.to_string()),
+                    "names the depth: {message}"
+                );
+            }
+            other => panic!("expected a depth-limit error, got {other:?}"),
+        }
+    }
+
+    // trace:TASK-224 | ai:claude
+    #[test]
+    fn reachable_leaves_an_unrelated_dolt_failure_alone() {
+        let store = store_with(vec![(1 << 8, "", "table 'edges' does not exist")]);
+
+        match store.reachable("Q-1", EdgeKind::Begets) {
+            Err(QuizdomError::Dolt(message)) => {
+                assert!(message.contains("does not exist"), "{message}");
+                assert!(
+                    !message.contains("cte_max_recursion_depth"),
+                    "not every failure is a depth failure: {message}"
+                );
+            }
+            other => panic!("expected the raw Dolt error, got {other:?}"),
+        }
     }
 
     #[test]
@@ -947,6 +1176,86 @@ mod tests {
         assert!(!update.contains("THEN 10"), "{update}");
     }
 
+    // trace:TASK-248 | ai:claude — the chunker splits on both caps, and the
+    // write path that can actually reach the byte cap is checked against the
+    // execve limit that motivated it.
+
+    /// Linux's cap on a *single* argv element (32 pages) — the limit a chunk
+    /// of SQL must stay under, separate from and far below the ~2 MB `ARG_MAX`
+    /// for the whole command line. Exceeding it fails `execve` with `E2BIG`.
+    const MAX_ARG_STRLEN: usize = 128 * 1024;
+
+    #[test]
+    fn chunk_by_sql_bytes_splits_on_whichever_cap_binds_first() {
+        // Count cap: cheap items, so only MAX_BATCH_IDS can bind.
+        let cheap: Vec<usize> = (0..MAX_BATCH_IDS * 2 + 1).collect();
+        let by_count = chunk_by_sql_bytes(&cheap, |_| 1);
+        assert_eq!(by_count.len(), 3);
+        assert_eq!(by_count[0].len(), MAX_BATCH_IDS);
+        assert_eq!(by_count[2].len(), 1);
+
+        // Byte cap: few items, each a quarter of the budget.
+        let wide: Vec<usize> = (0..8).collect();
+        let by_bytes = chunk_by_sql_bytes(&wide, |_| SQL_BATCH_BUDGET / 4);
+        assert_eq!(by_bytes.len(), 2, "four per chunk fills the budget exactly");
+        assert_eq!(by_bytes[0].len(), 4);
+
+        // An item bigger than the whole budget still ships, alone.
+        let oversized = chunk_by_sql_bytes(&[0, 1], |_| SQL_BATCH_BUDGET * 2);
+        assert_eq!(oversized.len(), 2);
+
+        assert!(chunk_by_sql_bytes(&[0u8; 0], |_| 1).is_empty(), "no items");
+    }
+
+    #[test]
+    fn update_weights_splits_a_wide_tags_batch_below_the_argv_limit() {
+        let store = store_with(Vec::new());
+        // Worst case for the id-count cap: far fewer than MAX_BATCH_IDS rows,
+        // but each carrying a full VARCHAR(2048) tags column. Chunking on ids
+        // alone would ship all of this as one ~200 KB argv element.
+        let wide_tags = "t".repeat(2048);
+        let updates: Vec<(String, u32, Vec<String>)> = (0..100)
+            .map(|index| (format!("Q-{index}"), 50, vec![wide_tags.clone()]))
+            .collect();
+
+        store
+            .update_weights(&updates)
+            .expect("a wide batch is chunked, not refused");
+
+        let calls = store.runner.calls.borrow();
+        let statements: Vec<String> = calls
+            .iter()
+            .filter(|call| call[0] == "sql")
+            .map(|call| sql_of(call))
+            .collect();
+        assert!(
+            statements.len() > 1,
+            "the byte cap bound before the id cap: {} statement(s)",
+            statements.len()
+        );
+        for sql in &statements {
+            assert!(
+                sql.len() < MAX_ARG_STRLEN,
+                "one argv element stayed under E2BIG: {} bytes",
+                sql.len()
+            );
+        }
+        // Every row still lands exactly once, across the chunks.
+        for (id, _, _) in &updates {
+            let arm = format!(" WHEN '{id}' THEN ");
+            let hits: usize = statements.iter().map(|sql| sql.matches(&arm).count()).sum();
+            assert_eq!(hits, 2, "one tags arm + one weight arm for {id}");
+        }
+        // Still one add + one commit for the whole batch, not one per chunk.
+        assert_eq!(calls[calls.len() - 2], ["add", "-A"]);
+        assert_eq!(&calls[calls.len() - 1][0..2], &["commit", "-m"]);
+        assert_eq!(
+            calls.iter().filter(|call| call[0] == "commit").count(),
+            1,
+            "chunking is a spawn detail, not extra history"
+        );
+    }
+
     // The path-resolution chain moved to settings.rs with TASK-228 (one helper
     // shared with db-init / db-migrate); its tests live there now.
 
@@ -1071,6 +1380,90 @@ mod tests {
             store.neighbors_many(&ids, EdgeKind::Begets).unwrap(),
             looped_edges,
             "batch neighbors, per-source ordering intact"
+        );
+
+        // trace:TASK-221 | ai:claude — the same-second tie-break, for real.
+        // The edges go in as ONE statement so they share a created_at: that is
+        // the case the 1-second TIMESTAMP cannot separate, and the case a
+        // per-edge loop of create_edge (a dolt commit each) could not stage
+        // reliably. Targets are chosen to straddle the lexical/numeric split.
+        let fan_root = chain[0].clone();
+        let mut targets = Vec::new();
+        for index in 0..7 {
+            targets.push(
+                store
+                    .create_node(&NewNode {
+                        kind: NodeKind::Question,
+                        title: format!("fan {index}"),
+                        description: String::new(),
+                        tags: Vec::new(),
+                        weight: 0,
+                    })
+                    .expect("fan node create should succeed"),
+            );
+        }
+        let values: Vec<String> = targets
+            .iter()
+            .map(|target| {
+                format!(
+                    "({}, {}, 'refines')",
+                    sql_quote(&fan_root),
+                    sql_quote(target)
+                )
+            })
+            .collect();
+        store
+            .sql_json(&format!(
+                "INSERT INTO edges (from_id, to_id, kind) VALUES {};",
+                values.join(", ")
+            ))
+            .expect("same-second edge insert should succeed");
+        let mut lexical = targets.clone();
+        lexical.sort();
+        assert_ne!(
+            lexical, targets,
+            "the fixture is only meaningful if lexical != insertion order"
+        );
+        // A kind with no earlier edge from this root, so created_at cannot
+        // separate anything and the assertion is purely about the tie-break.
+        assert_eq!(
+            store.neighbors(&fan_root, EdgeKind::Refines).unwrap(),
+            lexical,
+            "same-second edges come back in to_id lexical order"
+        );
+
+        // trace:TASK-223 | ai:claude — weight 0 and weight N are the same
+        // shape out of a real dolt: same tags in, same tags back, at either
+        // weight, with the weight only ever in its own column.
+        let shared_tags = ["topic:free-will".to_string(), "seed".to_string()];
+        let unweighted = store
+            .create_node(&NewNode {
+                kind: NodeKind::Question,
+                title: "unweighted".to_string(),
+                description: String::new(),
+                tags: shared_tags.to_vec(),
+                weight: 0,
+            })
+            .expect("weight-0 create should succeed");
+        let weighted = store
+            .create_node(&NewNode {
+                kind: NodeKind::Question,
+                title: "weighted".to_string(),
+                description: String::new(),
+                tags: shared_tags.to_vec(),
+                weight: 5,
+            })
+            .expect("weight-5 create should succeed");
+        let pair = store
+            .fetch_nodes(&[unweighted.clone(), weighted.clone()])
+            .expect("weight pair fetch should succeed");
+        assert_eq!((pair[0].weight, pair[1].weight), (0, 5));
+        assert_eq!(pair[0].tags, shared_tags, "no weight tag consumed or added");
+        assert_eq!(pair[0].tags, pair[1].tags, "same shape at either weight");
+        assert_eq!(
+            store.fetch_node(&unweighted).unwrap(),
+            pair[0],
+            "per-item and set-based reads agree at weight 0"
         );
 
         // The batched write lands on every row it names.
