@@ -20,12 +20,12 @@ description: |
 
   Raised by the implementer while working STORY-260.
   Branch: story-260  ·  Commit: 0430e94  (PR link added on merge)
-status: Draft
+status: Completed
 priority: Medium
 owner: ''
 feature: Uncategorized
 created_at: 2026-07-22T08:08:09.563330681Z
-modified_at: 2026-07-22T08:08:09.563330681Z
+modified_at: 2026-07-22T16:58:31.314280453Z
 req_type: Task
 tags:
 - from-implementer:STORY-260
