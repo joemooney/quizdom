@@ -9014,5 +9014,27 @@ operations:
     req_type: Bug
     status: Approved
     priority: Medium
-clock: 657
+- id: 019f8b73-6c2f-7762-8cfb-4901a2af57f7
+  target_id: 019f8b73-69f1-7f70-9b22-7db92ad6a548
+  author: aida
+  node_id: ''
+  lamport: 658
+  timestamp: 2026-07-22T20:10:25.199907980Z
+  kind: !Create
+    title: 'Finish the mode seam: stop --mode persisting itself, and seed resumed sessions from the saved mode'
+    description: |-
+      TASK-300's fix seeded mode on load, but two paths still defeat it — both found by review of STORY-350.
+
+      TASK-356: the --mode flag persists ITSELF into settings.toml on the first /settings, clobbering the saved default. A transient CLI override must not rewrite the user's persisted preference — that is the same class of silent-clobber TASK-266/TASK-300 fixed, arriving by a different route.
+      TASK-355: a resumed session's auto-continue frames one question with config.mode rather than the seeded mode, so a resume can silently switch modes for a single turn.
+
+      ## Acceptance
+      - Running with --mode does not alter settings.toml; the persisted value survives a session that overrode it (test).
+      - A resumed session frames every question with the seeded mode, including the auto-continue path (test).
+      - If a third clobber route exists, fix it at the seam rather than case by case.
+      - cargo test green; clippy clean.
+    req_type: Story
+    status: Approved
+    priority: Medium
+clock: 658
 node_id: ''
