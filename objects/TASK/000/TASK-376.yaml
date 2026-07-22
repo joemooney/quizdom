@@ -21,12 +21,12 @@ description: |
   instead of two lines later.
 
   Raised in review of PR-110: https://github.com/joemooney/quizdom/pull/110#issuecomment-5051624056
-status: Draft
+status: Completed
 priority: Medium
 owner: ''
 feature: Uncategorized
 created_at: 2026-07-22T21:21:59.601313004Z
-modified_at: 2026-07-22T21:21:59.601313004Z
+modified_at: 2026-07-22T22:04:52.523737857Z
 req_type: Task
 tags:
 - from-review:PR-110
