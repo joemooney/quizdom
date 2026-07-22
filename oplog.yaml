@@ -4709,5 +4709,43 @@ operations:
     req_type: Task
     status: Draft
     priority: Medium
-clock: 430
+- id: 019f888c-6641-7772-ab2d-2c5d36763356
+  target_id: 019f888c-6404-7453-8027-1ccca616cec0
+  author: aida
+  node_id: ''
+  lamport: 431
+  timestamp: 2026-07-22T06:38:50.433959150Z
+  kind: !Create
+    title: settings::save falls back to a fresh write when the existing file is unreadable, dropping the foreign keys TASK-218 preserves
+    description: |
+      `settings::save` (crates/quizdom/src/settings.rs:528) reads the existing file
+      with:
+
+          let existing = std::fs::read_to_string(&path).unwrap_or_default();
+          std::fs::write(path, settings.to_toml_merged(&existing))
+
+      `unwrap_or_default()` collapses "file absent" (correct: fall through to a fresh
+      write) with "file present but unreadable". In the second case
+      `to_toml_merged("")` takes its empty-input branch and re-emits ONLY the four
+      modelled keys — which is exactly the TASK-218 failure mode the merge path was
+      written to eliminate, just behind a narrower door.
+
+      Two ways in: mode bits that permit write but not read, and non-UTF8 content
+      (`read_to_string` fails on invalid UTF-8 even when the file is readable).
+
+      Both are unlikely for a file the app itself writes, hence cosmetic — but the
+      degrade is silent and destroys `dolt_path`, so it is cheap insurance to
+      distinguish the cases:
+
+          let existing = match std::fs::read_to_string(&path) {
+              Ok(text) => text,
+              Err(e) if e.kind() == std::io::ErrorKind::NotFound => String::new(),
+              Err(e) => return Err(e),   // refuse to overwrite what we could not read
+          };
+
+      Raised in review of PR-93: https://github.com/joemooney/quizdom/pull/93#issuecomment-5042707911
+    req_type: Task
+    status: Draft
+    priority: Medium
+clock: 431
 node_id: ''
