@@ -19,5 +19,42 @@ priority: Medium
 owner: ''
 feature: Uncategorized
 created_at: 2026-07-22T17:34:48.120078340Z
-modified_at: 2026-07-22T18:00:56.895824302Z
+modified_at: 2026-07-22T18:20:06.439466749Z
 req_type: Story
+comments:
+- id: 019f8b0e-6da7-7c11-a324-c56a267ac270
+  author: joe
+  content: |-
+    Implemented on branch story-327 (commit 4b52709):
+
+    - TASK-319: the three batch-contract errors in `apply_log_signals` shared a tail
+      inherited from `take_by_id` ("a batch load must return one entry per requested
+      id") while being raised against both seams — and `reweight_questions` is a
+      batch WRITE. The seam is now a value (`BatchSeam { name, verb }`, constants
+      `LOAD_QUESTIONS` / `REWEIGHT_QUESTIONS`) rather than a string passed alongside
+      a hardcoded tail, so a message cannot disagree with the call that raised it.
+    - TASK-318: `fetch_nodes_present`'s skip-contract was doc-enforced only.
+      `store::missing_node(id, backend)` now fixes the `NotFound` variant by
+      construction, and `check_absence_contract` / `assert_absence_contract` make a
+      wrong variant a failing test. The check is non-panicking underneath, so the
+      check itself is under test: a backend reporting absence as `Dolt(...)` fails
+      it and the report names the variant and why it matters. Run against scripted
+      rows and inside `real_dolt_full_trait_surface`.
+    - TASK-315: the seven `clippy::too_many_arguments` allows on session.rs free
+      functions retired with three payload structs — `TurnJournal` (the
+      config/logger/turn triple, applied to all eleven helpers carrying it),
+      `SessionWiring` (the seven collaborators threaded through
+      `run_session_from_current`), and `SynopsisSource` (which `ReviewContext` had
+      already bundled and now embeds). Zero allows remain in session.rs.
+
+    Test status: 680/680 quizdom + 7/7 llm tests green (5 new). `cargo clippy
+    --workspace --all-targets -- -D warnings` exits 0; `cargo fmt --all --check`
+    clean; all 8 `real_dolt` acceptance tests pass against local dolt.
+
+    Follow-up: TASK-336 (the two allows still standing in frontend.rs / tui.rs,
+    out of scope per TASK-315's own file set), TASK-337 (TurnJournal applied to all
+    eleven helpers rather than only the five over the threshold), TASK-338 (TASK-319
+    shipped as a typed seam rather than the seam-neutral tail it proposed).
+  created_at: 2026-07-22T18:20:06.439466749Z
+  modified_at: 2026-07-22T18:20:06.439466749Z
+  session_id: 019f8afc-e487-76c1-97cd-1e680caef784
