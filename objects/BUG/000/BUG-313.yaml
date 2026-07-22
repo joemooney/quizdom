@@ -36,10 +36,17 @@ priority: Medium
 owner: ''
 feature: Uncategorized
 created_at: 2026-07-22T16:11:05.577690125Z
-modified_at: 2026-07-22T16:11:05.577690125Z
+modified_at: 2026-07-22T19:00:39.005409011Z
 req_type: Bug
 tags:
 - auto-complete
 - auto-drafted
 - ci
 - failure-2
+comments:
+- id: 019f8b33-8bdd-7e71-b5c8-8501a36af617
+  author: joe
+  content: 'Already resolved: this is the PR-100 CI red (getwd on the restore scratch dir). Root-caused and fixed in commit fa4b63a — the scratch name was keyed on pid alone, so concurrent restores under /tmp deleted it out from under each other. Merged in PR-100.'
+  created_at: 2026-07-22T19:00:39.005409011Z
+  modified_at: 2026-07-22T19:00:39.005409011Z
+  session_id: 789bafdb-f673-41c5-affc-d550f95e51e5
