@@ -6206,5 +6206,42 @@ operations:
     req_type: Task
     status: Draft
     priority: Medium
-clock: 508
+- id: 019f8a81-22d3-7930-bf54-0daf2aba5570
+  target_id: 019f8a81-20db-7613-afc1-664b2ce0ce0e
+  author: aida
+  node_id: ''
+  lamport: 509
+  timestamp: 2026-07-22T15:45:46.707738243Z
+  kind: !Create
+    title: render_list() still reads the real user config during tests — the hermeticity gap PR-99 closed elsewhere
+    description: |
+      PR-99 made `settings::load_or_seed` and `settings::save` `cfg(test)` no-ops so
+      the developer's own `~/.config/quizdom/settings.toml` could not leak into the
+      in-crate suite (TASK-266's fix made a persisted `score = true` load-bearing).
+
+      One path was not closed. `Settings::render_list` (settings.rs:307) calls
+      `resolve_dolt_path()`, which reads `$QUIZDOM_DOLT_PATH` and `config_text()` —
+      the real file — and two tests go through it:
+
+      * `settings::tests::render_list_shows_every_setting` (settings.rs:1354)
+      * `frontend::tests::settings_list_shows_every_setting` — via
+        `settings_surface("")` → `render_list()` (frontend.rs:378)
+
+      BENIGN TODAY: every assertion in both tests is a positive `contains` on a label
+      or a value label that always renders, so a differing resolved path cannot flip
+      either test. This is filed as a consistency gap rather than a live bug.
+
+      The seam already exists — PR-99 introduced `render_list_showing(&Path)` as the
+      pure form precisely so the rendering stays testable. Pointing the two tests at
+      `render_list_showing(Path::new("..."))` closes the gap with no new machinery
+      and makes the suite's config independence total rather than nearly-total.
+
+      Related: TASK-302 (the wider injection refactor that would make the `cfg!(test)`
+      branches unnecessary in the first place).
+
+      Raised in review of PR-99: https://github.com/joemooney/quizdom/pull/99#issuecomment-5048283389
+    req_type: Task
+    status: Draft
+    priority: Medium
+clock: 509
 node_id: ''
