@@ -22,5 +22,10 @@ priority: Medium
 owner: ''
 feature: Uncategorized
 created_at: 2026-07-22T15:12:43.063017545Z
-modified_at: 2026-07-22T15:12:43.063017545Z
+modified_at: 2026-07-22T15:12:48.410144529Z
 req_type: Story
+relationships:
+- rel_type: !Custom implements
+  target_id: 019f8a51-5a9d-78e1-8a45-43227b11a79a
+  created_at: 2026-07-22T15:12:48.410139657Z
+  created_by: joe
