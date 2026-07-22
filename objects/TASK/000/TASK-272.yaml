@@ -1,0 +1,36 @@
+id: 019f88b4-0a0b-71e2-8581-99f3b20a931d
+spec_id: TASK-272
+agreed_id: TASK-272
+title: db-init and db-migrate never commit — their writes sit untracked in the Dolt working set
+description: |
+  `db-init` applies the schema DDL and `db-migrate` bulk-imports the graph with
+  plain `dolt sql -q`, neither followed by `dolt add -A` + `dolt commit`. Only
+  `DoltDomainStore` commits (dolt_store.rs:163-171). Consequence found while
+  working STORY-261: the live `data/dolt` had exactly one commit ("Initialize data
+  repository") and all 75 nodes / 75 edges sat untracked in the working set, so
+  the first `db-backup` pushed an EMPTY history and reported success.
+
+  STORY-261 worked around it — `db-backup` snapshots the working set before
+  pushing (db_backup.rs `snapshot_working_set`) — but the root inconsistency
+  remains: `dolt log` in a freshly bootstrapped+migrated repo is not the audit
+  trail CLAUDE.md and dolt_store.rs describe, and any other consumer of Dolt
+  history (diff between sessions, `dolt sql --branch`, a future dolt-backup mode)
+  sees nothing until someone runs db-backup.
+
+  Suggested fix: give db-init and db-migrate the same add+commit tail the store
+  uses ("quizdom db-init: schema", "quizdom db-migrate: import N nodes / M
+  edges"), which also makes db-migrate's idempotency visible as no-op commits.
+
+  Raised by the implementer while working STORY-261.
+  Branch: story-261  ·  Commit: 31dcff3  (PR link added on merge)
+status: Draft
+priority: Medium
+owner: ''
+feature: Uncategorized
+created_at: 2026-07-22T07:22:08.267234785Z
+modified_at: 2026-07-22T07:22:08.267234785Z
+req_type: Task
+tags:
+- from-implementer:STORY-261
+- kind:bug-spotted
+- severity:minor
