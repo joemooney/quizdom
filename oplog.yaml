@@ -3298,5 +3298,31 @@ operations:
     req_type: Story
     status: Approved
     priority: Medium
-clock: 325
+- id: 019f8817-560b-7f62-bb37-06bfd44910a9
+  target_id: 019f8817-5331-7180-995a-1f366bc6c237
+  author: aida
+  node_id: ''
+  lamport: 326
+  timestamp: 2026-07-22T04:30:58.571261501Z
+  kind: !Create
+    title: 'Review PR-90: [AI:claude] docs: log the STORY-244 batching session in PROMPT_HISTORY (STORY-244)'
+    description: |
+      Auto-filed by `aida session end` (backup trigger) (session `019f8809`) for branch `story-244`.
+
+      - PR: <https://github.com/joemooney/quizdom/pull/90>
+      - Branch: `story-244` → `main`
+
+      ## Covers
+
+      - STORY-244
+
+      ## Acceptance
+
+      - Generate a structured review prompt with `aida review prompt --pr 90` and verify each spec's acceptance criteria.
+      - Approve and merge, or request changes by spec id.
+      - Mark this story `completed` once the PR is merged.
+    req_type: Story
+    status: Approved
+    priority: Medium
+clock: 326
 node_id: ''
