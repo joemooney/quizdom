@@ -4433,5 +4433,30 @@ operations:
     req_type: Story
     status: Approved
     priority: Medium
-clock: 420
+- id: 019f887a-6285-7003-baed-6612e2bfe1ef
+  target_id: 019f887a-5f51-7a51-beeb-a01458aeffd6
+  author: aida
+  node_id: ''
+  lamport: 421
+  timestamp: 2026-07-22T06:19:09.829936763Z
+  kind: !Create
+    title: 'Post-cutover hygiene: rename AidaCli* types, drop decorative weight:N fixtures, clear the clippy backlog'
+    description: |-
+      Bundles TASK-226, TASK-229, TASK-233. Runs LAST in EPIC-249 because the rename touches many files and would conflict with any concurrent batch.
+
+      TASK-226: the AidaCli* type names (AidaCliQuestionBank, AidaCliQuestionReweighter, and friends — ~74 references) are now backed by Dolt, not the aida CLI. The names actively mislead. Rename to backend-neutral names (e.g. StoreQuestionBank / StoreQuestionReweighter) or Dolt-accurate ones; keep AidaIntentStore as-is since it genuinely still shells out to aida.
+
+      TASK-229: test fixtures still fabricate decorative weight:N tags that no code parses since the STORY-208 cutover moved weight to a numeric column — misleading to the next reader.
+
+      TASK-233: six pre-existing clippy 1.92 lints in input.rs / session.rs. CI runs clippy informationally, so they never gate. Fix them, and consider making clippy gate on -D warnings once clean.
+
+      ## Acceptance
+      - No AidaCli* identifier remains for a Dolt-backed type; AidaIntentStore keeps its name (it really is the aida CLI seam); doc comments updated to match.
+      - No test fixture carries a weight:N tag that no code reads.
+      - cargo clippy --workspace --all-targets is clean; if CI is switched to -D warnings, say so in the PR body.
+      - cargo test green; behavior unchanged (pure rename/cleanup).
+    req_type: Story
+    status: Approved
+    priority: Medium
+clock: 421
 node_id: ''
