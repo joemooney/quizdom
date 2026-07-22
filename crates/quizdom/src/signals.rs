@@ -209,10 +209,13 @@ pub struct ReweightOutcome {
 /// would be pure churn against AIDA. Returns one [`ReweightOutcome`] per applied
 /// re-weight, in question-id order.
 ///
-/// A `bank` or `reweighter` whose batch result omits a requested id is an error
-/// (`QuizdomError::Parse`), not a silently shortened result: the signal and the
-/// question it belongs to are matched by id, so a partial batch can never
-/// persist a re-weight against the wrong question (TASK-246).
+/// A `bank` or `reweighter` whose batch result does not correspond one-for-one
+/// with the ids requested is an error (`QuizdomError::Parse`), never a silently
+/// shortened or padded result: the signal and the question it belongs to are
+/// matched by id, so a mismatched batch can never persist a re-weight against
+/// the wrong question (TASK-246). All three violations are caught
+/// (STORY-293) — a **missing** id ([`take_by_id`]), a **repeated** id
+/// ([`index_by_id`]), and an **unrequested extra** ([`reject_extras`]).
 // trace:STORY-68 | ai:claude
 // trace:STORY-244 | ai:claude — the whole applied set is loaded in one read
 // and persisted in one write; this loop used to be `quizdom curate`'s N+1.
@@ -236,7 +239,7 @@ pub fn apply_log_signals(
     // counterexample). A positional `zip` would truncate silently and pair every
     // question past the drop point with the wrong signal; looking each id up by
     // name turns that into an error at the seam instead.
-    let mut loaded = index_by_id(bank.load_questions(&ids)?);
+    let mut loaded = index_by_id(bank.load_questions(&ids)?, "load_questions")?;
     let batch: Vec<(Question, QualitySignal)> = applied
         .iter()
         .map(|(question_ref, signal)| {
@@ -244,9 +247,10 @@ pub fn apply_log_signals(
                 .map(|question| (question, *signal))
         })
         .collect::<Result<_>>()?;
+    reject_extras(loaded, "load_questions")?;
 
-    let mut reweighted = index_by_id(reweighter.reweight_questions(&batch)?);
-    applied
+    let mut reweighted = index_by_id(reweighter.reweight_questions(&batch)?, "reweight_questions")?;
+    let outcomes: Vec<ReweightOutcome> = applied
         .into_iter()
         .map(|(question_ref, signal)| {
             let question = take_by_id(&mut reweighted, &question_ref, "reweight_questions")?;
@@ -256,22 +260,47 @@ pub fn apply_log_signals(
                 question,
             })
         })
-        .collect()
+        .collect::<Result<_>>()?;
+    reject_extras(reweighted, "reweight_questions")?;
+
+    Ok(outcomes)
 }
 
 // trace:TASK-246 | ai:claude
-/// Key a batch result by question id so callers can pair it up by name.
-fn index_by_id(questions: Vec<Question>) -> BTreeMap<String, Question> {
-    questions
-        .into_iter()
-        .map(|question| (question.id.clone(), question))
-        .collect()
+// trace:STORY-293 | ai:claude — a repeated id used to be swallowed here: two
+// entries with the same id collapsed into one map slot, so the batch looked
+// one entry short and the *other* id took the blame in `take_by_id`. Catching
+// it at the seam names the actual violation.
+/// Key a batch result by question id so callers can pair it up by name. A
+/// result that names the same question twice is an error: the second entry
+/// would silently shadow the first, and only one of them can be the
+/// re-weight the caller asked for.
+fn index_by_id(questions: Vec<Question>, source: &str) -> Result<BTreeMap<String, Question>> {
+    let mut indexed: BTreeMap<String, Question> = BTreeMap::new();
+    for question in questions {
+        if let Some(shadowed) = indexed.insert(question.id.clone(), question) {
+            return Err(QuizdomError::Parse(format!(
+                "{source} returned question {} more than once: a batch load must return one entry per requested id",
+                shadowed.id
+            )));
+        }
+    }
+    Ok(indexed)
 }
 
 // trace:TASK-246 | ai:claude
+// trace:STORY-293 | ai:claude — TASK-254: the old rationale for removing
+// rather than borrowing was "a batch that returned one id twice can't satisfy
+// two requests with the same entry", a scenario the caller makes unreachable
+// (the ids come from `analyze_session_log`, one stat per question, so no id is
+// ever requested twice) and which `index_by_id` now rejects outright anyway.
 /// Claim the question `id` from a batch result, or fail loudly naming the
-/// seam that dropped it. Removing rather than borrowing means a batch that
-/// returned one id twice can't satisfy two requests with the same entry.
+/// seam that dropped it.
+///
+/// Removing rather than borrowing is what *drains* the map: once every
+/// requested id has been claimed, anything still in it is an entry the batch
+/// returned without being asked for, which is exactly what [`reject_extras`]
+/// then reports.
 fn take_by_id(
     questions: &mut BTreeMap<String, Question>,
     id: &str,
@@ -282,6 +311,25 @@ fn take_by_id(
             "{source} returned no question for {id}: a batch load must return one entry per requested id"
         ))
     })
+}
+
+// trace:STORY-293 | ai:claude — TASK-253: the batch contract used to be
+// enforced in one direction only. A missing id errored, but a batch that
+// returned MORE than it was asked for had its surplus silently dropped by the
+// pairing loop — the seam quietly disagreeing with the caller about which
+// questions are in play, which is the same class of bug as a short batch.
+/// Fail if the drained batch index still holds entries: whatever is left was
+/// returned without being requested.
+fn reject_extras(leftover: BTreeMap<String, Question>, source: &str) -> Result<()> {
+    if leftover.is_empty() {
+        return Ok(());
+    }
+    let extras: Vec<&str> = leftover.keys().map(String::as_str).collect();
+    Err(QuizdomError::Parse(format!(
+        "{source} returned {} question(s) that were not requested ({}): a batch load must return one entry per requested id",
+        extras.len(),
+        extras.join(", ")
+    )))
 }
 
 // --- `quizdom curate` command wiring (STORY-72) -----------------------------
@@ -703,6 +751,12 @@ mod tests {
         DropFirst,
         /// Returns every question, in the wrong order.
         Reverse,
+        // trace:STORY-293 | ai:claude — the other direction of the contract.
+        /// Returns every requested question *plus* one nobody asked for.
+        AddUnrequested,
+        // trace:STORY-293 | ai:claude
+        /// Returns every question, with the first one twice.
+        RepeatFirst,
     }
 
     struct QuirkyBank {
@@ -727,6 +781,8 @@ mod tests {
                     loaded.remove(0);
                 }
                 Quirk::Reverse => loaded.reverse(),
+                Quirk::AddUnrequested => loaded.push(question("Q-99", 50)),
+                Quirk::RepeatFirst => loaded.push(loaded[0].clone()),
             }
             Ok(loaded)
         }
@@ -781,6 +837,128 @@ mod tests {
         assert_eq!(outcomes[1].signal, QualitySignal::Insightful);
         assert_eq!(outcomes[1].question.id, "Q-2");
         assert_eq!(outcomes[1].question.weight, 62); // 50 + 12
+    }
+
+    // --- STORY-293: the contract holds in BOTH directions ------------------
+
+    // trace:STORY-293 | ai:claude — TASK-253: the mirror of
+    // `apply_errors_when_the_bank_batch_drops_a_question`. A batch that
+    // returns MORE than was asked for used to have its surplus silently
+    // dropped by the pairing loop.
+    #[test]
+    fn apply_errors_when_the_bank_batch_returns_an_unrequested_question() {
+        let bank = QuirkyBank {
+            inner: two_question_bank(),
+            quirk: Quirk::AddUnrequested,
+        };
+        let reweighter = RecordingReweighter::default();
+
+        let error = apply_log_signals(SAMPLE_LOG.as_bytes(), Some("main"), &bank, &reweighter)
+            .expect_err("an over-returning batch load must fail, not silently drop the surplus");
+
+        let message = error.to_string();
+        assert!(message.contains("load_questions"), "{message}");
+        assert!(message.contains("Q-99"), "{message}");
+        assert!(message.contains("not requested"), "{message}");
+        // The surplus is caught before anything is written back.
+        assert!(reweighter.applied.borrow().is_empty());
+    }
+
+    // trace:STORY-293 | ai:claude — a repeated id is neither a short batch nor
+    // a surplus one: it is caught where the index is built, so the error names
+    // the duplicate rather than blaming whichever id it shadowed.
+    #[test]
+    fn apply_errors_when_the_bank_batch_repeats_a_question() {
+        let bank = QuirkyBank {
+            inner: two_question_bank(),
+            quirk: Quirk::RepeatFirst,
+        };
+        let reweighter = RecordingReweighter::default();
+
+        let error = apply_log_signals(SAMPLE_LOG.as_bytes(), Some("main"), &bank, &reweighter)
+            .expect_err("a batch load that names one question twice must fail");
+
+        let message = error.to_string();
+        assert!(message.contains("load_questions"), "{message}");
+        assert!(message.contains("Q-1"), "{message}");
+        assert!(message.contains("more than once"), "{message}");
+        assert!(reweighter.applied.borrow().is_empty());
+    }
+
+    /// The write-side mirror of [`Quirk::AddUnrequested`]: a reweighter that
+    /// hands back a question the caller never put in the batch.
+    struct OverReturningReweighter;
+
+    impl QuestionReweighter for OverReturningReweighter {
+        fn reweight_question(
+            &self,
+            question: &Question,
+            signal: QualitySignal,
+        ) -> Result<Question> {
+            let mut updated = question.clone();
+            updated.tags = rewrite_quality_tags(&question.tags, signal);
+            updated.weight = reweight(question.weight, signal);
+            Ok(updated)
+        }
+        fn reweight_questions(&self, batch: &[(Question, QualitySignal)]) -> Result<Vec<Question>> {
+            let mut updated: Vec<Question> = batch
+                .iter()
+                .map(|(question, signal)| self.reweight_question(question, *signal))
+                .collect::<Result<_>>()?;
+            updated.push(question("Q-99", 50));
+            Ok(updated)
+        }
+    }
+
+    // trace:STORY-293 | ai:claude — TASK-253, the write seam: symmetric with
+    // `apply_errors_when_the_reweighter_batch_truncates`. An extra outcome the
+    // caller has no signal for must not reach the caller silently.
+    #[test]
+    fn apply_errors_when_the_reweighter_batch_over_returns() {
+        let bank = two_question_bank();
+
+        let error = apply_log_signals(
+            SAMPLE_LOG.as_bytes(),
+            Some("main"),
+            &bank,
+            &OverReturningReweighter,
+        )
+        .expect_err("an over-returning batch write must fail, not drop the surplus");
+
+        let message = error.to_string();
+        assert!(message.contains("reweight_questions"), "{message}");
+        assert!(message.contains("Q-99"), "{message}");
+        assert!(message.contains("not requested"), "{message}");
+    }
+
+    // trace:STORY-293 | ai:claude — TASK-254: `take_by_id` removes rather than
+    // borrows so the index is *drained*, which is what makes the leftover
+    // check above possible. This pins that behaviour directly: a claimed id is
+    // gone from the map, and claiming it twice fails.
+    #[test]
+    fn take_by_id_drains_the_entry_it_claims() {
+        let mut indexed = index_by_id(
+            vec![question("Q-1", 50), question("Q-2", 50)],
+            "load_questions",
+        )
+        .expect("two distinct ids index cleanly");
+
+        let claimed = take_by_id(&mut indexed, "Q-1", "load_questions").expect("Q-1 is present");
+        assert_eq!(claimed.id, "Q-1");
+        assert_eq!(
+            indexed.keys().collect::<Vec<_>>(),
+            ["Q-2"],
+            "the claimed entry is removed, leaving only what was never asked for"
+        );
+
+        let error = take_by_id(&mut indexed, "Q-1", "load_questions")
+            .expect_err("a drained entry cannot be claimed a second time");
+        assert!(error.to_string().contains("no question for Q-1"));
+
+        // What remains after every claim is the surplus `reject_extras` reports.
+        let error = reject_extras(indexed, "load_questions")
+            .expect_err("Q-2 was never requested in this pairing");
+        assert!(error.to_string().contains("Q-2"), "{error}");
     }
 
     /// A reweighter whose batch write returns one fewer question than it was
