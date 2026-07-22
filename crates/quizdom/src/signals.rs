@@ -762,8 +762,10 @@ mod tests {
                     {"id":"Q-2","title":"two","body":"","tags":"answer:yes-no","weight":50}]}"#,
                 "",
             ),
+            // trace:BUG-366 | ai:claude — the write's foreign-change pre-flight.
+            (0, "{}", ""),
             (0, "", ""), // the one batched UPDATE
-            (0, "", ""), // dolt add -A
+            (0, "", ""), // dolt add nodes edges
             (0, "", ""), // dolt commit
         ]);
         let calls = runner.calls.clone();
@@ -784,8 +786,9 @@ mod tests {
         assert_eq!(outcomes[1].question.weight, 62);
         assert_eq!(
             calls.borrow().len(),
-            4,
-            "one read + one write + add + commit, whatever the question count"
+            5,
+            "one read + one pre-flight + one write + add + commit, whatever the \
+             question count"
         );
     }
 

@@ -1016,3 +1016,77 @@ the way and a non-UTF-8 file each exit 1 naming the OS cause, and a mistyped
 **Docs.** `OVERVIEW.md` gains §§ *Absence is one cause, not the only one* and
 *What is printed is printable* under the diagnostic-log section; `CLAUDE.md`'s
 durability paragraph names both rules and the single suffix definition.
+
+## Session 2026-07-22 — BUG-366: the pre-flight learns whose changes it found, and the session write path finally gets one
+
+**Request.** `/aida-pickup BUG-366` — two halves of one gap left by STORY-351's
+TASK-297 fix. (a) The new foreign-change pre-flight was provenance-blind: a
+`db-migrate` that failed parity left its own half-imported rows in the working
+set, and the retry refused, blaming a hand edit that had never happened — so the
+guard made its own failure mode unrecoverable without hand-run `dolt`, and lied
+about why. (b) `DoltDomainStore` had no pre-flight at all, so an ordinary session
+still absorbed a hand edit to `nodes` into a quizdom-labelled commit — exactly
+what TASK-297 fixed for `db-migrate`.
+
+**The provenance signal is `dolt_status.staged`, not a breadcrumb.** The first
+design considered was a marker file recording "quizdom was writing here",
+cleared on commit. It was rejected on a sequence that is on the *documented*
+recovery path: quizdom aborts → the user runs the `dolt reset --hard` the error
+message recommends → the user hand-edits `nodes` → the next run sees a stale
+marker and waves the edit through. A memory of intent is wrong exactly when it
+matters. Instead: **every quizdom write now stages itself in the same `dolt sql`
+call** (`db_init::staging_write` appends `CALL DOLT_ADD('nodes', 'edges')` to the
+statement), which makes the question answerable off the repository — staged and
+uncommitted means an unfinished quizdom run, unstaged means nobody staged it, so
+no quizdom write made it. One spawn rather than a following `dolt add`, because a
+separate staging call leaves a window where a killed process's rows are
+indistinguishable from a hand edit. Verified against dolt 2.2.1 first: the
+`staged` column is `tinyint(1)`, a table with both kinds of change comes back as
+two rows, and a multi-statement `-q` still exits non-zero (with the original
+error) when the leading write fails, so `create_edge`'s duplicate-key contract
+survives.
+
+**The seam is now structural, not a convention.** `begin_write` returns a
+`#[must_use] WriteClaim`, and `commit_tables` takes that claim instead of a bare
+path. A writer cannot reach the commit tail without having passed the pre-flight
+— which is the difference that mattered here: TASK-297 wrote the ordering down
+and wired it into two subcommands, and the store, the writer a session runs on
+*every answer*, silently never got it. `commit_working_set` stays path-based on
+purpose: `db-backup` is the way out the refusal itself recommends, so it cannot
+be behind the refusal. `db-init` also takes the pre-flight on its **fresh** path
+now — a `dolt init` that reaches the DDL and then fails to commit it (an
+unconfigured author identity is the everyday way) leaves the new tables
+uncommitted, and the re-run must recognise them as its own.
+
+**The message stopped asserting what it could not see.** "uncommitted changes to
+nodes **that quizdom did not make**" was a claim the check had no way to support,
+and it made it loudest when the changes were quizdom's own. It now names the
+observation and the inference from it: *"…that no quizdom run left there: they
+are UNSTAGED, and quizdom stages every write in the same statement that makes
+it."* An unreadable `staged` flag counts as unstaged, so a future rendering
+change costs a refusal the user can act on rather than a silently absorbed edit.
+The resume path is not silent either — one line naming what is being carried
+forward, printed by the subcommands and logged (never printed) by the session,
+since the TUI owns the terminal.
+
+**Per write, not per store or per process.** The store is built eagerly by half a
+dozen `Default` persisters, so there is no single construction point to hang a
+cached answer on; and "is the working set clean *now*" is not a question an
+answer from twenty minutes of session ago addresses. Cost is one `dolt sql` probe
+on a path that already spawns three.
+
+**Verified.** `cargo fmt --all` clean; `cargo clippy --workspace --all-targets --
+-D warnings` exits 0; 720 unit tests green and all 12 `real_dolt` acceptance
+tests green (86s). Two new real-engine tests carry the acceptance:
+`real_dolt_a_failed_parity_run_can_simply_be_retried` runs a failing migration
+and then a good one against the same repo with no intervention between them, and
+`real_dolt_a_session_write_refuses_to_absorb_a_hand_run_edit` proves a session
+write refuses a pending hand-run `INSERT`, commits nothing describing it, and
+leaves the row untouched. Unit coverage pins the pair that decides the design: a
+table carrying both a staged and an unstaged change still refuses.
+
+**Docs.** `OVERVIEW.md` gains § *Whose changes are these? — the `staged` flag
+answers, not a memory* (with the staged/unstaged table and why the breadcrumb was
+rejected) under the existing authorship section, whose refusal example is updated
+to the new wording; `CLAUDE.md`'s Dolt paragraph names `begin_write`,
+`staging_write`, and the claim-shaped seam.

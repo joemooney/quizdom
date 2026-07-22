@@ -40,7 +40,7 @@
 //! that also feeds the spot-check BFS.
 
 use crate::db_init::{
-    commit_tables, refuse_on_foreign_changes, DoltRunner, SystemDoltRunner, DEFAULT_DOLT_DB_PATH,
+    begin_write, commit_tables, staging_write, DoltRunner, SystemDoltRunner, DEFAULT_DOLT_DB_PATH,
     QUIZDOM_TABLES,
 };
 use crate::error::{QuizdomError, Result};
@@ -188,7 +188,12 @@ fn db_migrate(
     }
     // trace:TASK-297 | ai:claude — asked before the first read, so a run that
     // cannot honestly commit costs nothing rather than a full store scan.
-    refuse_on_foreign_changes(dolt, &config.path, "quizdom db-migrate")?;
+    // trace:BUG-366 | ai:claude — and the claim it returns is what the commit
+    // tail at the bottom of this function needs, so the two cannot drift apart.
+    let claim = begin_write(dolt, &config.path, "quizdom db-migrate")?;
+    if let Some(note) = claim.resumed_note() {
+        writeln!(output, "{note}")?;
+    }
 
     // Read side: inventory, one show per node, then one global edge scan
     // (show output cannot see custom edge kinds — BUG-231).
@@ -224,11 +229,16 @@ fn db_migrate(
     // Write side: nodes first (edges have foreign keys into them). Batched
     // into size-bounded `dolt sql` calls — a single call carrying the whole
     // store overflows the OS per-argument limit (E2BIG).
+    // trace:BUG-366 | ai:claude — every batch stages itself as it lands, so a
+    // run that dies halfway (or fails parity below, which is the whole point)
+    // leaves rows the retry recognises as its own. Per BATCH, not once at the
+    // end: a migration that failed on batch 7 of 10 must not have batches 1-6
+    // looking like someone's hand edit either.
     for batch in chunk_statements(nodes_upsert_sql(&nodes), SQL_BATCH_BUDGET) {
-        run_dolt_sql(dolt, &config.path, &batch)?;
+        run_dolt_sql(dolt, &config.path, &staging_write(&batch))?;
     }
     for batch in chunk_statements(edges_insert_sql(&kept), SQL_BATCH_BUDGET) {
-        run_dolt_sql(dolt, &config.path, &batch)?;
+        run_dolt_sql(dolt, &config.path, &staging_write(&batch))?;
     }
     writeln!(
         output,
@@ -329,7 +339,7 @@ fn db_migrate(
         nodes.len(),
         kept.len()
     );
-    if commit_tables(dolt, &config.path, QUIZDOM_TABLES, &message)? {
+    if commit_tables(dolt, &claim, QUIZDOM_TABLES, &message)? {
         writeln!(output, "Committed the import to Dolt history.")?;
     } else {
         // trace:TASK-298 | ai:claude — two different nothings. One message for
@@ -996,6 +1006,16 @@ mod tests {
     /// `dolt sql -r json` omits the `rows` key entirely for an empty result.
     const NO_FOREIGN_CHANGES: &str = "{}";
 
+    // trace:BUG-366 | ai:claude
+    /// A hand-run write: unstaged, because nobody ran `dolt add` for it.
+    const HAND_EDITED_NODES: &str = r#"{"rows":[{"table_name":"nodes","staged":0}]}"#;
+
+    // trace:BUG-366 | ai:claude
+    /// What a migration that failed parity leaves behind: its own rows, staged
+    /// by the write that made them, with no commit on top.
+    const OUR_FAILED_RUNS_ROWS: &str =
+        r#"{"rows":[{"table_name":"nodes","staged":1},{"table_name":"edges","staged":1}]}"#;
+
     fn dolt_repo_dir(label: &str) -> PathBuf {
         let dir =
             std::env::temp_dir().join(format!("quizdom-db-migrate-{label}-{}", std::process::id()));
@@ -1296,6 +1316,77 @@ mod tests {
         let _ = std::fs::remove_dir_all(&repo);
     }
 
+    // trace:BUG-366 | ai:claude
+    /// The reported regression, against the real engine: after the run above,
+    /// the retry must simply work.
+    ///
+    /// This is the acceptance in one sentence — *a migration that fails parity
+    /// can be retried without manual dolt intervention*. The guard TASK-297
+    /// added could not tell the failed run's own half-imported rows from a hand
+    /// edit, so it refused, naming a user edit that had never happened; the way
+    /// out was hand-run `dolt`, from a guard whose purpose was to protect
+    /// hand-run `dolt`. Two runs against one repo is the only way to see it:
+    /// each run in isolation is fine.
+    #[test]
+    #[ignore = "requires the dolt binary on PATH"]
+    fn real_dolt_a_failed_parity_run_can_simply_be_retried() {
+        let repo = real_temp_dir("real-retry");
+        let dolt = SystemDoltRunner::new("dolt".to_string());
+        crate::db_init::run_db_init(
+            [
+                "db-init".to_string(),
+                "--path".to_string(),
+                repo.display().to_string(),
+            ],
+            &mut Vec::new(),
+        )
+        .expect("bootstrap should succeed");
+
+        // Run one: the BUG-231 blind read fails parity, leaving its own rows.
+        assert!(
+            db_migrate(
+                &config(&repo, None),
+                &blind_exporter_store(),
+                &dolt,
+                &mut Vec::new(),
+            )
+            .is_err(),
+            "the blind read must fail parity"
+        );
+        assert!(
+            scalar(&dolt, &repo, "SELECT COUNT(*) FROM dolt_status;") > 0,
+            "and it must leave its rows behind — otherwise there is nothing to retry over"
+        );
+
+        // Run two: the same repo, a store that reads correctly. No `dolt reset`,
+        // no `dolt commit`, no hand intervention of any kind in between.
+        let mut output = Vec::new();
+        db_migrate(&config(&repo, None), &scripted_store(), &dolt, &mut output)
+            .expect("the retry must not be blocked by the run it is retrying");
+
+        let rendered = String::from_utf8(output).unwrap();
+        assert!(
+            rendered.contains("Resuming an earlier quizdom run"),
+            "and it says what it is carrying forward: {rendered}"
+        );
+        assert_eq!(
+            scalar(
+                &dolt,
+                &repo,
+                "SELECT COUNT(*) FROM dolt_log WHERE message LIKE '%db-migrate%';"
+            ),
+            1,
+            "the retry committed — one honest import message, over verified counts"
+        );
+        assert_eq!(
+            scalar(&dolt, &repo, "SELECT COUNT(*) FROM dolt_status;"),
+            0,
+            "and it carried the earlier run's rows with it, leaving nothing behind"
+        );
+
+        let _ = std::fs::remove_dir_all(&repo);
+    }
+
     // trace:TASK-297 | ai:claude
     /// The acceptance for the staging half, against the real engine: a hand-run
     /// `INSERT` sitting in the working set is not swept into a quizdom commit.
@@ -1335,7 +1426,7 @@ mod tests {
             &mut Vec::new(),
         ) {
             Err(QuizdomError::Dolt(message)) => {
-                assert!(message.contains("quizdom did not make"), "{message}");
+                assert!(message.contains("no quizdom run left there"), "{message}");
                 assert!(message.contains("nodes"), "{message}");
             }
             other => panic!("expected a refusal, got {other:?}"),
@@ -1486,7 +1577,7 @@ mod tests {
     #[test]
     fn db_migrate_refuses_rather_than_absorbing_a_foreign_working_set_edit() {
         let dir = dolt_repo_dir("foreign");
-        let dolt = RecordingDolt::new(&[r#"{"rows":[{"table_name":"nodes"}]}"#]);
+        let dolt = RecordingDolt::new(&[HAND_EDITED_NODES]);
 
         let result = db_migrate(
             &config(&dir, None),
@@ -1496,7 +1587,7 @@ mod tests {
         );
         match result {
             Err(QuizdomError::Dolt(message)) => {
-                assert!(message.contains("quizdom did not make"), "{message}");
+                assert!(message.contains("no quizdom run left there"), "{message}");
                 assert!(message.contains("nodes"), "it names the table: {message}");
                 assert!(
                     message.contains("quizdom db-backup"),
@@ -1509,6 +1600,92 @@ mod tests {
             dolt.calls.borrow().len(),
             1,
             "the probe is the only thing that ran"
+        );
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    // trace:BUG-366 | ai:claude
+    /// The reported regression, end to end at the unit level: the retry after a
+    /// failed parity run gets all the way through and commits.
+    ///
+    /// TASK-297's pre-flight refused on any pending change, so the rows the
+    /// failed run had left behind — the ones its own error message told the user
+    /// were sitting there — became the reason the retry could not run. The way
+    /// out was hand-run `dolt`, from a guard whose whole purpose was to keep the
+    /// user's hand-run `dolt` safe.
+    #[test]
+    fn the_retry_after_a_failed_parity_run_carries_on_and_commits() {
+        let dir = dolt_repo_dir("retry");
+        let dolt = RecordingDolt::new(&[
+            OUR_FAILED_RUNS_ROWS, // pre-flight: the aborted run's own rows
+            "",                   // nodes
+            "",                   // edges
+            NODES_PARITY,
+            EDGES_PARITY,
+            SPOT_CHECK,
+            "", // add
+            "", // commit
+        ]);
+        let mut output = Vec::new();
+
+        db_migrate(
+            &config(&dir, Some("Q-1")),
+            &scripted_store(),
+            &dolt,
+            &mut output,
+        )
+        .expect("a retry must not be blocked by the run it is retrying");
+
+        let rendered = String::from_utf8(output).unwrap();
+        assert!(
+            rendered.contains("Resuming an earlier quizdom run"),
+            "and it names what it is carrying forward: {rendered}"
+        );
+        assert!(rendered.contains("Committed the import to Dolt history."));
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    // trace:BUG-366 | ai:claude
+    /// Why the retry above can trust the flag: the rows a failed run leaves are
+    /// staged because the statement that wrote them staged them, in the same
+    /// spawn. A following `dolt add` would leave a window where a killed
+    /// migration's rows are indistinguishable from a hand edit.
+    #[test]
+    fn every_import_batch_stages_itself_as_it_lands() {
+        let dir = dolt_repo_dir("stages");
+        let dolt = RecordingDolt::new(&[
+            NO_FOREIGN_CHANGES,
+            "",
+            "",
+            NODES_PARITY,
+            EDGES_PARITY,
+            SPOT_CHECK,
+            "",
+            "",
+        ]);
+
+        db_migrate(
+            &config(&dir, Some("Q-1")),
+            &scripted_store(),
+            &dolt,
+            &mut Vec::new(),
+        )
+        .expect("migration should succeed");
+
+        for (index, what) in [(1, "the nodes batch"), (2, "the edges batch")] {
+            assert!(
+                dolt.sql(index)
+                    .ends_with("CALL DOLT_ADD('nodes', 'edges');"),
+                "{what} must stage itself: {}",
+                dolt.sql(index)
+            );
+        }
+        assert!(
+            !dolt.sql(3).contains("DOLT_ADD"),
+            "and a parity SELECT must not: {}",
+            dolt.sql(3)
         );
 
         let _ = std::fs::remove_dir_all(&dir);

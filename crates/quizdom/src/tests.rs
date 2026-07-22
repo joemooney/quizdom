@@ -1,6 +1,6 @@
 use crate::bank::*;
 use crate::contradiction::*;
-use crate::dolt_store::{DoltDomainStore, ScriptedDoltRunner};
+use crate::dolt_store::{DoltDomainStore, ScriptedDoltRunner, CLEAN_WORKING_SET};
 use crate::error::*;
 use crate::honing::*;
 use crate::input::*;
@@ -589,7 +589,12 @@ fn llm_strategy_persists_generated_question_when_configured() {
     )]);
     // trace:STORY-208 | ai:claude — generated questions persist to Dolt: an
     // id-mint scan, the nodes insert, then the begets edge insert.
-    let runner = ScriptedDoltRunner::new(vec![(0, r#"{"rows":[{"id":"Q-41"}]}"#, "")]);
+    // trace:BUG-366 | ai:claude — each write opens with the foreign-change
+    // pre-flight, so the mint scan is the SECOND spawn.
+    let runner = ScriptedDoltRunner::new(vec![
+        CLEAN_WORKING_SET,
+        (0, r#"{"rows":[{"id":"Q-41"}]}"#, ""),
+    ]);
     let handle = runner.clone();
     let strategy = LlmNextQuestionStrategy::with_generated_question_persister(
         MockLlm::ok(
@@ -622,9 +627,10 @@ fn llm_strategy_persists_generated_question_when_configured() {
     );
     assert_eq!(next.weight, 50);
     let calls = handle.calls.borrow();
-    // mint scan + insert + add + commit, then edge insert + add + commit.
-    assert_eq!(calls.len(), 7);
-    let insert = ScriptedDoltRunner::sql_of_call(&calls[1]);
+    // pre-flight + mint scan + insert + add + commit, then a second pre-flight
+    // + edge insert + add + commit.
+    assert_eq!(calls.len(), 9);
+    let insert = ScriptedDoltRunner::sql_of_call(&calls[2]);
     assert!(insert.contains("'Q-42'"));
     assert!(insert.contains("'What definition of responsibility are you using?'"));
     assert!(
@@ -632,7 +638,7 @@ fn llm_strategy_persists_generated_question_when_configured() {
         "tags column carries no weight tag: {insert}"
     );
     assert!(insert.contains(", 50)"), "weight in the column: {insert}");
-    let edge = ScriptedDoltRunner::sql_of_call(&calls[4]);
+    let edge = ScriptedDoltRunner::sql_of_call(&calls[6]);
     assert!(edge.contains("'Q-1', 'Q-42', 'begets'"));
 }
 
@@ -645,7 +651,10 @@ fn llm_strategy_leaves_free_text_followon_unconditional() {
         AnswerKind::FreeText,
         ["topic:free-will", "answer:free-text"],
     )]);
-    let runner = ScriptedDoltRunner::new(vec![(0, r#"{"rows":[{"id":"Q-41"}]}"#, "")]);
+    let runner = ScriptedDoltRunner::new(vec![
+        CLEAN_WORKING_SET,
+        (0, r#"{"rows":[{"id":"Q-41"}]}"#, ""),
+    ]);
     let handle = runner.clone();
     let strategy = LlmNextQuestionStrategy::with_generated_question_persister(
         MockLlm::ok(
@@ -669,7 +678,7 @@ fn llm_strategy_leaves_free_text_followon_unconditional() {
     // An open-ended answer does not condition the follow-on, so no from-answer tag.
     assert!(!next.tags.iter().any(|tag| tag.starts_with("from-answer:")));
     let calls = handle.calls.borrow();
-    assert!(!ScriptedDoltRunner::sql_of_call(&calls[1]).contains("from-answer:"));
+    assert!(!ScriptedDoltRunner::sql_of_call(&calls[2]).contains("from-answer:"));
 }
 
 #[test]
@@ -1239,7 +1248,10 @@ fn rejected_mapping_mints_user_specific_term_after_steering() {
     ));
     // trace:STORY-208 | ai:claude — the user-specific term lands in Dolt; the
     // mint scan's highest TERM id makes the fresh one TERM-99.
-    let runner = ScriptedDoltRunner::new(vec![(0, r#"{"rows":[{"id":"TERM-98"}]}"#, "")]);
+    let runner = ScriptedDoltRunner::new(vec![
+        CLEAN_WORKING_SET,
+        (0, r#"{"rows":[{"id":"TERM-98"}]}"#, ""),
+    ]);
     let handle = runner.clone();
     let persister = StoreUserSpecificTermPersister::with_store(DoltDomainStore::with_runner(
         "/tmp/quizdom-dolt-tests",
@@ -1267,7 +1279,7 @@ fn rejected_mapping_mints_user_specific_term_after_steering() {
     assert!(log.contains(r#""term_ref":"TERM-99""#));
     assert!(log.contains(r#""raw_definition":"It must originate outside the causal chain.""#));
     let calls = handle.calls.borrow();
-    let insert = ScriptedDoltRunner::sql_of_call(&calls[1]);
+    let insert = ScriptedDoltRunner::sql_of_call(&calls[2]);
     assert!(insert.contains("'TERM-99'"));
     assert!(insert.contains("'term'"));
     assert!(insert.contains("'free will / user-specific'"));
@@ -1284,7 +1296,10 @@ fn rejected_mapping_mints_user_specific_term_after_steering() {
 
 #[test]
 fn user_specific_term_persister_maps_aida_add_output() {
-    let runner = ScriptedDoltRunner::new(vec![(0, r#"{"rows":[{"id":"TERM-87"}]}"#, "")]);
+    let runner = ScriptedDoltRunner::new(vec![
+        CLEAN_WORKING_SET,
+        (0, r#"{"rows":[{"id":"TERM-87"}]}"#, ""),
+    ]);
     let persister = StoreUserSpecificTermPersister::with_store(DoltDomainStore::with_runner(
         "/tmp/quizdom-dolt-tests",
         runner,
@@ -2956,7 +2971,8 @@ fn contradiction_follow_up_persists_resolution_to_graph_and_log() {
     .unwrap();
 
     let dolt_calls = dolt_handle.calls.borrow();
-    let contradicts = ScriptedDoltRunner::sql_of_call(&dolt_calls[0]);
+    // trace:BUG-366 | ai:claude — call 0 is the write's foreign-change pre-flight.
+    let contradicts = ScriptedDoltRunner::sql_of_call(&dolt_calls[1]);
     assert!(contradicts.contains("INSERT IGNORE INTO edges"));
     assert!(contradicts.contains("'Q-1', 'Q-2', 'contradicts'"));
     drop(dolt_calls);
@@ -3730,7 +3746,10 @@ fn quick_add_issues_begets_edge_for_later_sessions() {
     let config = test_config(&path, "Q-23");
     // trace:STORY-208 | ai:claude — the quick-add persists to Dolt: mint scan
     // (highest Q id → Q-77), nodes insert, then the begets edge insert.
-    let runner = ScriptedDoltRunner::new(vec![(0, r#"{"rows":[{"id":"Q-76"}]}"#, "")]);
+    let runner = ScriptedDoltRunner::new(vec![
+        CLEAN_WORKING_SET,
+        (0, r#"{"rows":[{"id":"Q-76"}]}"#, ""),
+    ]);
     let handle = runner.clone();
     let persister = crate::persist::StoreUserAuthoredQuestionPersister::with_store(
         DoltDomainStore::with_runner("/tmp/quizdom-dolt-tests", runner),
@@ -3748,14 +3767,15 @@ fn quick_add_issues_begets_edge_for_later_sessions() {
     .unwrap();
 
     let calls = handle.calls.borrow();
-    // mint scan + insert + add + commit, then edge insert + add + commit.
-    assert_eq!(calls.len(), 7);
-    let insert = ScriptedDoltRunner::sql_of_call(&calls[1]);
+    // pre-flight + mint scan + insert + add + commit, then a second pre-flight
+    // + edge insert + add + commit.
+    assert_eq!(calls.len(), 9);
+    let insert = ScriptedDoltRunner::sql_of_call(&calls[2]);
     assert!(insert.contains("'Q-77'"));
     assert!(insert.contains("'source:user-authored,topic:free-will,answer:yes-no,seed'"));
     assert!(insert.contains(", 50)"), "weight in the column: {insert}");
     // begets is current -> new.
-    let edge = ScriptedDoltRunner::sql_of_call(&calls[4]);
+    let edge = ScriptedDoltRunner::sql_of_call(&calls[6]);
     assert!(edge.contains("'Q-23', 'Q-77', 'begets'"));
     drop(calls);
 

@@ -174,6 +174,34 @@ where
         Ok(found)
     }
 
+    // trace:BUG-366 | ai:claude
+    /// The pre-flight, taken before every write this store makes.
+    ///
+    /// TASK-297 gave `db-init` and `db-migrate` this protection and left the
+    /// store — the writer that runs most often, and the one a hand edit is most
+    /// likely to collide with — without it (TASK-357). A session answered on top
+    /// of a pending `UPDATE nodes …` staged that edit and filed it under
+    /// "quizdom: reweight Q-12".
+    ///
+    /// Per write, not once per store or once per process. The store is built
+    /// eagerly by half a dozen `Default` persisters, so there is no single
+    /// construction point to hang it on; and the honest question is "is the
+    /// working set clean *now*", which a cached answer from twenty minutes of
+    /// session ago cannot address. The cost is one `dolt sql` probe per graph
+    /// write, on a path that already spawns three.
+    fn begin_write(&self) -> Result<crate::db_init::WriteClaim> {
+        // trace:TASK-280 | ai:claude — spawns dolt directly rather than through
+        // `run_dolt`, so it takes the tripwire itself.
+        crate::db_init::guard_test_path("the domain-graph path", &self.path);
+        let claim = crate::db_init::begin_write(&self.runner, &self.path, "quizdom")?;
+        if let Some(note) = claim.resumed_note() {
+            // trace:STORY-342 | ai:claude — the TUI owns the alternate screen,
+            // so a survivable observation goes to the log, never the terminal.
+            crate::diagnostics::record(&note);
+        }
+        Ok(claim)
+    }
+
     // trace:STORY-291 | ai:claude — one commit tail, shared with db-init /
     // db-migrate now that they commit their own writes too.
     /// Stage and commit a completed write. A no-op write (e.g. an idempotent
@@ -183,22 +211,17 @@ where
     // trace:TASK-297 | ai:claude — stages `nodes` / `edges` by name, never
     // `-A`, so a hand-made table in the working set is not swept into a commit
     // message about a session answer.
-    fn commit(&self, message: &str) -> Result<()> {
+    fn commit(&self, claim: &crate::db_init::WriteClaim, message: &str) -> Result<()> {
         // trace:TASK-280 | ai:claude — the commit tail spawns dolt directly
         // rather than through `run_dolt`, so it takes the tripwire itself.
         crate::db_init::guard_test_path("the domain-graph path", &self.path);
-        crate::db_init::commit_tables(
-            &self.runner,
-            &self.path,
-            crate::db_init::QUIZDOM_TABLES,
-            message,
-        )
-        .map(|committed| {
-            // trace:STORY-299 | ai:claude
-            if committed {
-                GRAPH_WRITTEN.store(true, Ordering::Relaxed);
-            }
-        })
+        crate::db_init::commit_tables(&self.runner, claim, crate::db_init::QUIZDOM_TABLES, message)
+            .map(|committed| {
+                // trace:STORY-299 | ai:claude
+                if committed {
+                    GRAPH_WRITTEN.store(true, Ordering::Relaxed);
+                }
+            })
     }
 }
 
@@ -373,6 +396,8 @@ where
     }
 
     fn create_node(&self, node: &NewNode) -> Result<String> {
+        // trace:BUG-366 | ai:claude
+        let claim = self.begin_write()?;
         let (kind_value, prefix) = dolt_kind(node.kind);
         // Mint the next id: highest existing numeric suffix for the prefix,
         // plus one. Single-user CLI (ADR-4) — no concurrent minting to race.
@@ -389,7 +414,9 @@ where
             .unwrap_or(0)
             + 1;
         let id = format!("{prefix}{next}");
-        self.sql_json(&format!(
+        // trace:BUG-366 | ai:claude — the write stages itself, so it is quizdom's
+        // in `dolt_status` from the instant it lands.
+        self.sql_json(&crate::db_init::staging_write(&format!(
             "INSERT INTO nodes (id, kind, title, body, tags, weight) \
              VALUES ({}, '{kind_value}', {}, {}, {}, {});",
             sql_quote(&id),
@@ -397,41 +424,50 @@ where
             sql_quote(&node.description),
             sql_quote(&node.tags.join(",")),
             node.weight
-        ))?;
-        self.commit(&format!("quizdom: add node {id}"))?;
+        )))?;
+        self.commit(&claim, &format!("quizdom: add node {id}"))?;
         Ok(id)
     }
 
     fn create_edge(&self, from: &str, to: &str, edge: EdgeKind) -> Result<()> {
+        // trace:BUG-366 | ai:claude
+        let claim = self.begin_write()?;
         let kind = edge.as_str();
         // The (from_id, to_id, kind) primary key makes a duplicate insert a
         // dolt error — matching the trait contract (existing edge is an error).
-        self.sql_json(&format!(
+        self.sql_json(&crate::db_init::staging_write(&format!(
             "INSERT INTO edges (from_id, to_id, kind) VALUES ({}, {}, '{kind}');",
             sql_quote(from),
             sql_quote(to)
-        ))?;
-        self.commit(&format!("quizdom: add edge {from} -{kind}-> {to}"))
+        )))?;
+        self.commit(&claim, &format!("quizdom: add edge {from} -{kind}-> {to}"))
     }
 
     fn ensure_edge(&self, from: &str, to: &str, edge: EdgeKind) -> Result<()> {
+        // trace:BUG-366 | ai:claude
+        let claim = self.begin_write()?;
         let kind = edge.as_str();
-        self.sql_json(&format!(
+        self.sql_json(&crate::db_init::staging_write(&format!(
             "INSERT IGNORE INTO edges (from_id, to_id, kind) VALUES ({}, {}, '{kind}');",
             sql_quote(from),
             sql_quote(to)
-        ))?;
-        self.commit(&format!("quizdom: ensure edge {from} -{kind}-> {to}"))
+        )))?;
+        self.commit(
+            &claim,
+            &format!("quizdom: ensure edge {from} -{kind}-> {to}"),
+        )
     }
 
     // trace:STORY-208 | ai:claude
     fn update_weight_and_tags(&self, id: &str, weight: u32, tags: &[String]) -> Result<()> {
-        self.sql_json(&format!(
+        // trace:BUG-366 | ai:claude
+        let claim = self.begin_write()?;
+        self.sql_json(&crate::db_init::staging_write(&format!(
             "UPDATE nodes SET tags = {}, weight = {weight} WHERE id = {};",
             sql_quote(&tags.join(",")),
             sql_quote(id)
-        ))?;
-        self.commit(&format!("quizdom: reweight {id}"))
+        )))?;
+        self.commit(&claim, &format!("quizdom: reweight {id}"))
     }
 
     // trace:TASK-224 | ai:claude — name the depth limit instead of leaking it.
@@ -573,6 +609,9 @@ where
         if latest.is_empty() {
             return Ok(());
         }
+        // trace:BUG-366 | ai:claude — after the empty check: a batch with nothing
+        // in it writes nothing, so it has nothing to pre-flight.
+        let claim = self.begin_write()?;
         let count = latest.len();
         let rows: Vec<CaseArms> = latest
             .into_iter()
@@ -593,12 +632,12 @@ where
                 .map(|row| row.id.as_str())
                 .collect::<Vec<_>>()
                 .join(", ");
-            self.sql_json(&format!(
+            self.sql_json(&crate::db_init::staging_write(&format!(
                 "UPDATE nodes SET tags = CASE id{tag_arms} END, \
                  weight = CASE id{weight_arms} END WHERE id IN ({ids});"
-            ))?;
+            )))?;
         }
-        self.commit(&format!("quizdom: reweight {count} node(s)"))
+        self.commit(&claim, &format!("quizdom: reweight {count} node(s)"))
     }
 }
 
@@ -646,6 +685,16 @@ fn test_only_domain_graph_path() -> PathBuf {
     ))
 }
 
+// trace:BUG-366 | ai:claude
+/// What the foreign-change pre-flight sees in a repo with nothing uncommitted:
+/// `dolt sql -r json` omits the `rows` key entirely for an empty result.
+///
+/// Every store WRITE opens with that probe, so a test that scripts a write
+/// starts its responses with this. Shared across the modules that drive the
+/// store through [`ScriptedDoltRunner`], rather than re-spelt in each.
+#[cfg(test)]
+pub(crate) const CLEAN_WORKING_SET: (i32, &str, &str) = (0, "{}", "");
+
 // trace:STORY-208 | ai:claude
 /// Test double shared across modules: records every dolt invocation and
 /// replays canned `(raw_status, stdout, stderr)` responses in FIFO order.
@@ -687,7 +736,13 @@ impl DoltRunner for ScriptedDoltRunner {
         let (raw_status, stdout, stderr) = {
             let mut responses = self.responses.borrow_mut();
             if responses.is_empty() {
-                (0, String::new(), String::new())
+                // trace:BUG-366 | ai:claude — an unscripted spawn answers with
+                // an EMPTY JSON DOCUMENT rather than an empty stream. Both mean
+                // "nothing came back" to a reader of rows, but only the former
+                // parses — and since the pre-flight probe now runs on every
+                // write, a test that scripts its writes and lets the rest
+                // default would otherwise trip over the difference.
+                (0, "{}".to_string(), String::new())
             } else {
                 responses.remove(0)
             }
@@ -707,6 +762,14 @@ mod tests {
 
     fn store_with(responses: Vec<(i32, &str, &str)>) -> DoltDomainStore<ScriptedDoltRunner> {
         DoltDomainStore::with_runner("/tmp/quizdom-dolt", ScriptedDoltRunner::new(responses))
+    }
+
+    /// The store, with the pre-flight response already in front — the first
+    /// spawn any write makes (BUG-366).
+    fn writing_store(responses: Vec<(i32, &str, &str)>) -> DoltDomainStore<ScriptedDoltRunner> {
+        let mut scripted = vec![CLEAN_WORKING_SET];
+        scripted.extend(responses);
+        store_with(scripted)
     }
 
     fn sql_of(call: &[String]) -> String {
@@ -968,7 +1031,7 @@ mod tests {
 
     #[test]
     fn create_node_mints_the_next_id_and_commits() {
-        let store = store_with(vec![
+        let store = writing_store(vec![
             (0, r#"{"rows":[{"id":"Q-7"},{"id":"Q-3"}]}"#, ""), // max scan
             (0, "", ""),                                        // insert
             (0, "", ""),                                        // add nodes edges
@@ -986,7 +1049,10 @@ mod tests {
 
         assert_eq!(id, "Q-8");
         let calls = store.runner.calls.borrow();
-        let insert = sql_of(&calls[1]);
+        // trace:BUG-366 | ai:claude — the pre-flight is the first thing a write
+        // does, before even the id scan.
+        assert!(sql_of(&calls[0]).contains("FROM dolt_status"), "{calls:?}");
+        let insert = sql_of(&calls[2]);
         assert!(insert.contains("'Q-8'"));
         assert!(
             insert.contains("'What''s a cause?'"),
@@ -997,14 +1063,19 @@ mod tests {
             "tags column carries only real tags: {insert}"
         );
         assert!(insert.contains(", 55)"), "weight in the column: {insert}");
+        // trace:BUG-366 | ai:claude — and stages itself in the same statement.
+        assert!(
+            insert.ends_with("CALL DOLT_ADD('nodes', 'edges');"),
+            "{insert}"
+        );
         // trace:TASK-297 | ai:claude — the tables quizdom owns, by name.
-        assert_eq!(calls[2], ["add", "nodes", "edges"]);
-        assert_eq!(&calls[3][0..2], &["commit", "-m"]);
+        assert_eq!(calls[3], ["add", "nodes", "edges"]);
+        assert_eq!(&calls[4][0..2], &["commit", "-m"]);
     }
 
     #[test]
     fn term_ids_use_the_term_prefix_starting_at_one() {
-        let store = store_with(vec![(0, r#"{"rows":[]}"#, ""), (0, "", "")]);
+        let store = writing_store(vec![(0, r#"{"rows":[]}"#, ""), (0, "", "")]);
         let node = NewNode {
             kind: NodeKind::Term,
             title: "free will".to_string(),
@@ -1017,12 +1088,12 @@ mod tests {
 
         assert_eq!(id, "TERM-1");
         let calls = store.runner.calls.borrow();
-        assert!(sql_of(&calls[1]).contains("'term'"));
+        assert!(sql_of(&calls[2]).contains("'term'"));
     }
 
     #[test]
     fn create_edge_surfaces_duplicate_key_errors() {
-        let store = store_with(vec![(1 << 8, "", "duplicate primary key")]);
+        let store = writing_store(vec![(1 << 8, "", "duplicate primary key")]);
         match store.create_edge("Q-1", "Q-2", EdgeKind::Begets) {
             Err(QuizdomError::Dolt(message)) => assert!(message.contains("duplicate")),
             other => panic!("expected Dolt error, got {other:?}"),
@@ -1031,10 +1102,11 @@ mod tests {
 
     #[test]
     fn ensure_edge_tolerates_the_nothing_to_commit_no_op() {
-        let store = store_with(vec![
+        let store = writing_store(vec![
             (0, "", ""),                       // insert ignore (no-op)
             (0, "", ""),                       // add nodes edges
             (1 << 8, "", "nothing to commit"), // commit refuses
+            (0, "{}", ""),                     // the clean-tree probe behind it
         ]);
 
         store
@@ -1042,12 +1114,12 @@ mod tests {
             .expect("idempotent ensure should succeed");
 
         let calls = store.runner.calls.borrow();
-        assert!(sql_of(&calls[0]).contains("INSERT IGNORE"));
+        assert!(sql_of(&calls[1]).contains("INSERT IGNORE"));
     }
 
     #[test]
     fn update_weight_and_tags_writes_both_columns_in_one_update() {
-        let store = store_with(vec![(0, "", ""), (0, "", ""), (0, "", "")]);
+        let store = writing_store(vec![(0, "", ""), (0, "", ""), (0, "", "")]);
         let tags = ["topic:free-will", "quality:insightful"].map(String::from);
 
         store
@@ -1055,7 +1127,7 @@ mod tests {
             .expect("reweight should succeed");
 
         let calls = store.runner.calls.borrow();
-        let update = sql_of(&calls[0]);
+        let update = sql_of(&calls[1]);
         assert!(update.contains("tags = 'topic:free-will,quality:insightful'"));
         assert!(update.contains("weight = 62"));
         assert!(update.contains("WHERE id = 'Q-1'"));
@@ -1268,7 +1340,7 @@ mod tests {
 
     #[test]
     fn update_weights_writes_every_row_in_one_update_and_one_commit() {
-        let store = store_with(vec![(0, "", ""), (0, "", ""), (0, "", "")]);
+        let store = writing_store(vec![(0, "", ""), (0, "", ""), (0, "", "")]);
         let updates = vec![
             (
                 "Q-1".to_string(),
@@ -1289,10 +1361,10 @@ mod tests {
         let calls = store.runner.calls.borrow();
         assert_eq!(
             calls.len(),
-            3,
-            "one UPDATE + one add + one commit, not three per row"
+            4,
+            "one pre-flight + one UPDATE + one add + one commit, not four per row"
         );
-        let update = sql_of(&calls[0]);
+        let update = sql_of(&calls[1]);
         assert!(
             update.contains(
                 "tags = CASE id WHEN 'Q-1' THEN 'topic:x,quality:insightful' \
@@ -1305,13 +1377,13 @@ mod tests {
             "{update}"
         );
         assert!(update.contains("WHERE id IN ('Q-1', 'Q-2')"), "{update}");
-        assert_eq!(calls[1], ["add", "nodes", "edges"]);
-        assert_eq!(&calls[2][0..2], &["commit", "-m"]);
+        assert_eq!(calls[2], ["add", "nodes", "edges"]);
+        assert_eq!(&calls[3][0..2], &["commit", "-m"]);
     }
 
     #[test]
     fn update_weights_takes_the_last_entry_for_a_repeated_id() {
-        let store = store_with(vec![(0, "", ""), (0, "", ""), (0, "", "")]);
+        let store = writing_store(vec![(0, "", ""), (0, "", ""), (0, "", "")]);
         let updates = vec![
             (
                 "Q-1".to_string(),
@@ -1328,7 +1400,7 @@ mod tests {
         store.update_weights(&updates).expect("reweight");
 
         let calls = store.runner.calls.borrow();
-        let update = sql_of(&calls[0]);
+        let update = sql_of(&calls[1]);
         assert!(update.contains("THEN 90"), "last write wins: {update}");
         assert!(!update.contains("THEN 10"), "{update}");
     }
@@ -1366,7 +1438,7 @@ mod tests {
 
     #[test]
     fn update_weights_splits_a_wide_tags_batch_below_the_argv_limit() {
-        let store = store_with(Vec::new());
+        let store = writing_store(Vec::new());
         // Worst case for the id-count cap: far fewer than MAX_BATCH_IDS rows,
         // but each carrying a full VARCHAR(2048) tags column. Chunking on ids
         // alone would ship all of this as one ~200 KB argv element.
@@ -1384,6 +1456,9 @@ mod tests {
             .iter()
             .filter(|call| call[0] == "sql")
             .map(|call| sql_of(call))
+            // trace:BUG-366 | ai:claude — the pre-flight is a `sql` spawn too,
+            // and it is not one of the chunks being sized.
+            .filter(|sql| sql.contains("UPDATE nodes"))
             .collect();
         assert!(
             statements.len() > 1,
@@ -1569,11 +1644,15 @@ mod tests {
             .iter()
             .map(|id| format!("({}, 'question', 'fan', '', '', 0)", sql_quote(id)))
             .collect();
+        // trace:BUG-366 | ai:claude — the fixture writes out of band, so it
+        // stages like the store does. Leaving these unstaged would make the
+        // NEXT store write refuse them as a hand edit, which is the pre-flight
+        // working correctly against a test wearing the wrong hat.
         store
-            .sql_json(&format!(
+            .sql_json(&crate::db_init::staging_write(&format!(
                 "INSERT INTO nodes (id, kind, title, body, tags, weight) VALUES {};",
                 fan_rows.join(", ")
-            ))
+            )))
             .expect("fan node insert should succeed");
         let values: Vec<String> = targets
             .iter()
@@ -1586,10 +1665,10 @@ mod tests {
             })
             .collect();
         store
-            .sql_json(&format!(
+            .sql_json(&crate::db_init::staging_write(&format!(
                 "INSERT INTO edges (from_id, to_id, kind) VALUES {};",
                 values.join(", ")
-            ))
+            )))
             .expect("same-second edge insert should succeed");
         let mut lexical = targets.clone();
         lexical.sort();
@@ -1656,6 +1735,75 @@ mod tests {
             [12, 88]
         );
         assert_eq!(after[0].tags, ["batched".to_string()]);
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    // trace:BUG-366 | ai:claude
+    /// The TASK-357 half, against the real engine: a session write refuses to
+    /// absorb a hand edit, and does not touch it.
+    ///
+    /// TASK-297 gave `db-init` and `db-migrate` this protection. The store —
+    /// the writer a session runs on every answer, and so the one most likely to
+    /// collide with a `dolt sql` someone left pending — never got it, which
+    /// meant the protection held for the two commands run once a month and not
+    /// for the one run every minute.
+    #[test]
+    #[ignore = "requires the dolt binary on PATH"]
+    fn real_dolt_a_session_write_refuses_to_absorb_a_hand_run_edit() {
+        let dir = std::env::temp_dir().join(format!(
+            "quizdom-dolt-store-hand-edit-{}",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_dir_all(&dir);
+        crate::db_init::run_db_init(
+            [
+                "db-init".to_string(),
+                "--path".to_string(),
+                dir.display().to_string(),
+            ],
+            &mut Vec::new(),
+        )
+        .expect("bootstrap should succeed");
+        let store = DoltDomainStore::new(&dir);
+        let seed = store
+            .create_node(&NewNode {
+                kind: NodeKind::Question,
+                title: "seed".to_string(),
+                description: String::new(),
+                tags: Vec::new(),
+                weight: 50,
+            })
+            .expect("the ordinary write path works");
+
+        // What `db-backup`'s own documentation invites the user to do.
+        store
+            .sql_json(
+                "INSERT INTO nodes (id, kind, title, body, tags, weight) \
+                 VALUES ('Q-900', 'question', 'written by hand', '', '', 0);",
+            )
+            .expect("a hand-run write is a supported thing to do");
+
+        match store.update_weight_and_tags(&seed, 12, &[]) {
+            Err(QuizdomError::Dolt(message)) => {
+                assert!(message.contains("no quizdom run left there"), "{message}");
+                assert!(message.contains("nodes"), "it names the table: {message}");
+            }
+            other => panic!("a session write must not absorb it, got {other:?}"),
+        }
+
+        let history: Vec<serde_json::Map<String, serde_json::Value>> = store
+            .sql_json("SELECT message FROM dolt_log WHERE message LIKE '%reweight%';")
+            .unwrap();
+        assert!(
+            history.is_empty(),
+            "no commit describing a reweight carries the hand-written row: {history:?}"
+        );
+        assert_eq!(
+            store.fetch_node("Q-900").unwrap().title,
+            "written by hand",
+            "and the edit is still there — refusing is not discarding"
+        );
 
         let _ = std::fs::remove_dir_all(&dir);
     }
