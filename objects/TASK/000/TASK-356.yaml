@@ -1,0 +1,43 @@
+id: 019f8b48-8c29-76b3-b30a-2abce38486df
+spec_id: TASK-356
+agreed_id: TASK-356
+title: The --mode flag still persists itself into settings.toml on the first /settings, clobbering the saved default
+description: |
+  STORY-350/TASK-300 ended the clobber where the ENGINE's compiled default was pushed back
+  across the seam and saved over a hand-written `mode = "debate"`. The same clobber is still
+  reachable through the `--mode` FLAG.
+
+  Sequence:
+
+  1. `settings.toml` has `mode = "debate"` (the user's saved default).
+  2. `quizdom session start --mode socratic` — a per-invocation choice. `mode_pinned` is
+     true, so `starting_mode` correctly returns Socratic and the persisted tier is skipped.
+  3. The user opens `/settings`. `fe.sync_mode(mode.as_str())` (session.rs:3222) pushes the
+     LIVE Socratic across the seam, the front-end's `Settings` takes it, and `settings::save`
+     writes `mode = "socratic"` over the file.
+  4. The user's saved default is gone. The next session with no flag starts Socratic.
+
+  The same line pushed `config.mode` before this PR, so the behaviour is pre-existing and
+  STORY-350's acceptance does not cover it. It is filed because it is the SAME clobber shape
+  the story set out to end — a per-invocation override writing itself into persistent state —
+  now reachable via the flag rather than via the compiled default. `score` has no flag, so
+  this asymmetry is unique to `mode`.
+
+  Design question for the advisor, not a mechanical fix: should `--mode` be a session-scoped
+  override that `/settings` shows but never saves (needs the panel to distinguish "live" from
+  "persisted"), or is writing it through the intended behaviour? The `--path`-style flags on
+  the db commands do not persist, which argues for the former.
+
+  Raised in review of PR-106: https://github.com/joemooney/quizdom/pull/106#issuecomment-5050483733
+status: Draft
+priority: Medium
+owner: ''
+feature: Uncategorized
+created_at: 2026-07-22T19:23:35.337130346Z
+modified_at: 2026-07-22T19:23:35.337130346Z
+req_type: Task
+tags:
+- from-review:PR-106
+- session
+- settings
+- severity:minor
