@@ -1,0 +1,39 @@
+id: 019f8b0d-8098-71a3-b7a2-123b86c33576
+spec_id: TASK-338
+agreed_id: TASK-338
+title: TASK-319 shipped as a typed BatchSeam rather than the seam-neutral tail it proposed
+description: |
+  TASK-319 proposed the "cheapest fix": make the shared tail seam-neutral, e.g.
+  "a batch must return one entry per requested id", in all three messages.
+
+  STORY-327's acceptance asked for something slightly stronger — "a write-seam
+  contract violation produces a message naming the write seam, not a load" — so
+  the seam became a value instead:
+
+      struct BatchSeam { name: &'static str, verb: &'static str }
+      const LOAD_QUESTIONS:      BatchSeam = { name: "load_questions",      verb: "load"  };
+      const REWEIGHT_QUESTIONS:  BatchSeam = { name: "reweight_questions",  verb: "write" };
+
+  The write seam now reads "...: a batch write must return one entry per
+  requested id" rather than losing the word entirely. Three call-site strings
+  became one constant apiece, so a fourth seam is a constant rather than a
+  fourth string to keep in sync by hand — which is the failure mode that
+  produced TASK-319 in the first place (the tail was copied from `take_by_id`
+  and never re-read against the seam it was applied to).
+
+  Cost: a small type where a string edit would have done. Cheap, but it is more
+  than the task asked for, and the advisor may prefer the minimal form.
+
+  Raised by the implementer while working STORY-327.
+  Branch: story-327  ·  Commit: 4b52709  (PR link added on merge)
+status: Draft
+priority: Medium
+owner: ''
+feature: Uncategorized
+created_at: 2026-07-22T18:19:05.752644763Z
+modified_at: 2026-07-22T18:19:05.752644763Z
+req_type: Task
+tags:
+- from-implementer:STORY-327
+- kind:design-choice
+- severity:cosmetic
