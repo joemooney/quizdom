@@ -1,0 +1,26 @@
+id: 019f8a7a-5365-7952-91db-13d5c65cf912
+spec_id: STORY-303
+agreed_id: STORY-303
+title: 'Review PR-99: STORY-290: settings.rs correctness — TOML-legal values, anchored relative paths, a save that never loses keys'
+description: |
+  Auto-filed by `aida pr auto-queue-review` (typically from /aida-pr) (session `019f8a69`) for branch `story-290`.
+
+  - PR: <https://github.com/joemooney/quizdom/pull/99>
+  - Branch: `story-290` → `main`
+
+  ## Covers
+
+  - STORY-290
+
+  ## Acceptance
+
+  - Generate a structured review prompt with `aida review prompt --pr 99` and verify each spec's acceptance criteria.
+  - Approve and merge, or request changes by spec id.
+  - Mark this story `completed` once the PR is merged.
+status: Approved
+priority: Medium
+owner: ''
+feature: Uncategorized
+created_at: 2026-07-22T15:38:20.389291896Z
+modified_at: 2026-07-22T15:38:20.389291896Z
+req_type: Story
