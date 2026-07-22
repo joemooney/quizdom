@@ -97,7 +97,6 @@ pub(crate) trait FrontEnd {
     /// from its input box (the line front-end's `author_io` is empty in the TUI, so
     /// without an override interactive `/add` reads immediate EOF). The core itself
     /// is unchanged either way — only the input/output channels differ.
-    #[allow(clippy::too_many_arguments)]
     fn author_question(
         &mut self,
         existing: &[crate::model::Question],

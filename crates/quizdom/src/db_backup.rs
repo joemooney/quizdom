@@ -717,14 +717,15 @@ pub(crate) enum BackupPosition {
     Ahead,
     /// The question could not be answered — no repo, no dolt, an older dolt
     /// without the system tables, unparseable output. Deliberately distinct
-    /// from [`Self::Ahead`]: a probe that failed is not evidence of drift, and
-    /// nagging on a broken probe trains users to ignore the line.
+    /// from [`Self::Ahead`]: a probe that failed is not evidence of drift, so
+    /// what the user is told is "could not tell", never "you have changes to
+    /// push".
     ///
-    /// That reasoning governs the REMINDER only. What it does to an opted-in
-    /// `auto_backup` push is a separate call, decided in
-    /// [`durability_footer`] (TASK-325): the push runs anyway, because a
-    /// redundant push is cheaper than a skipped one for someone who asked for
-    /// the push. Either way the blind probe is recorded.
+    /// Both halves of the session end now act on it (TASK-325, TASK-328):
+    /// an opted-in `auto_backup` PUSHES anyway (a redundant push is cheaper
+    /// than a skipped one for someone who asked for the push), and a session
+    /// without `auto_backup` SAYS it could not tell. Either way the blind probe
+    /// is recorded.
     Unknown,
 }
 
@@ -827,6 +828,23 @@ pub(crate) fn backup_reminder(backup: &Path) -> String {
     )
 }
 
+// trace:TASK-328 | ai:claude
+/// The reminder's honest sibling: what a session says when the probe could not
+/// answer at all.
+///
+/// It is deliberately a DIFFERENT claim from [`backup_reminder`]. The reminder
+/// asserts drift; this one asserts only ignorance, and names `quizdom logs`
+/// because the reason the probe failed is already in the diagnostic log and is
+/// the actionable part — a missing dolt, a repo that is not there, a dolt too
+/// old for the system tables.
+fn blind_probe_notice(backup: &Path) -> String {
+    format!(
+        "Could not tell whether the domain graph is backed up — run `quizdom db-backup` \
+         to be sure it reaches {}, and `quizdom logs` for why the check failed.",
+        backup.display()
+    )
+}
+
 /// The end-of-session decision, with the push passed in so the branching is
 /// testable without spawning dolt.
 ///
@@ -836,23 +854,36 @@ pub(crate) fn backup_reminder(backup: &Path) -> String {
 /// happen must never be the thing that ends a session badly. The user who opted
 /// in still learns the graph is unbacked-up, and still gets the command.
 ///
-/// # `Unknown` — DECIDED (TASK-325)
+/// # `Unknown` — both halves are honest about not knowing (TASK-325, TASK-328)
 ///
-/// A probe that could not answer is not evidence of drift, so `Unknown` stays
-/// SILENT for the reminder: nagging on a broken probe trains users to ignore
-/// the line. That half was always the intent. What was never decided is what
-/// `Unknown` should do to the PUSH, and reading it as "nothing to do" turned an
-/// `auto_backup = true` a user explicitly opted into into a silent no-op — the
-/// exact failure `auto_backup` exists to prevent, with no breadcrumb anywhere.
+/// A probe that could not answer is not evidence of drift, so `Unknown` must
+/// never produce the reminder's claim ("you have changes to push"). For a while
+/// that was implemented as SILENCE, and silence turned out to be the wrong
+/// reading of it twice over.
 ///
-/// The decision: **`Unknown` + auto-backup ON attempts the push anyway.** The
-/// reminder and the push have different costs when the probe is blind. A
-/// spurious reminder costs the user's trust in every later reminder; a
-/// redundant push costs seconds against a directory the user already told us to
-/// push to. Someone who set `auto_backup = true` has said which of those they
-/// would rather have. `Unknown` + auto-backup OFF stays silent as before, but
-/// now RECORDS the blind probe, so the silence is explicable after the fact
-/// instead of being the one path through this function that leaves no trace.
+/// **The push (TASK-325).** Reading `Unknown` as "nothing to do" turned an
+/// `auto_backup = true` the user explicitly opted into into a silent no-op —
+/// the exact failure `auto_backup` exists to prevent. So **`Unknown` +
+/// auto-backup ON attempts the push anyway**: a redundant push costs seconds
+/// against a directory the user already told us to push to, and someone who set
+/// `auto_backup = true` has said which way they want that traded.
+///
+/// **The reminder (TASK-328).** The other half stayed silent, which left the
+/// user WITHOUT `auto_backup` — the default — getting nothing at all from a
+/// probe that could not tell. Nothing is what a backed-up graph looks like, so
+/// the failure was invisible in exactly the configuration most people run. So
+/// **`Unknown` + auto-backup OFF says it could not tell**
+/// ([`blind_probe_notice`]).
+///
+/// The original worry — that nagging on a broken probe trains users to ignore
+/// the line — is answered by two things rather than by silence. The footer only
+/// fires at all when THIS session wrote to the graph
+/// ([`session_end_durability`]), so it is feedback on what you just did rather
+/// than ambient nagging; and the line makes a weaker, accurate claim
+/// ("could not tell") instead of the reminder's assertion of drift, so it
+/// cannot be wrong in the way that would spend the reminder's credibility.
+/// Both branches also RECORD the blind probe, so neither is a path through this
+/// function that leaves no trace.
 fn durability_footer(
     position: BackupPosition,
     auto_backup: bool,
@@ -886,13 +917,15 @@ fn durability_footer(
         BackupPosition::UpToDate => None,
         // trace:TASK-325 | ai:claude — the blind probe never silently cancels
         // an opted-in push, and never passes without a breadcrumb.
+        // trace:TASK-328 | ai:claude — …and never passes without telling the
+        // user either: silence here reads exactly like "backed up".
         BackupPosition::Unknown if !auto_backup => {
             crate::diagnostics::record(
                 "backup position unknown: could not determine whether the domain graph is \
-                 backed up; auto_backup is off, so nothing was pushed and no reminder was \
-                 shown (a probe that failed is not evidence of drift)",
+                 backed up; auto_backup is off, so nothing was pushed and the session said \
+                 it could not tell",
             );
-            None
+            Some(blind_probe_notice(backup))
         }
         BackupPosition::Unknown => {
             crate::diagnostics::record(
@@ -2045,36 +2078,28 @@ mod tests {
         );
     }
 
-    // A probe that could not answer is not evidence of drift. Nagging on a
-    // failed probe would train users to ignore the line, which costs more than
-    // the missed reminder.
+    // A probe that could not answer is not evidence of drift, so it is read as
+    // `Unknown` rather than folded into `Ahead` — what the user is told is
+    // "could not tell", never "you have changes to push".
     #[test]
-    fn an_unanswerable_probe_is_unknown_and_says_nothing() {
+    fn an_unanswerable_probe_is_unknown_rather_than_ahead() {
         assert_eq!(position_row("{}"), BackupPosition::Unknown);
         assert_eq!(
             backup_position_from_row(None),
             BackupPosition::Unknown,
             "no row at all — an older dolt without the system tables"
         );
-        assert_eq!(
-            durability_footer(
-                BackupPosition::Unknown,
-                false,
-                Path::new("/backup"),
-                || panic!("nothing should push")
-            ),
-            None
-        );
     }
 
     // trace:TASK-325 | ai:claude
-    /// The reminder half of the `Unknown` rule is unchanged — a blind probe is
-    /// not evidence of drift, so an auto-backup-OFF session says nothing. What
-    /// changes is that the silence is now EXPLICABLE: it was the only path
-    /// through `durability_footer` that left no trace anywhere, in the module
-    /// that exists to leave traces.
+    // trace:TASK-328 | ai:claude
+    /// The reminder half of the `Unknown` rule. A blind probe is not evidence
+    /// of drift, so this is NOT the reminder — but it is not silence either:
+    /// silence is what a backed-up graph looks like, so an auto-backup-OFF
+    /// session (the default configuration) learnt nothing at all from a probe
+    /// that had failed. It now says what it actually knows, and records why.
     #[test]
-    fn a_blind_probe_stays_silent_but_records_why() {
+    fn a_blind_probe_says_it_could_not_tell_and_records_why() {
         crate::diagnostics::clear_captured();
 
         let footer = durability_footer(
@@ -2082,9 +2107,26 @@ mod tests {
             false,
             Path::new("/backups/qz"),
             || panic!("auto_backup is off; nothing may push"),
-        );
+        )
+        .expect("a probe that could not answer must not read as `backed up`");
 
-        assert_eq!(footer, None, "a failed probe must not nag");
+        assert!(
+            footer.contains("Could not tell"),
+            "the claim is ignorance, not drift: {footer}"
+        );
+        assert!(
+            !footer.contains("has changes not in its backup"),
+            "…so it must not borrow the reminder's assertion: {footer}"
+        );
+        assert!(footer.contains("quizdom db-backup"), "{footer}");
+        assert!(footer.contains("/backups/qz"), "{footer}");
+        assert!(
+            footer.contains("quizdom logs"),
+            "the reason the probe failed is in the log, and that is the \
+             actionable part: {footer}"
+        );
+        assert_eq!(footer.lines().count(), 1, "one line, not a lecture");
+
         let recorded = crate::diagnostics::captured();
         assert_eq!(recorded.len(), 1, "{recorded:?}");
         assert!(
@@ -2095,6 +2137,70 @@ mod tests {
             recorded[0].contains("auto_backup is off"),
             "the log says which branch was taken: {recorded:?}"
         );
+    }
+
+    // trace:TASK-328 | ai:claude
+    /// Both probe outcomes against both settings, in one table, because the
+    /// bug TASK-328 was filed about was a HOLE in this matrix: five of the six
+    /// cells said something and `Unknown` + auto-backup OFF said nothing, which
+    /// is indistinguishable from `UpToDate` — the one cell that is silent on
+    /// purpose.
+    #[test]
+    fn every_probe_outcome_is_answered_under_both_auto_backup_settings() {
+        let cases = [
+            (BackupPosition::UpToDate, false, None),
+            (BackupPosition::UpToDate, true, None),
+            (
+                BackupPosition::Ahead,
+                false,
+                Some("has changes not in its backup"),
+            ),
+            (
+                BackupPosition::Ahead,
+                true,
+                Some("Backed up the domain graph"),
+            ),
+            (
+                BackupPosition::Unknown,
+                false,
+                Some("Could not tell whether"),
+            ),
+            (
+                BackupPosition::Unknown,
+                true,
+                Some("Could not tell whether"),
+            ),
+        ];
+
+        for (position, auto_backup, expected) in cases {
+            crate::diagnostics::clear_captured();
+            let pushed = RefCell::new(false);
+            let footer = durability_footer(position, auto_backup, Path::new("/backups/qz"), || {
+                *pushed.borrow_mut() = true;
+                Ok(())
+            });
+
+            match expected {
+                None => assert_eq!(
+                    footer, None,
+                    "an up-to-date graph is the ONE silent cell: {position:?} / {auto_backup}"
+                ),
+                Some(fragment) => {
+                    let footer = footer.unwrap_or_else(|| {
+                        panic!("{position:?} / auto_backup={auto_backup} told the user nothing")
+                    });
+                    assert!(footer.contains(fragment), "{position:?}: {footer}");
+                }
+            }
+            // The push runs exactly where the user opted into it and the graph
+            // might not be safe — never on an up-to-date graph, never without
+            // `auto_backup`.
+            assert_eq!(
+                *pushed.borrow(),
+                auto_backup && position != BackupPosition::UpToDate,
+                "{position:?} / auto_backup={auto_backup}"
+            );
+        }
     }
 
     // trace:TASK-325 | ai:claude
@@ -2265,8 +2371,11 @@ mod tests {
         let _ = std::fs::remove_dir_all(&repo);
     }
 
+    // trace:TASK-328 | ai:claude — named for what it asserts: the POSITION is
+    // unknown. What the session then says about that is `durability_footer`'s
+    // call, and since TASK-328 it is no longer silence.
     #[test]
-    fn a_dolt_that_cannot_be_spawned_leaves_the_session_silent() {
+    fn a_dolt_that_cannot_answer_leaves_the_position_unknown() {
         let repo = temp_dir("position-no-dolt");
         std::fs::create_dir_all(repo.join(".dolt")).unwrap();
 
@@ -2287,8 +2396,9 @@ mod tests {
         let _ = std::fs::remove_dir_all(&repo);
     }
 
+    // trace:TASK-328 | ai:claude
     #[test]
-    fn no_repo_is_nothing_to_remind_anyone_about() {
+    fn no_repo_leaves_the_position_unknown_without_spawning_dolt() {
         let runner = RecordingDoltRunner::new(vec![]);
         assert_eq!(
             backup_position(

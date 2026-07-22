@@ -739,3 +739,88 @@ Zero `#[allow(clippy::too_many_arguments)]` remain in `session.rs`. The two in
 
 **Docs.** `docs/architecture/graph-schema.md` gains § *The absent-node
 invariant*; `CLAUDE.md`'s storage-seam bullet names it and points there.
+
+## 2026-07-22 — STORY-342: a log reader, safe rotation, the honest reminder, the last two allows
+
+**Request.** `/aida-pickup STORY-342` — the final consolidation round after the
+review generations converged. Four substantive items: TASK-331 (the diagnostic
+log has no reader), TASK-333 (rotation is `stat`-then-`rename`, so two processes
+can clobber `quizdom.log.1`), TASK-328 (a blind backup probe still says nothing
+when `auto_backup` is off), TASK-336 (the last two `too_many_arguments` allows).
+
+**TASK-331 — `quizdom logs [--tail N] [--path <file>]`.** Logging that cannot be
+read will not be used, and the path resolves through three tiers, so "just cat
+it" needs you to already know which tier won. The reader therefore names the
+resolved file above whatever it prints; `--tail N` says `last N of M entries` so
+a truncated view cannot be mistaken for the whole log; a missing or empty log is
+a plain message and exit 0, because a healthy install genuinely has no file.
+When a rotated generation sits beside the log it is pointed at (never inlined) —
+a `--tail` never reaches the live log's `-- rotated at … --` first line.
+
+It lives in a new `logs.rs`, not in `diagnostics.rs`, and the split is the
+point: *diagnostics writes and never prints; logs prints and never writes*. The
+seam's promise is pinned by a scan of its own source for print macros, and
+putting the one legitimate terminal write inside it would have made that scan a
+statement about a module that does print.
+
+**TASK-333 — rotation safe under concurrency.** `stat`-then-`rename` is a
+TOCTOU race across processes: both see an over-sized log, the first renames it
+to `quizdom.log.1`, the second renames the near-empty file that replaced it over
+that rotated generation, and the megabyte explaining the breakage is gone — in
+exactly the pathological case rotation exists to survive. Two changes, one
+mechanism:
+
+- Every append takes an exclusive advisory lock on the log (`File::lock`, std
+  since 1.89 — no new dependency), so the size check, the rotation and the write
+  are one critical section rather than three racing syscalls.
+- Rotation **copies then truncates in place** instead of renaming, so the live
+  log keeps its identity: a writer holding it open across a rotation keeps
+  writing to the live file instead of silently into the dead generation, and the
+  lock always guards the same object. The copy is staged and renamed into place
+  *before* the truncate, so `quizdom.log.1` is never observable half-written and
+  a failed rotation leaves the log whole rather than empty.
+
+A lock that cannot be taken degrades to the unlocked write — the module's
+standing call that a breadcrumb which cannot be written is worse than one
+written imperfectly.
+
+Three tests pin it, and all three were **verified to fail against the
+pre-TASK-333 code** before being kept: the critical section (an append cannot
+land while another writer holds the log), the mechanism (a handle opened before
+a rotation still writes to the live log, which a `rename` cannot satisfy), and
+the loss itself under eight contending writers — with a watcher sampling
+`quizdom.log.1` throughout, because checking only at the end misses a clobber
+that the next good rotation overwrites. The old code was observed leaving a
+321-byte "generation" behind a 4 KiB limit.
+
+**TASK-328 — both halves honest about not knowing.** STORY-326 made a blind
+probe push when `auto_backup` is on; the reminder half stayed silent on the
+reasoning that a failed probe is not evidence of drift. The first clause is
+right and silence was the wrong conclusion from it: *nothing* is what a
+backed-up graph looks like, so the default configuration (`auto_backup` off)
+learnt nothing at all from a check that had failed. It now says exactly what it
+knows — "Could not tell whether the domain graph is backed up … and `quizdom
+logs` for why the check failed" — a weaker claim than the reminder's assertion
+of drift, so it cannot be wrong in the way that would spend the reminder's
+credibility, and it only fires when *this* session wrote to the graph. A new
+table-driven test walks all six cells (three positions × two settings); the hole
+TASK-328 named was one silent cell indistinguishable from `UpToDate`. Two probe
+tests were renamed to describe what they assert (`…leaves_the_position_unknown`)
+rather than a silence that is no longer the behaviour.
+
+**TASK-336 — the last two allows.** Both were vestigial: `author_question` takes
+six arguments in `frontend.rs` and `tui.rs`, under clippy's threshold of seven,
+so removing the attributes needed no refactor. Zero
+`#[allow(clippy::too_many_arguments)]` remain in the workspace.
+
+**Verified.** `cargo fmt --all` applied; `cargo clippy --workspace --all-targets
+-- -D warnings` exits 0; 692 quizdom + 7 llm tests green (13 new); all 8
+`real_dolt` acceptance tests pass against local dolt 2.2.1. `quizdom logs`
+smoke-tested end to end for the missing, full, `--tail`, rotated-generation and
+bad-argument paths.
+
+**Docs.** `OVERVIEW.md` § *The diagnostic log* gains the reader and the
+concurrency rule, and § *Durability* gains the blind-probe notice; `CLAUDE.md`
+names `quizdom logs` in the command list and in the durability paragraph; both
+`/settings` surfaces (headless list and TUI panel) now name the command beside
+the log path they already showed.

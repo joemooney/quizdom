@@ -26,8 +26,40 @@
 //! but a PERSISTENTLY broken store writes a line per probed read per turn, and
 //! a diagnostic breadcrumb must not become a disk problem in exactly the
 //! situation the user is least likely to be watching. At [`LOG_SIZE_LIMIT`] the
-//! file is renamed to `<log>.1` and a fresh one opens with a line saying so.
-//! One generation, one `rename`, no rotation state to be wrong.
+//! contents are copied to `<log>.1` and the live file is truncated back to
+//! empty, opening with a line saying so. One kept generation, no rotation state
+//! to be wrong.
+//!
+//! ## Safe with more than one quizdom running (TASK-333)
+//!
+//! Two quizdom processes share one log — a TUI session in one terminal, a
+//! `db-backup` from cron in another — so rotation is a CONCURRENT operation,
+//! and the obvious spelling of it is not safe. `stat`-then-`rename` is a
+//! time-of-check/time-of-use race: both processes see an over-sized file, the
+//! first renames it to `<log>.1`, the second renames the near-empty file that
+//! replaced it OVER that rotated generation, and the megabyte of history
+//! explaining the breakage is gone — in exactly the pathological case the
+//! rotation exists to survive.
+//!
+//! Two things close it, and they are one mechanism:
+//!
+//! * Every append takes an **exclusive advisory lock** on the log
+//!   ([`std::fs::File::lock`], std since 1.89 — no dependency), so the
+//!   size check, the rotation, and the write are one critical section across
+//!   processes rather than three racing syscalls.
+//! * Rotation **copies then truncates in place** instead of renaming, so the
+//!   live log is always the same inode. A writer holding the log open across a
+//!   rotation keeps writing to the LIVE file rather than silently into the dead
+//!   generation, and the lock always guards the same object. The cost is
+//!   copying a megabyte once per megabyte logged, which is nothing against the
+//!   guarantee — and the copy lands on a staging name and is renamed into
+//!   place BEFORE the truncate, so `<log>.1` is never half-written and a
+//!   rotation that fails leaves the log whole rather than empty.
+//!
+//! A lock that cannot be taken (a filesystem that does not support it) DEGRADES
+//! to the unlocked write rather than dropping the breadcrumb: the same call the
+//! module makes everywhere else, that a diagnostic which cannot be written is
+//! worse than one written imperfectly.
 //!
 //! ## The invariant
 //!
@@ -118,51 +150,82 @@ const LOG_SIZE_LIMIT: u64 = 1024 * 1024;
 /// The suffix of the one kept previous generation.
 const ROTATED_SUFFIX: &str = ".1";
 
+// trace:TASK-333 | ai:claude
+/// Where a rotation's copy lands before it is renamed onto [`ROTATED_SUFFIX`],
+/// so nobody reading the previous generation can catch it half-copied.
+const STAGING_SUFFIX: &str = ".partial";
+
 /// Append one line to `path`, creating the file and any missing parents, and
 /// ROTATING first when the file has reached [`LOG_SIZE_LIMIT`].
-///
-/// Append mode, never truncate in place: the log is a trail across sessions,
-/// and two quizdom processes writing at once must not clobber each other.
-///
-/// Rotation is a single `rename` to `<path>.1` — one generation, no state file,
-/// no counters, nothing that can be wrong beyond "the previous log is beside
-/// this one". Truncating instead would have been marginally simpler, but it
-/// discards the run of entries that EXPLAINS the breakage that filled the file,
-/// which is the only reason the file exists.
 fn append_entry(path: &Path, line: &str) -> std::io::Result<()> {
+    append_entry_bounded(path, line, LOG_SIZE_LIMIT)
+}
+
+// trace:TASK-333 | ai:claude
+/// [`append_entry`] with the rotation threshold passed in, so the concurrency
+/// tests can drive real rotations against a small log instead of writing a
+/// megabyte per assertion.
+///
+/// Append mode, never truncate the file out from under a reader mid-session:
+/// the log is a trail across sessions, and the several quizdom processes that
+/// may share it must not clobber each other.
+///
+/// The size check, the rotation, and the write happen under ONE exclusive
+/// advisory lock on the log — see the module docs for the race that opens up
+/// without it. A lock that cannot be taken is ignored rather than fatal: a
+/// breadcrumb written without the guarantee still beats no breadcrumb.
+fn append_entry_bounded(path: &Path, line: &str, limit: u64) -> std::io::Result<()> {
     if let Some(parent) = path.parent().filter(|p| !p.as_os_str().is_empty()) {
         std::fs::create_dir_all(parent)?;
     }
-    let rotated = rotate_if_full(path);
     let mut file = std::fs::OpenOptions::new()
         .create(true)
         .append(true)
         .open(path)?;
+    // Released when `file` drops at the end of this call, so every path out —
+    // including the `?` on a failed write — unlocks.
+    let _ = file.lock();
     // The fresh generation opens by saying it is one, so a reader who tails the
     // log does not silently read a truncated story as the whole story.
-    if let Some(note) = rotated {
+    if let Some(note) = rotate_if_full(path, &file, limit) {
         writeln!(file, "{note}")?;
     }
     writeln!(file, "{line}")
 }
 
 // trace:TASK-321 | ai:claude
-/// Move an over-sized log aside, returning the note to open the new one with.
+// trace:TASK-333 | ai:claude — copy-then-truncate, under the caller's lock.
+/// Move an over-sized log's contents aside, returning the note to open the
+/// fresh generation with. The caller must already hold the lock on `file`, and
+/// `file` must be the open handle for `path` — the size is read THROUGH it so
+/// the check and the rotation cannot disagree about which file they mean.
+///
+/// Copy-then-truncate rather than `rename`: the live log keeps its identity
+/// across a rotation, so a concurrent writer cannot end up appending into the
+/// dead generation, and the lock this runs under always guards the same object.
+/// The copy lands on a staging name and is RENAMED into place, so `<log>.1` is
+/// never observable half-written — it is either the previous generation or the
+/// one before it, never a torn mix — and the live log is emptied only once the
+/// copy is safely there.
 ///
 /// Failure is silence, for the same reason a failed write is dropped: a
 /// breadcrumb that takes down the session it was meant to explain is worse than
 /// no breadcrumb. A rotation that cannot happen just leaves the log growing —
-/// the state we were already in.
-fn rotate_if_full(path: &Path) -> Option<String> {
-    let size = std::fs::metadata(path).ok()?.len();
-    if size < LOG_SIZE_LIMIT {
+/// the state we were already in — and takes its staging file with it rather
+/// than leaving litter beside the log.
+fn rotate_if_full(path: &Path, file: &std::fs::File, limit: u64) -> Option<String> {
+    let size = file.metadata().ok()?.len();
+    if size < limit {
         return None;
     }
-    let previous = path.with_file_name(format!(
-        "{}{ROTATED_SUFFIX}",
-        path.file_name()?.to_string_lossy()
-    ));
-    std::fs::rename(path, &previous).ok()?;
+    let name = path.file_name()?.to_string_lossy().into_owned();
+    let previous = path.with_file_name(format!("{name}{ROTATED_SUFFIX}"));
+    let staging = path.with_file_name(format!("{name}{ROTATED_SUFFIX}{STAGING_SUFFIX}"));
+    if std::fs::copy(path, &staging).is_err() || std::fs::rename(&staging, &previous).is_err() {
+        let _ = std::fs::remove_file(&staging);
+        return None;
+    }
+    file.set_len(0).ok()?;
     Some(format!(
         "-- rotated at {size} bytes; the previous entries are in {} --",
         previous.display()
@@ -370,6 +433,179 @@ mod tests {
             "a short trail\nanother line\n"
         );
         assert!(!dir.join("quizdom.log.1").exists());
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    // trace:TASK-333 | ai:claude
+    /// The mechanism, pinned deterministically: a rotation does not swap the
+    /// file out, it empties it. A `rename` would satisfy every assertion in
+    /// `an_oversized_log_rotates_instead_of_growing` and still fail here — the
+    /// handle opened before the rotation would be writing into `quizdom.log.1`,
+    /// which is what makes a rename unsafe for a log several processes share.
+    #[test]
+    fn a_rotation_keeps_the_live_log_in_place_so_open_handles_follow_it() {
+        const LIMIT: u64 = 2 * 1024;
+        let dir = temp_dir("rotate-in-place");
+        let path = dir.join("quizdom.log");
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(&path, "old entry\n".repeat(LIMIT as usize / 10 + 1)).unwrap();
+
+        // A second writer that opened the log BEFORE the rotation, the way a
+        // long-lived process would.
+        let mut held = std::fs::OpenOptions::new()
+            .append(true)
+            .open(&path)
+            .unwrap();
+
+        append_entry_bounded(&path, "the entry that tipped it over", LIMIT).unwrap();
+        writeln!(held, "written through the pre-rotation handle").unwrap();
+
+        let live = std::fs::read_to_string(&path).unwrap();
+        assert!(
+            live.contains("written through the pre-rotation handle"),
+            "the older handle still writes to the LIVE log: {live}"
+        );
+        assert!(
+            !std::fs::read_to_string(dir.join("quizdom.log.1"))
+                .unwrap()
+                .contains("written through the pre-rotation handle"),
+            "…and not into the dead generation"
+        );
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    // trace:TASK-333 | ai:claude
+    /// The critical section, pinned directly: an append cannot proceed while
+    /// another writer holds the log. This is the half of TASK-333 that makes
+    /// the size check and the rotation ONE operation — without it two writers
+    /// can both decide to rotate the same over-sized log.
+    ///
+    /// Threads rather than processes: `File::lock` is per open file
+    /// DESCRIPTION, so two `open`s contend whether or not they are in the same
+    /// process, and the writer here opens the log per append exactly as the
+    /// seam does. A slow machine makes this test weaker, never flaky — the only
+    /// way it fails is a write that genuinely landed while the log was held.
+    #[test]
+    fn an_append_waits_for_whoever_holds_the_log() {
+        let dir = temp_dir("append-lock");
+        let path = dir.join("quizdom.log");
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(&path, "").unwrap();
+
+        let held = std::fs::OpenOptions::new()
+            .append(true)
+            .open(&path)
+            .unwrap();
+        held.lock().expect("the fixture holds the log");
+
+        let (started, has_started) = std::sync::mpsc::channel();
+        std::thread::scope(|scope| {
+            let writer = scope.spawn(|| {
+                started.send(()).unwrap();
+                append_entry_bounded(&path, "the blocked entry", LOG_SIZE_LIMIT).unwrap();
+            });
+
+            has_started.recv().unwrap();
+            std::thread::sleep(std::time::Duration::from_millis(200));
+            assert_eq!(
+                std::fs::read_to_string(&path).unwrap(),
+                "",
+                "an append landed while another writer held the log"
+            );
+
+            drop(held);
+            writer.join().unwrap();
+        });
+
+        assert_eq!(
+            std::fs::read_to_string(&path).unwrap(),
+            "the blocked entry\n",
+            "…and it lands as soon as the log is free"
+        );
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    // trace:TASK-333 | ai:claude
+    /// The loss TASK-333 was filed about, under real contention. Rotation used
+    /// to be `stat` then `rename`: two processes both see an over-sized log,
+    /// the first renames it to `quizdom.log.1`, the second renames the
+    /// near-empty file that replaced it OVER that rotated generation, and the
+    /// history explaining the breakage is gone.
+    ///
+    /// `quizdom.log.1` is only ever written by copying a log that had REACHED
+    /// the limit, so at every instant it is either absent or a FULL generation
+    /// — a clobbered rotation leaves a nearly empty one instead. Checking that
+    /// only at the end would miss it (the next good rotation overwrites the
+    /// evidence), so a watcher samples it throughout and keeps the smallest it
+    /// ever saw. The staged-then-renamed copy is what makes those samples
+    /// trustworthy: a reader can never catch the file half-written.
+    #[test]
+    fn concurrent_writers_never_lose_a_rotated_generation() {
+        const LIMIT: u64 = 4 * 1024;
+        const WRITERS: usize = 8;
+        const ENTRIES: usize = 120;
+        let dir = temp_dir("rotate-concurrent");
+        let path = dir.join("quizdom.log");
+        let rotated = dir.join("quizdom.log.1");
+        std::fs::create_dir_all(&dir).unwrap();
+        let entry = "x".repeat(200);
+        let done = std::sync::atomic::AtomicBool::new(false);
+        let smallest = std::sync::atomic::AtomicU64::new(u64::MAX);
+
+        std::thread::scope(|scope| {
+            scope.spawn(|| {
+                while !done.load(std::sync::atomic::Ordering::Relaxed) {
+                    if let Ok(seen) = std::fs::metadata(&rotated) {
+                        smallest.fetch_min(seen.len(), std::sync::atomic::Ordering::Relaxed);
+                    }
+                    std::thread::yield_now();
+                }
+            });
+            let writers: Vec<_> = (0..WRITERS)
+                .map(|_| {
+                    scope.spawn(|| {
+                        for _ in 0..ENTRIES {
+                            append_entry_bounded(&path, &entry, LIMIT).unwrap();
+                        }
+                    })
+                })
+                .collect();
+            for writer in writers {
+                writer.join().unwrap();
+            }
+            // Joined here rather than at the end of the scope: the watcher runs
+            // until it is told the writing is over.
+            done.store(true, std::sync::atomic::Ordering::Relaxed);
+        });
+
+        // ~192 KiB through a 4 KiB log: dozens of rotations, so the writers
+        // really did contend on rotation rather than all landing in one
+        // generation.
+        assert!(
+            rotated.exists(),
+            "the fixture must have rotated, or it proves nothing"
+        );
+        let smallest = smallest.load(std::sync::atomic::Ordering::Relaxed);
+        assert!(
+            smallest >= LIMIT,
+            "a rotated generation was observed at {smallest} bytes, under the \
+             {LIMIT}-byte limit — a racing writer clobbered the history it was \
+             supposed to keep"
+        );
+        // …and the live log is still bounded: no writer's rotation was skipped.
+        assert!(
+            std::fs::metadata(&path).unwrap().len() < LIMIT + entry.len() as u64 + 128,
+            "the live log stayed under the bound"
+        );
+        assert_eq!(
+            std::fs::read_dir(&dir).unwrap().count(),
+            2,
+            "the live log and exactly one previous generation — the staging \
+             copy never outlives its rotation"
+        );
 
         let _ = std::fs::remove_dir_all(&dir);
     }

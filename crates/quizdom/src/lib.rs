@@ -24,6 +24,10 @@ mod honing;
 mod input;
 // trace:STORY-176 | ai:claude
 mod keymap;
+// trace:TASK-331 | ai:claude — the READER for the diagnostic log the seam
+// above writes: `diagnostics` writes and never prints, `logs` prints and
+// never writes.
+mod logs;
 mod model;
 // trace:STORY-127 | ai:claude
 mod observer;
@@ -74,6 +78,8 @@ pub use db_backup::{run_db_backup, run_db_restore, BACKUP_REMOTE_NAME};
 // trace:STORY-208 | ai:claude — the Dolt store is the only domain backend.
 pub use dolt_store::{domain_store_from_config, DoltDomainStore};
 pub use error::{QuizdomError, Result};
+// trace:TASK-331 | ai:claude
+pub use logs::run_logs;
 pub use model::{
     Answer, AnswerKind, Question, QuestionRef, RefinementProposal, TermDefinition,
     TermMappingProposal, TermRef,
@@ -140,6 +146,7 @@ pub fn top_level_usage() -> String {
         "  db-migrate               Migrate the domain graph from the AIDA store into Dolt",
         "  db-backup                Push the domain graph to its file-remote backup",
         "  db-restore               Restore the domain graph from its file-remote backup",
+        "  logs                     Print the diagnostic log (--tail N for the last N)",
         "  question add             Author a new question into the bank",
         "  -h, --help               Show this help",
         "",
