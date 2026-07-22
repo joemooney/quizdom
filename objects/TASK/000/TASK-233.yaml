@@ -17,9 +17,14 @@ priority: Medium
 owner: ''
 feature: Uncategorized
 created_at: 2026-07-19T21:02:28.349062227Z
-modified_at: 2026-07-22T05:45:09.239975055Z
+modified_at: 2026-07-22T05:48:57.407649916Z
 req_type: Task
 tags:
 - from-implementer:BUG-231
 - kind:bug-spotted
 - severity:cosmetic
+relationships:
+- rel_type: Child
+  target_id: 019f885d-96af-7591-80ec-cb27a5e08351
+  created_at: 2026-07-22T05:48:57.407647337Z
+  created_by: joe
