@@ -28,7 +28,7 @@ priority: Medium
 owner: ''
 feature: Uncategorized
 created_at: 2026-07-22T18:47:30.840225644Z
-modified_at: 2026-07-22T18:47:30.840225644Z
+modified_at: 2026-07-22T19:00:44.859397324Z
 req_type: Task
 tags:
 - from-implementer:STORY-342
@@ -38,3 +38,10 @@ relationships:
 - rel_type: Child
   target_id: 019f8b17-0950-70d3-85ee-ce323bcf5ece
   created_at: 2026-07-22T18:47:32.819445244Z
+comments:
+- id: 019f8b33-a2bb-7691-89c4-674b795de68f
+  author: joe
+  content: 'Scope record: --path and the two /settings pointers are coherent with the story''s intent (a log you cannot locate is a log you cannot use). No action.'
+  created_at: 2026-07-22T19:00:44.859397324Z
+  modified_at: 2026-07-22T19:00:44.859397324Z
+  session_id: 789bafdb-f673-41c5-affc-d550f95e51e5
