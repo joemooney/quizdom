@@ -1,0 +1,37 @@
+id: 019f8afb-15aa-7901-9277-df37a7d59ed2
+spec_id: TASK-333
+agreed_id: TASK-333
+title: 'Log rotation is stat-then-rename: two concurrent processes can clobber quizdom.log.1'
+description: |
+  `rotate_if_full` (crates/quizdom/src/diagnostics.rs:145-160) stats the log, then
+  renames it — two steps, no lock. Two quizdom processes that both observe a
+  file at or over `LOG_SIZE_LIMIT` will both rename: the second moves the
+  first's already-opened fresh generation, so `quizdom.log.1` is clobbered and
+  the handful of lines written between the two renames is lost.
+
+  Why it matters more than it looks: the module docs at diagnostics.rs:106-112
+  justify append mode with "two quizdom processes writing at once must not
+  clobber each other". That claim holds for appends and is now weakened at the
+  rotation boundary, so the doc and the code disagree at exactly one point.
+
+  Bounded in practice: the seam only fires on a degraded read or a failed
+  auto-backup, so a healthy install never reaches the limit at all, and the loss
+  is a few breadcrumb lines rather than user data. Hence minor, not blocking.
+
+  Options if picked up: `OpenOptions::new().create_new(true)` on the rotated
+  name to make the winner unambiguous, or an advisory flock around the
+  stat+rename, or accept and correct the module doc to scope its
+  no-clobber claim to appends.
+
+  Raised in review of PR-103: https://github.com/joemooney/quizdom/pull/103#issuecomment-5049615664
+status: Draft
+priority: Medium
+owner: ''
+feature: Uncategorized
+created_at: 2026-07-22T17:58:58.730877473Z
+modified_at: 2026-07-22T17:58:58.730877473Z
+req_type: Task
+tags:
+- diagnostics
+- from-review:PR-103
+- severity:minor
