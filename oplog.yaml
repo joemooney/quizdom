@@ -8085,5 +8085,44 @@ operations:
     req_type: Task
     status: Draft
     priority: Medium
-clock: 599
+- id: 019f8b30-67cd-7bd2-bdf7-d0f37ffde62f
+  target_id: 019f8b30-5cf7-7781-8ef1-367db17ff2bd
+  author: aida
+  node_id: ''
+  lamport: 600
+  timestamp: 2026-07-22T18:57:13.165429220Z
+  kind: !Create
+    title: quizdom logs prints recorded entries verbatim; format_entry strips only newlines, not \r or ANSI escapes
+    description: |
+      `format_entry` (crates/quizdom/src/diagnostics.rs) sanitizes exactly one thing:
+
+          format!("{at}  {}", event.replace('\n', " "))
+
+      That is enough for the invariant it was written for — one event is one line,
+      pinned by `a_multiline_event_still_occupies_one_line`. It does not touch `\r`
+      or ANSI escape sequences.
+
+      Until PR-105 that was inert: nothing ever printed the log, so control bytes sat
+      in a file no code read back. TASK-331's reader changes that — `render_logs`
+      (logs.rs:132) writes each entry to stdout verbatim, so the module is now a path
+      from recorded text to a terminal.
+
+      Recorded text is not all quizdom's own prose. `durability_footer` records
+      `auto_backup push failed: {error}`, and the degraded-store path records the
+      cause of a failed read; both embed subprocess error output. A dolt build that
+      colorizes stderr, or any message carrying a bare `\r`, would reach the terminal
+      raw — `\r` overwrites the line just printed, so an entry could hide the one
+      before it in the exact command someone runs to find out what went wrong.
+
+      Low severity: it needs a specific dolt output shape, the damage is display-only,
+      and it is local and self-inflicted. Filing it because the fix belongs on the
+      WRITE side (widen `format_entry` to collapse control characters, keeping one
+      event on one line) rather than in the reader, and because "the log displays what
+      was recorded" is a property worth stating deliberately rather than inheriting.
+
+      Raised in review of PR-105: https://github.com/joemooney/quizdom/pull/105#issuecomment-5050208191
+    req_type: Task
+    status: Draft
+    priority: Medium
+clock: 600
 node_id: ''
