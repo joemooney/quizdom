@@ -35,12 +35,12 @@ description: |
   looking each id up in a map keyed by question id instead of by position.
 
   Raised in review of PR-90: https://github.com/joemooney/quizdom/pull/90#issuecomment-5041919599
-status: InProgress
+status: Done
 priority: Medium
 owner: ''
 feature: Uncategorized
 created_at: 2026-07-22T04:39:25.472639847Z
-modified_at: 2026-07-22T05:52:50.961029272Z
+modified_at: 2026-07-22T05:53:00.741474653Z
 req_type: Task
 tags:
 - from-review:PR-90
@@ -66,3 +66,7 @@ comments:
   created_at: 2026-07-22T05:51:55.150935559Z
   modified_at: 2026-07-22T05:51:55.150935559Z
   session_id: 019f885d-4ee2-7343-8911-147fc943f22d
+implementation_info:
+  implemented: true
+  implemented_at: 2026-07-22T05:53:00.741474653Z
+  implemented_by: joe
