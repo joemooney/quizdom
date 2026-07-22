@@ -8966,5 +8966,29 @@ operations:
   timestamp: 2026-07-22T20:09:57.222753031Z
   kind: !SetStatus
     status: Rejected
-clock: 653
+- id: 019f8b73-02e1-7873-90fb-4226bd6e52c3
+  target_id: 019f8b35-0082-79d0-9934-482a8d50649f
+  author: aida
+  node_id: ''
+  lamport: 654
+  timestamp: 2026-07-22T20:09:58.241198925Z
+  kind: !AddTag
+    tag: upstream:aida
+- id: 019f8b73-02f0-7700-b182-d53f7843814e
+  target_id: 019f8b35-0082-79d0-9934-482a8d50649f
+  author: aida
+  node_id: ''
+  lamport: 655
+  timestamp: 2026-07-22T20:09:58.256440562Z
+  kind: !RemoveTag
+    tag: from-advisor:general
+- id: 019f8b73-02ff-7ca2-a568-a24584462814
+  target_id: 019f8b35-0082-79d0-9934-482a8d50649f
+  author: aida
+  node_id: ''
+  lamport: 656
+  timestamp: 2026-07-22T20:09:58.271349946Z
+  kind: !RemoveTag
+    tag: kind:observation
+clock: 656
 node_id: ''
