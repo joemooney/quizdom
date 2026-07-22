@@ -4280,5 +4280,48 @@ operations:
     req_type: Story
     status: Approved
     priority: Medium
-clock: 415
+- id: 019f8878-5f43-73c0-8594-e59f0a583d62
+  target_id: 019f8878-5b2c-7623-bf0b-ed49c5ebd6c0
+  author: aida
+  node_id: ''
+  lamport: 416
+  timestamp: 2026-07-22T06:16:57.923038469Z
+  kind: !Create
+    title: DomainStore::fetch_nodes_present default swallows store failures — the same default-vs-override asymmetry TASK-247 removed, one layer down
+    description: |
+      crates/quizdom/src/store.rs:169-173 (TASK-247, PR-92).
+
+      The default impl is `ids.iter().filter_map(|id| self.fetch_node(id).ok())`,
+      which skips an absent row and a genuine store failure alike. The Dolt
+      override (dolt_store.rs:352-361) propagates store failures and skips only
+      absent rows.
+
+      That is structurally the same defect TASK-247 was filed for: one trait
+      method with two different blast radii on the same failure. TASK-247 fixed
+      it at the `QuestionBank::load_terms` layer and reintroduced it one layer
+      down at `DomainStore::fetch_nodes_present`.
+
+      Deliberate and documented at store.rs:164-166 ("The default cannot tell an
+      absent row from a store failure, so it skips both"), and unavoidable as the
+      error type stands: `QuizdomError` has no not-found variant — `missing_node`
+      returns `QuizdomError::Dolt(String)` (dolt_store.rs:210-212), the same
+      variant a query failure returns. The default would have to string-match the
+      message to distinguish them.
+
+      Latent, not live: `DoltDomainStore` is the only `DomainStore` impl and it
+      overrides the default. The cost lands on whoever writes the second backend
+      (an in-memory/test store is the obvious candidate) and inherits the trap
+      silently.
+
+      Suggested fix: give `QuizdomError` a distinct not-found variant (or a
+      `NodeMissing { id }` case on the Dolt variant) so the default can match on
+      it and propagate everything else. That also lets `fetch_nodes`' strict path
+      stop encoding "not found" in prose.
+
+      Raised in review of PR-92:
+      https://github.com/joemooney/quizdom/pull/92#issuecomment-5042549338
+    req_type: Task
+    status: Draft
+    priority: Medium
+clock: 416
 node_id: ''
