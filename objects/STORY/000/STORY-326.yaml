@@ -18,10 +18,10 @@ description: |-
   - Terminal safety is proven by capturing stdout/stderr around a logging call while the alternate screen is active, not by scanning source.
   - /settings shows auto_backup and the log path.
   - cargo test green; real_dolt green; clippy clean under -D warnings.
-status: Approved
+status: InProgress
 priority: Medium
 owner: ''
 feature: Uncategorized
 created_at: 2026-07-22T17:34:44.567716796Z
-modified_at: 2026-07-22T17:34:44.567716796Z
+modified_at: 2026-07-22T17:35:07.736164004Z
 req_type: Story
