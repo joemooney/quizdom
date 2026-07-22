@@ -24,12 +24,12 @@ description: |
 
   Raised by the implementer while working STORY-299.
   Branch: story-299  ·  Commit: c14f75b  (PR link added on merge)
-status: Draft
+status: Completed
 priority: Medium
 owner: ''
 feature: Uncategorized
 created_at: 2026-07-22T17:21:51.973691907Z
-modified_at: 2026-07-22T17:21:51.973691907Z
+modified_at: 2026-07-22T18:00:46.925775274Z
 req_type: Task
 tags:
 - from-implementer:STORY-299
