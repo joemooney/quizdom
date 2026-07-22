@@ -17,12 +17,12 @@ description: |
 
   Raised by the implementer while working BUG-231.
   Branch: epic-202-2  ·  Commit: d617eb8  (PR link added on merge)
-status: Draft
+status: Rejected
 priority: Medium
 owner: ''
 feature: Uncategorized
 created_at: 2026-07-19T21:27:33.029109631Z
-modified_at: 2026-07-22T05:43:16.711355796Z
+modified_at: 2026-07-22T05:43:19.185696085Z
 req_type: Task
 tags:
 - from-implementer:BUG-231
