@@ -6729,5 +6729,40 @@ operations:
     req_type: Task
     status: Draft
     priority: Medium
-clock: 536
+- id: 019f8abb-439b-76e1-a1cc-949155b9fab4
+  target_id: 019f8abb-4218-7230-80bb-14a9c34a36ab
+  author: aida
+  node_id: ''
+  lamport: 537
+  timestamp: 2026-07-22T16:49:16.187100442Z
+  kind: !Create
+    title: QuizdomError::NotFound is a new public error variant; only the Dolt store emits it today
+    description: |
+      TASK-256's fix needed an error variant that lets a `DomainStore` default tell
+      "no such row" from "the store failed". STORY-293 added
+      `QuizdomError::NotFound(String)` (crates/quizdom/src/error.rs) rather than
+      string-matching the `Dolt(String)` message, as the spec directed.
+
+      Two consequences worth the advisor knowing:
+
+      1. `QuizdomError` is a public enum, so this is an additive change to the
+         crate's error surface. Its `Display` is a plain message pass-through like
+         the other string variants, so nothing user-facing changed wording.
+      2. Only `dolt_store::missing_node` emits it today, and it is emitted for
+         NODES only. Other "not found" conditions still use `Dolt`/`Parse` with
+         their existing messages — e.g. `QuestionBank`'s `missing term {id}` and
+         `persist.rs`'s `no such node` mock paths. That is deliberate: STORY-293
+         converted exactly what `fetch_nodes_present` needs and left the rest alone
+         to stay inside "no behavior change beyond the stated contract fixes".
+
+      If a later spec wants `NotFound` to be the project-wide convention for
+      absence, that is a separate sweep with its own test-churn cost (two dolt_store
+      tests already had to move from matching `Dolt` to `NotFound`).
+
+      Raised by the implementer while working STORY-293.
+      Branch: story-293  ·  Commit: 071d5ff  (PR link added on merge)
+    req_type: Task
+    status: Draft
+    priority: Medium
+clock: 537
 node_id: ''
