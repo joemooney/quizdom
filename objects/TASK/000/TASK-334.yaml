@@ -25,12 +25,12 @@ description: |
   so the project's `real_dolt` filter convention keeps covering it.
 
   Raised in review of PR-103: https://github.com/joemooney/quizdom/pull/103#issuecomment-5049615664
-status: Draft
+status: Rejected
 priority: Medium
 owner: ''
 feature: Uncategorized
 created_at: 2026-07-22T17:59:09.955824140Z
-modified_at: 2026-07-22T19:00:51.847669377Z
+modified_at: 2026-07-22T19:00:52.997719637Z
 req_type: Task
 tags:
 - from-review:PR-103
