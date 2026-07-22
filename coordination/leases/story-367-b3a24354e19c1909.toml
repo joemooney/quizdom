@@ -1,0 +1,11 @@
+scope = "STORY-367"
+node_id = "JM"
+clone_path = "/home/joe/ai/quizdom"
+host = "imac"
+pid = 2821527
+agent = "implementer"
+started_at = "2026-07-22T20:41:47.845573923+00:00"
+heartbeat_at = "2026-07-22T20:41:47.845573923+00:00"
+ttl_secs = 1800
+process_backed = false
+review_verb = false
