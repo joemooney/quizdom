@@ -1,0 +1,43 @@
+id: 019f881f-83ba-79e3-96f0-f3e28042cf31
+spec_id: TASK-248
+agreed_id: TASK-248
+title: MAX_BATCH_IDS chunks on id count, not SQL byte length — a wide tags batch could exceed MAX_ARG_STRLEN
+description: |
+  crates/quizdom/src/dolt_store.rs:24-28 and 389-415 (STORY-244, PR-90).
+
+  `MAX_BATCH_IDS = 500` bounds how many ids ride in one `IN (...)` list or
+  one batched `UPDATE`. Its doc comment says it "bounds the SQL text handed
+  to a single `dolt` spawn" — but it bounds the ID COUNT, and for
+  `update_weights` the dominant term is the tags payload, not the ids.
+
+  Each CASE arm is ` WHEN '<id>' THEN '<tags>'`, and `nodes.tags` is
+  VARCHAR(2048) (db/schema.sql:15). A worst-case 500-row chunk is therefore
+  ~1 MB of SQL, handed to `dolt sql -q` as a SINGLE argv element. Linux caps
+  one argv element at MAX_ARG_STRLEN = 32 pages = 131072 bytes — a separate,
+  much lower limit than the ~2 MB total ARG_MAX. Exceeding it fails execve
+  with E2BIG, which would surface as an opaque spawn error, not a SQL error.
+
+  Measured, not hypothetical-only: on the real 61-question curate run the
+  UPDATE statement is roughly 45 KB — about a third of the limit already,
+  with tags averaging ~40 bytes against a 2048-byte ceiling. So the current
+  bank is safe, but the headroom is ~3x on payload, not the ~8x the id
+  count suggests.
+
+  Cosmetic because reaching it needs unusually long tags. Suggested fix:
+  chunk on accumulated byte length (flush the chunk when the built SQL
+  passes, say, 64 KB) instead of on id count — or pipe the SQL to `dolt sql`
+  on stdin rather than as an argv element, which sidesteps the limit
+  entirely.
+
+  Raised in review of PR-90: https://github.com/joemooney/quizdom/pull/90#issuecomment-5041919599
+status: Draft
+priority: Medium
+owner: ''
+feature: Uncategorized
+created_at: 2026-07-22T04:39:54.554898228Z
+modified_at: 2026-07-22T04:39:54.554898228Z
+req_type: Task
+tags:
+- from-review:PR-90
+- kind:robustness
+- severity:cosmetic
