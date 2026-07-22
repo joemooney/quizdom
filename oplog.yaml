@@ -5112,5 +5112,33 @@ operations:
     req_type: Task
     status: Draft
     priority: Medium
-clock: 456
+- id: 019f88bb-b1c1-71f3-bf47-cd8f671bb55c
+  target_id: 019f88bb-af4c-7dd3-8b57-f4258dae7826
+  author: aida
+  node_id: ''
+  lamport: 457
+  timestamp: 2026-07-22T07:30:29.953193641Z
+  kind: !Create
+    title: db-backup's clean-tree detection matches a literal dolt message string
+    description: |
+      `snapshot_working_set` (crates/quizdom/src/db_backup.rs:316-335) decides whether
+      a non-zero `dolt commit` was the ordinary "nothing new since the last backup"
+      case by substring-matching dolt's output for "no changes added to commit" or
+      "nothing to commit".
+
+      CI pins dolt 2.2.1, so the pipeline is stable, but a developer on a newer dolt
+      whose wording changed would see an ordinary clean-tree `db-backup` fail hard
+      with `dolt commit failed: ...` instead of pushing. The failure is loud rather
+      than silently producing an empty backup, which is why this is minor and not a
+      blocker.
+
+      Options: probe `dolt status`/`dolt diff --stat` for a clean tree before
+      attempting the commit, or widen the accepted phrasing set with a test that pins
+      the currently-observed strings per supported dolt version.
+
+      Raised in review of PR-95: https://github.com/joemooney/quizdom/pull/95#issuecomment-5043111435
+    req_type: Task
+    status: Draft
+    priority: Medium
+clock: 457
 node_id: ''
