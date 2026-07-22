@@ -30,9 +30,16 @@ priority: Medium
 owner: ''
 feature: Uncategorized
 created_at: 2026-07-22T17:59:09.955824140Z
-modified_at: 2026-07-22T17:59:09.955824140Z
+modified_at: 2026-07-22T19:00:51.847669377Z
 req_type: Task
 tags:
 - from-review:PR-103
 - severity:cosmetic
 - test
+comments:
+- id: 019f8b33-be07-7383-b531-2037caba6f40
+  author: joe
+  content: Test-ergonomics nit — the capture child is intentional and proven (TASK-322). No action.
+  created_at: 2026-07-22T19:00:51.847669377Z
+  modified_at: 2026-07-22T19:00:51.847669377Z
+  session_id: 789bafdb-f673-41c5-affc-d550f95e51e5
