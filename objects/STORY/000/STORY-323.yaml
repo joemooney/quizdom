@@ -1,0 +1,26 @@
+id: 019f8ada-a551-72d2-826d-739dc3739e52
+spec_id: STORY-323
+agreed_id: STORY-323
+title: 'Review PR-102: STORY-299: durability ergonomics + an observability seam for the TUI'
+description: |
+  Auto-filed by `aida pr auto-queue-review` (typically from /aida-pr) (session `019f8ac4`) for branch `story-299`.
+
+  - PR: <https://github.com/joemooney/quizdom/pull/102>
+  - Branch: `story-299` → `main`
+
+  ## Covers
+
+  - STORY-299
+
+  ## Acceptance
+
+  - Generate a structured review prompt with `aida review prompt --pr 102` and verify each spec's acceptance criteria.
+  - Approve and merge, or request changes by spec id.
+  - Mark this story `completed` once the PR is merged.
+status: Approved
+priority: Medium
+owner: ''
+feature: Uncategorized
+created_at: 2026-07-22T17:23:32.817399461Z
+modified_at: 2026-07-22T17:23:32.817399461Z
+req_type: Story
