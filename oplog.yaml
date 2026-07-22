@@ -9598,5 +9598,31 @@ operations:
     req_type: Task
     status: Draft
     priority: Medium
-clock: 682
+- id: 019f8bd2-318d-75b1-b318-b992590edadd
+  target_id: 019f8bd2-2f76-7452-b7a1-ea41daea9b45
+  author: aida
+  node_id: ''
+  lamport: 683
+  timestamp: 2026-07-22T21:53:56.109720269Z
+  kind: !Create
+    title: 'Review PR-111: BUG-378: re-establish the invariants two merged PRs left behind'
+    description: |
+      Auto-filed by `aida pr auto-queue-review` (typically from /aida-pr) (session `019f8bb7`) for branch `bug-378`.
+
+      - PR: <https://github.com/joemooney/quizdom/pull/111>
+      - Branch: `bug-378` → `main`
+
+      ## Covers
+
+      - BUG-378
+
+      ## Acceptance
+
+      - Generate a structured review prompt with `aida review prompt --pr 111` and verify each spec's acceptance criteria.
+      - Approve and merge, or request changes by spec id.
+      - Mark this story `completed` once the PR is merged.
+    req_type: Story
+    status: Approved
+    priority: Medium
+clock: 683
 node_id: ''
