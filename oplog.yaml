@@ -8794,5 +8794,31 @@ operations:
     req_type: Task
     status: Draft
     priority: Medium
-clock: 642
+- id: 019f8b6c-1a06-78b1-96fe-a6bd37fb7f98
+  target_id: 019f8b6c-1815-7b33-a8f2-2a726f91b991
+  author: aida
+  node_id: ''
+  lamport: 643
+  timestamp: 2026-07-22T20:02:25.414008374Z
+  kind: !Create
+    title: 'Review PR-108: STORY-352: log-reader honesty — real error causes, control-character safety, one spelling of the suffix'
+    description: |
+      Auto-filed by `aida pr auto-queue-review` (typically from /aida-pr) (session `019f8b63`) for branch `story-352`.
+
+      - PR: <https://github.com/joemooney/quizdom/pull/108>
+      - Branch: `story-352` → `main`
+
+      ## Covers
+
+      - STORY-352
+
+      ## Acceptance
+
+      - Generate a structured review prompt with `aida review prompt --pr 108` and verify each spec's acceptance criteria.
+      - Approve and merge, or request changes by spec id.
+      - Mark this story `completed` once the PR is merged.
+    req_type: Story
+    status: Approved
+    priority: Medium
+clock: 643
 node_id: ''
