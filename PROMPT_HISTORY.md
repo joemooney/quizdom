@@ -259,3 +259,62 @@ No new clippy warnings.
 
 **Git.** Committed on `story-259`, pushed, PR #94 open against `main`. The four
 tasks and the story stay `in-progress` until it merges.
+
+## 2026-07-22 — STORY-261: durability + CI (dolt in the pipeline, a backup for data/dolt, the stale promotion doc)
+
+**Request.** `/aida-pickup STORY-261` — the EPIC-249 infra/docs bundle:
+TASK-243 (a remote or backup for the domain graph, which after STORY-209 exists
+only in the local gitignored `data/dolt`), TASK-219 (install dolt in CI so the
+`real_dolt` acceptance tests actually run), TASK-241 (rewrite
+`session-log-promotion.md` in Dolt terms).
+
+**The durability shape.** A file-based Dolt remote, per TASK-243's own stated
+preference — no hosted account, no credentials, no network. New
+`crates/quizdom/src/db_backup.rs` adds `quizdom db-backup` (point the `backup`
+remote at the backup directory, adding or re-pointing as needed, then push
+`main`) and `quizdom db-restore` (clone it back). The backup directory rides the
+same env > settings > default chain as `dolt_path`
+(`QUIZDOM_DOLT_BACKUP_PATH` > `dolt_backup_path` > `~/.local/share/quizdom/
+dolt-backup`), refactored in `settings.rs` as a shared `tiered_path` helper so
+the two chains cannot drift. The default sits outside the project tree on
+purpose: a backup under `data/` is no backup against `rm -rf data/`.
+
+**Two things the real graph taught us.** First, `dolt clone` enumerates its
+working directory as a set of databases before doing anything, so running it
+from the target's parent fails outright when a sibling directory disappears
+mid-scan — it did, in `/tmp`, against another test's temp dir. The restore now
+clones from an empty scratch directory it creates and removes. Second, and more
+serious: **the live `data/dolt` had never been committed**. `db-init`'s DDL and
+`db-migrate`'s bulk import land in the working set untracked (only the *store*
+commits its writes, STORY-208), and a push carries committed data only — so the
+first backup of the real graph uploaded an empty history and reported success.
+`db-backup` now snapshots the working set (`add -A` + commit, treating "no
+changes added to commit" as the ordinary clean-tree case) *before* pushing, and
+a failed snapshot never pushes a half-backup.
+
+**Acceptance, verified against the real graph.** `db-backup` on the live repo,
+then `db-restore --path /tmp/quizdom-restore-check`: 75 nodes / 75 edges back.
+The same round trip is `real_dolt_backup_restore_round_trip`, which seeds rows
+*without* committing them, deletes the repo, restores, and counts — so the
+uncommitted-working-set trap stays caught.
+
+**CI.** `.github/workflows/ci.yml` installs a pinned dolt (2.2.1, from the
+release tarball rather than `latest`, so a dolt release cannot turn CI red on
+its own schedule), configures the author identity dolt requires before it will
+init or commit, and runs `cargo test --workspace real_dolt -- --ignored` as its
+own step. The four acceptance tests take ~60s. The three pre-existing
+`real_dolt` doc comments claiming "ignored in CI (no dolt there)" were updated —
+they were about to become the stale claim.
+
+**Docs.** `session-log-promotion.md` rewritten in Dolt terms (TASK-241): the
+STORY-209 redirect banner is gone, promotion targets are `nodes` / `edges` rows,
+`promotion_weight` maps to the numeric `weight` column instead of ADR-22's
+retired `weight:N` tag, the promotion rules name the `DomainStore` calls that
+perform them, and the worked example is the SQL the store writes rather than an
+AIDA YAML object. `OVERVIEW.md` gained a *Durability and recovery* section with
+the explicit recovery commands; `CLAUDE.md` gained the two new commands, the CI
+note, and a correction to its "commits every write" claim.
+
+**Tests.** 604 quizdom + 7 llm tests green, all 4 `real_dolt` tests pass against
+dolt 2.2.1, fmt clean, no new clippy warnings (the 6 pre-existing lints in
+`input.rs` / `session.rs` are TASK-240's batch).
