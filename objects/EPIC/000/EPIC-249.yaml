@@ -8,7 +8,7 @@ priority: Medium
 owner: ''
 feature: Uncategorized
 created_at: 2026-07-22T05:47:42.639984488Z
-modified_at: 2026-07-22T05:48:59.765400569Z
+modified_at: 2026-07-22T05:49:09.066167554Z
 req_type: Epic
 relationships:
 - rel_type: Parent
@@ -54,4 +54,8 @@ relationships:
 - rel_type: Parent
   target_id: 019f7c12-b65b-7f20-b11a-ed141d4abf4d
   created_at: 2026-07-22T05:48:59.765392649Z
+  created_by: joe
+- rel_type: Parent
+  target_id: 019f7bf5-aa1f-7070-adeb-51be2ba13df5
+  created_at: 2026-07-22T05:49:09.066159870Z
   created_by: joe
