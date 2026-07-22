@@ -12,9 +12,16 @@ priority: Medium
 owner: ''
 feature: Uncategorized
 created_at: 2026-07-19T20:30:24.861194372Z
-modified_at: 2026-07-19T20:30:24.861194372Z
+modified_at: 2026-07-22T05:43:21.057654217Z
 req_type: Task
 tags:
 - from-implementer:STORY-208
 - kind:design-choice
 - severity:minor
+comments:
+- id: 019f8859-98e1-72e1-b2bd-a267c86c2fee
+  author: joe
+  content: 'Design-choice record: removing the QUIZDOM_STORE selector entirely was correct — Dolt is the only backend after the ADR-201 cutover. No action.'
+  created_at: 2026-07-22T05:43:21.057654217Z
+  modified_at: 2026-07-22T05:43:21.057654217Z
+  session_id: 789bafdb-f673-41c5-affc-d550f95e51e5
