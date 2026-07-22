@@ -69,11 +69,18 @@ documented in `OVERVIEW.md` § *Durability and recovery*. Backups stay
 **explicit** (`STORY-299`): a session that wrote to the graph and sits ahead of
 its backup ends with a one-line reminder naming the command, `auto_backup =
 true` in `settings.toml` opts into the push instead (off by default, degrades
-to the reminder on failure), and cron covers the machine. Survivable failures —
+to the reminder on failure), and cron covers the machine. `STORY-326` finished
+that surface: a probe that cannot answer stays silent for the *reminder* but no
+longer cancels an opted-in *push* (it pushes and says why — a redundant push is
+cheaper than a skipped one), and the probe reads the **configured** remote
+(`$QUIZDOM_BACKUP_REMOTE` > `backup_remote` > `backup`) so it and `db-backup
+--remote` cannot disagree. Survivable failures —
 a degraded store read, a failed auto-backup — go to the append-only diagnostic
 log (`$QUIZDOM_LOG_PATH` > `log_path` > `~/.local/share/quizdom/quizdom.log`),
 never to the terminal: `crates/quizdom/src/diagnostics.rs` is the one seam, and
-the TUI owns the alternate screen. Exercising `db-backup`
+the TUI owns the alternate screen. The log is bounded (1 MiB, then a rename to
+`quizdom.log.1`), and `/settings` shows `auto_backup` and the resolved log path
+as read-only rows beside `dolt_path`. Exercising `db-backup`
 by hand: a `--path` away from the resolved default now REQUIRES `--to`, so a
 scratch run cannot claim the real backup directory (`STORY-292`), and
 `db-backup --force` is the executable way past a backup directory already held

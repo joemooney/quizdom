@@ -2072,9 +2072,13 @@ impl<R: BufRead, B: Backend> TuiFrontEnd<R, B> {
         // trace:TASK-262 | ai:claude — resolved ONCE for the life of the panel:
         // it is read-only here, and re-resolving it per draw would re-read the
         // config file on every keystroke.
-        let dolt_path = crate::settings::resolve_dolt_path();
+        // trace:TASK-320 | ai:claude — resolved ONCE for the panel's lifetime:
+        // none of the three can change while the panel is open (they are
+        // read-only here), and re-resolving per keypress would re-read the
+        // settings file on every arrow key.
+        let read_only = crate::settings::ReadOnlyRows::resolved();
         loop {
-            self.draw_settings_panel(cursor, &dolt_path)?;
+            self.draw_settings_panel(cursor, &read_only)?;
             let Event::Key(key) = event::read().map_err(QuizdomError::Io)? else {
                 continue;
             };
@@ -2100,13 +2104,18 @@ impl<R: BufRead, B: Backend> TuiFrontEnd<R, B> {
     // trace:STORY-194 | ai:claude
     /// Draw the `/settings` panel overlay: the three panes behind it plus a
     /// centered box listing each setting's label + current value, the cursor row
-    /// marked, the read-only domain-graph path (TASK-262), and a footer of the
-    /// controls.
-    fn draw_settings_panel(&mut self, cursor: usize, dolt_path: &std::path::Path) -> Result<()> {
+    /// marked, the read-only rows — domain graph (TASK-262), auto-backup and
+    /// the diagnostic log (TASK-320) — and a footer of the controls.
+    fn draw_settings_panel(
+        &mut self,
+        cursor: usize,
+        read_only: &crate::settings::ReadOnlyRows,
+    ) -> Result<()> {
         self.draw("", None)?;
         let settings = self.settings;
-        // trace:TASK-262 | ai:claude — same row text as the headless value list.
-        let dolt_row = crate::settings::dolt_path_row(dolt_path);
+        // trace:TASK-262 | ai:claude — the SAME rows as the headless value list,
+        // from one computation, so the two surfaces cannot drift.
+        let read_only_lines = read_only.lines();
         self.terminal
             .draw(|frame| {
                 let overlay = palette_rect(frame.area());
@@ -2123,13 +2132,17 @@ impl<R: BufRead, B: Backend> TuiFrontEnd<R, B> {
                     body.push(Line::styled(row, style));
                 }
                 // trace:TASK-262 | ai:claude — `dolt_path` selects WHICH domain
-                // graph this session reads, so the panel shows it even though it
-                // is not a togglable row (no cursor stop, no cycle).
-                body.push(Line::from(dolt_row.trim_end().to_string()));
+                // graph this session reads; TASK-320 adds `auto_backup` (a
+                // durability control) and the diagnostic log path. All three are
+                // shown even though none is a togglable row (no cursor stop, no
+                // cycle) — a value with no surface has no discoverability.
+                for line in &read_only_lines {
+                    body.push(Line::from(line.trim_end().to_string()));
+                }
                 body.push(Line::from(""));
                 body.push(Line::from(
-                    "↑/↓ move · Enter/Space toggle · Esc close · domain graph is read-only \
-                     (dolt_path in settings.toml)",
+                    "↑/↓ move · Enter/Space toggle · Esc close · the last three rows are \
+                     read-only (dolt_path / auto_backup / log_path in settings.toml)",
                 ));
                 let widget = Paragraph::new(body)
                     .block(
@@ -3568,8 +3581,18 @@ mod tests {
         // Draw the panel overlay and confirm it lists every setting label + value.
         // trace:TASK-262 | ai:claude — plus the read-only domain-graph row, so the
         // value that selects the user's graph is visible where they look for it.
-        tui.draw_settings_panel(0, std::path::Path::new("/tmp/panel-graph"))
-            .expect("draw panel");
+        // trace:TASK-320 | ai:claude — and the auto-backup + diagnostic-log rows,
+        // for the same reason: a durability control and the place failures are
+        // recorded are the last two values that should be invisible.
+        tui.draw_settings_panel(
+            0,
+            &crate::settings::ReadOnlyRows {
+                dolt_path: std::path::PathBuf::from("/tmp/panel-graph"),
+                auto_backup: true,
+                log_path: std::path::PathBuf::from("/tmp/panel-log"),
+            },
+        )
+        .expect("draw panel");
         let frame = tui.rendered_text();
         for label in [
             "Editor mode",
@@ -3578,6 +3601,9 @@ mod tests {
             "Session mode",
             crate::settings::DOLT_PATH_ROW_LABEL,
             "/tmp/panel-graph",
+            crate::settings::AUTO_BACKUP_ROW_LABEL,
+            crate::settings::LOG_PATH_ROW_LABEL,
+            "/tmp/panel-log",
         ] {
             assert!(frame.contains(label), "panel missing {label}:\n{frame}");
         }

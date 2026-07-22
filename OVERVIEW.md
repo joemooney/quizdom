@@ -88,11 +88,23 @@ Runtime preferences live in `~/.config/quizdom/settings.toml` (or
 `$XDG_CONFIG_HOME/quizdom/`) — a small flat `key = value` table quizdom
 hand-parses. Four keys are the `/settings` surface (`editor`, `mouse`, `score`,
 `mode`) and quizdom rewrites those in place; every other line — comments, blanks,
-and foreign keys like `dolt_path`, `dolt_backup_path`, `auto_backup` and
-`log_path` — is preserved verbatim on save. Unknown keys are ignored on load, so
-an older quizdom never chokes on a newer file. `/settings` also *shows* the
-resolved `dolt_path` as a read-only row, since that one value decides which
-graph the session reads.
+and foreign keys like `dolt_path`, `dolt_backup_path`, `backup_remote`,
+`auto_backup` and `log_path` — is preserved verbatim on save. Unknown keys are
+ignored on load, so an older quizdom never chokes on a newer file.
+
+<!-- trace:TASK-320 | ai:claude -->
+
+`/settings` also *shows* three resolved values as read-only rows, because a
+value with no surface has no discoverability and each of these is consequential:
+
+| Row | Key | Why it is shown |
+|-----|-----|-----------------|
+| `Domain graph:` | `dolt_path` | decides which graph the session reads |
+| `Auto-backup:` | `auto_backup` | a durability control — believing it is on and believing it is off look identical until the disk dies |
+| `Diagnostics:` | `log_path` | the answer to "something degraded, where do I look?" |
+
+None is togglable there (no cursor stop, no cycle) — the settings file and the
+environment variables stay the way to change them, and the panel says so.
 
 Values parse the way TOML would: double **and** single quotes come off, and an
 inline `# comment` ends the value. `dolt_path = "/mnt/data/dolt"  # the big disk`
@@ -121,8 +133,9 @@ per-invocation by someone who can see their own cwd:
 
 The two non-path keys take the same env > file > default shape:
 `auto_backup` (`$QUIZDOM_AUTO_BACKUP`, default **off**) opts a writing session
-into pushing to the backup remote on its way out — see *Durability and recovery*
-below.
+into pushing to the backup remote on its way out, and `backup_remote`
+(`$QUIZDOM_BACKUP_REMOTE`, default `backup`) names the Dolt remote pointed at
+the backup directory — see *Durability and recovery* below.
 
 ## Durability and recovery
 
@@ -175,10 +188,20 @@ close that, in increasing order of automation:
    Both halves have to hold, so the line stays feedback on what you just did
    rather than ambient nagging: a session that only read says nothing, and a
    session whose writes are already backed up says nothing. The check is local
-   and read-only — it compares `main` against the `backup` remote-tracking ref
+   and read-only — it compares `main` against the backup remote-tracking ref
    (plus `dolt_status` for a hand-edited working set), so it never blocks on a
    backup directory that is not mounted, and a probe that cannot answer stays
    silent rather than guessing.
+
+   <!-- trace:TASK-324 | ai:claude -->
+
+   The probe reads the tracking ref for the **configured** remote — the same
+   `$QUIZDOM_BACKUP_REMOTE` > `backup_remote` > `backup` chain `db-backup`'s
+   `--remote` sits on top of. Probe and push naming different remotes is how the
+   reminder came to fire seconds after a successful `db-backup --remote archive`:
+   `remotes/backup/main` never existed, a missing tracking ref reads as "you have
+   never backed this graph up", and a reminder that is always wrong trains you to
+   ignore the one that isn't.
 
 2. **`auto_backup` (opt-in, off by default).** One line in
    `~/.config/quizdom/settings.toml` performs the push instead of printing the
@@ -192,6 +215,25 @@ close that, in increasing order of automation:
    never takes the session down — it degrades to the reminder, so you still
    learn the graph is unbacked-up and still get the command, with dolt's
    complaint in the diagnostic log.
+
+   <!-- trace:TASK-325 | ai:claude -->
+
+   **A probe that cannot answer does not cancel the push.** The two halves of
+   the blind-probe rule differ because the costs differ. For the *reminder*,
+   silence is right: a failed probe is not evidence of drift, and nagging on a
+   broken probe costs your trust in every later reminder. For the *push*,
+   silence was wrong — it turned an `auto_backup` you explicitly opted into
+   into a no-op, which is the exact failure `auto_backup` exists to prevent. A
+   redundant push costs seconds; a skipped one costs the graph. So an opted-in
+   session pushes anyway and says why:
+
+   ```
+   Could not tell whether the domain graph was backed up, so pushed it to /home/you/.local/share/quizdom/dolt-backup anyway.
+   ```
+
+   With `auto_backup` off the session still says nothing, but the blind probe
+   now lands in the diagnostic log — it was the one path through the
+   end-of-session decision that left no trace anywhere.
 
 3. **Cron / a systemd timer**, which covers the machine rather than the session
    — including the hand-run `dolt sql` no session end will ever see:
@@ -215,10 +257,35 @@ $QUIZDOM_LOG_PATH > log_path in ~/.config/quizdom/settings.toml > ~/.local/share
 ```
 
 Same resolution chain as every other quizdom path, including the anchoring rule
-in *Settings* above. It is a breadcrumb trail, not a logging framework: no
-levels, no filters, one line per event. Nothing in the seam ever writes to the
-terminal, and a log that cannot be written is dropped silently — a breadcrumb
-that takes down the session it was meant to explain is worse than none.
+in *Settings* above; `/settings` shows the resolved path as its `Diagnostics:`
+row. It is a breadcrumb trail, not a logging framework: no levels, no filters,
+one line per event. Nothing in the seam ever writes to the terminal, and a log
+that cannot be written is dropped silently — a breadcrumb that takes down the
+session it was meant to explain is worse than none.
+
+<!-- trace:TASK-321 | ai:claude -->
+
+**Bounded at 1 MiB.** Append-only is not the same as unbounded. A healthy
+install writes nothing at all, but a persistently broken store writes a line per
+probed read per turn — unbounded growth in exactly the situation you are least
+likely to be watching. At the limit the file is renamed to `quizdom.log.1` and a
+fresh one opens with a line saying so, capping the pair at ~2 MiB. One
+generation and one `rename`: the previous entries are kept rather than
+truncated, because the run of entries explaining the breakage is the reason the
+file exists.
+
+<!-- trace:TASK-322 | ai:claude -->
+
+Two tests pin the never-touch-the-terminal invariant, and they catch different
+things. One scans the seam's own source for print macros: lexical, but it covers
+every path through the module including ones no test exercises — a print on a
+rare error branch is precisely what would corrupt a frame in the field. The
+other re-runs the test binary for a single test with `--nocapture`, enters the
+alternate screen for real, drives the seam (including a write that fails), and
+asserts the bytes between crossterm's enter and leave sequences are zero. The
+child process is what makes that assertable: capturing this process's own
+descriptors would also catch libtest's progress lines from every concurrent
+test.
 
 **Recovery — from a deleted `data/dolt`:**
 
