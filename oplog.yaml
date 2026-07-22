@@ -8292,5 +8292,28 @@ operations:
     req_type: Story
     status: Approved
     priority: Medium
-clock: 616
+- id: 019f8b34-60a4-7583-96b2-2bb402a5331b
+  target_id: 019f8b34-5d54-7a71-8790-4e6c01a7ef11
+  author: aida
+  node_id: ''
+  lamport: 617
+  timestamp: 2026-07-22T19:01:33.476704338Z
+  kind: !Create
+    title: 'Log reader honesty: real error causes, control-character safety, one spelling of the suffix'
+    description: |-
+      Bundles TASK-347, TASK-349, TASK-348 — logs.rs / diagnostics.rs.
+
+      TASK-347: quizdom logs reports EVERY unreadable log as 'no such file' — a permissions error, a directory in the way, or an I/O fault all masquerade as absence. Report the real cause; absence is only one of them.
+      TASK-349: quizdom logs prints recorded entries verbatim, and format_entry strips only newlines — not carriage returns or ANSI escapes. A log entry carrying escape sequences (entirely possible, since entries can quote engine output) can corrupt the reader's terminal. This is the same class of hazard TASK-279 fixed on the error surfaces; the reader needs the same treatment.
+      TASK-348: the rotated-generation suffix is spelled twice (a literal in logs.rs and diagnostics::ROTATED_SUFFIX) — one of them will drift.
+
+      ## Acceptance
+      - An unreadable-but-present log reports its actual cause (test with a permission or directory-in-the-way case); genuine absence still reads as absence.
+      - Control characters and ANSI escapes in a recorded entry cannot reach the terminal through quizdom logs (test with an entry containing escapes and \r).
+      - The rotated suffix has exactly one definition.
+      - cargo test green; clippy clean.
+    req_type: Story
+    status: Approved
+    priority: Medium
+clock: 617
 node_id: ''
