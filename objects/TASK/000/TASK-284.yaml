@@ -14,12 +14,12 @@ description: |
   one-character fix is `format!("{stderr}\n{stdout}")`.
 
   Raised in review of PR-96: https://github.com/joemooney/quizdom/pull/96#issuecomment-5043339135
-status: Draft
+status: Completed
 priority: Medium
 owner: ''
 feature: Uncategorized
 created_at: 2026-07-22T07:57:44.152533961Z
-modified_at: 2026-07-22T07:57:44.152533961Z
+modified_at: 2026-07-22T16:36:40.897917604Z
 req_type: Task
 tags:
 - from-review:PR-96
