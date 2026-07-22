@@ -22,9 +22,26 @@ priority: Medium
 owner: ''
 feature: Uncategorized
 created_at: 2026-07-22T14:54:12.562083496Z
-modified_at: 2026-07-22T16:37:08.114087922Z
+modified_at: 2026-07-22T16:49:59.449885507Z
 req_type: Story
 relationships:
 - rel_type: Child
   target_id: 019f8a50-db6d-7742-9398-5dca3c6179f5
   created_at: 2026-07-22T14:54:14.021172678Z
+comments:
+- id: 019f8abb-ec99-7af1-a7cd-bde7a544e895
+  author: joe
+  content: |-
+    Implemented on branch story-293 (commit 071d5ff):
+
+    - TASK-253: both seams of apply_log_signals now reject a surplus (reject_extras) and a repeated id (index_by_id), symmetric with the existing missing-id error. Three distinct errors, each naming the seam.
+    - TASK-256: added QuizdomError::NotFound so DomainStore::fetch_nodes_present's default can skip an absent row while propagating a genuine store failure — no string-matching. dolt_store::missing_node emits it.
+    - TASK-254: take_by_id's rationale rewritten to the load-bearing one (removing drains the map, which is what makes the leftover check possible) and covered by take_by_id_drains_the_entry_it_claims.
+    - TASK-285: EventScope payload struct threaded through all 15 SessionLogger writers; all 4 #[allow(clippy::too_many_arguments)] in that impl gone, 36 call sites shortened, emitted JSON byte-identical.
+    - TASK-286: the two persist.rs helpers are live, not dead — the #[allow(dead_code)] attributes were stale and are removed (see TASK-314).
+
+    Test status: 641/641 lib tests green, plus 7/7 real_dolt acceptance tests against a real dolt binary; clippy clean under -D warnings.
+    Follow-up: TASK-314 (TASK-286 premise correction), TASK-315 (7 pre-STORY-260 too_many_arguments allows still outstanding on session.rs free functions), TASK-316 (NotFound is a new public variant, Dolt-store-only today).
+  created_at: 2026-07-22T16:49:59.449885507Z
+  modified_at: 2026-07-22T16:49:59.449885507Z
+  session_id: 019f8ab0-28fd-7c31-900a-d3fa50cb90aa
