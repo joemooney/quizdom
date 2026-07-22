@@ -9350,5 +9350,35 @@ operations:
     req_type: Task
     status: Draft
     priority: Medium
-clock: 672
+- id: 019f8bb4-f556-7d22-96fc-e1749ac1f35e
+  target_id: 019f8bb4-f331-72a3-9c25-230dc173ede7
+  author: aida
+  node_id: ''
+  lamport: 673
+  timestamp: 2026-07-22T21:22:00.150476809Z
+  kind: !Create
+    title: set_mode_in_session's new Result<bool> is silently discarded at the /settings reconcile
+    description: |
+      STORY-367 widened `set_mode_in_session` to return `Result<bool>` — true only
+      when the user actually named a mode — and the `/mode` handler branches on it
+      (`crates/quizdom/src/session.rs:3258-3280`). The `/settings` panel reconcile at
+      `crates/quizdom/src/session.rs:3316` calls the same function with a bare `?;`,
+      discarding the bool.
+
+      The behavior is correct: `updated.mode.as_str()` is always a recognized token so
+      the call always returns true, and the panel has already persisted the user's
+      choice, so re-persisting would be redundant. The comment two lines below says as
+      much.
+
+      But the discard reads as accidental rather than deliberate — `bool` is not
+      `#[must_use]`, so nothing marks the choice. A `let _chosen = ...;` with a
+      one-line "the panel already persisted this" note, or moving that existing
+      comment onto the call itself, would make the intent legible at the call site
+      instead of two lines later.
+
+      Raised in review of PR-110: https://github.com/joemooney/quizdom/pull/110#issuecomment-5051624056
+    req_type: Task
+    status: Draft
+    priority: Medium
+clock: 673
 node_id: ''
