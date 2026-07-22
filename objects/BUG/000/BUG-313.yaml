@@ -1,0 +1,45 @@
+id: 019f8a98-4fe9-7223-b6e9-2b2266877016
+spec_id: BUG-313
+agreed_id: BUG-313
+title: 'auto-complete failure: phase 2 (ci) on STORY-292'
+description: |
+  Auto-drafted by `aida queue work STORY-292 --auto-complete` after phase 2 (ci) failed. Review this BUG and promote it to Approved if it is a real AIDA orchestrator bug — or reject it if it was a user error or a local environment issue. It is intentionally left in Draft and NOT queued. (TASK-266)
+
+  ## Failure
+
+  CI is red on PR-100: fmt · clippy · test
+
+  Failure kind: `ci-red`
+
+  ## Recovery hint shown to the user
+
+  CI failed on run 29936743548 — view it: `gh run view 29936743548`. Push fixups to the same branch: `aida queue work STORY-292 --branch story-292 --steal`
+
+  ## Phase durations
+
+    - phase 1 (implementer): 1385348 ms
+    - phase 2 (ci): 32686 ms
+
+  ## Telemetry entry
+
+  The line appended to `~/.aida/auto-complete.jsonl` for this run:
+
+  ```json
+  {"spec_id":"STORY-292","started_at":"2026-07-22T15:47:24.172141138+00:00","completed_at":"2026-07-22T16:11:05.304685094+00:00","outcome":"failed","variant":"full","failed_phase":2,"failure_kind":"ci-red","failure_message":"CI is red on PR-100: fmt · clippy · test","phase_durations":[{"phase":1,"slug":"implementer","elapsed_ms":1385348},{"phase":2,"slug":"ci","elapsed_ms":32686}],"total_ms":1419004,"binary_sha":"a7cd68909"}
+  ```
+
+  ## Recurse-fix
+
+  Once triaged and promoted, this BUG can itself be driven by the orchestrator: `aida queue work <THIS-BUG> --auto-complete` — the dogfood loop TASK-266 makes operational.
+status: Draft
+priority: Medium
+owner: ''
+feature: Uncategorized
+created_at: 2026-07-22T16:11:05.577690125Z
+modified_at: 2026-07-22T16:11:05.577690125Z
+req_type: Bug
+tags:
+- auto-complete
+- auto-drafted
+- ci
+- failure-2
