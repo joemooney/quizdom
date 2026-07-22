@@ -22,9 +22,16 @@ priority: Medium
 owner: ''
 feature: Uncategorized
 created_at: 2026-07-19T21:27:33.029109631Z
-modified_at: 2026-07-19T21:27:33.029109631Z
+modified_at: 2026-07-22T05:43:16.711355796Z
 req_type: Task
 tags:
 - from-implementer:BUG-231
 - kind:design-choice
 - severity:minor
+comments:
+- id: 019f8859-87e7-79a1-8c2c-c36e30c7ee47
+  author: joe
+  content: 'Design-choice record, not a defect: the global-scan edge read is deliberate and verified (75/75 edge parity on real data). No action.'
+  created_at: 2026-07-22T05:43:16.711355796Z
+  modified_at: 2026-07-22T05:43:16.711355796Z
+  session_id: 789bafdb-f673-41c5-affc-d550f95e51e5
