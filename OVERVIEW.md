@@ -126,19 +126,55 @@ the user asks it to.** A session can be running a mode the file does not name �
 `/settings` surface has to *show* that live mode without *adopting* it. So each
 front-end keeps two copies: a display copy the engine mirrors its live
 `score`/`mode` into (`FrontEnd::mirror_live`, which never writes), and the
-persisted copy, which is exactly what a save writes. An explicit change
-(`/score`, `/mode debate`, a panel row, `/settings set …`) crosses from one to
-the other **one key at a time** (`Settings::adopt`), so the only value that
-reaches the file is the one the user named. Three routes used to defeat this:
-`/settings` pushing the live mode across as a persisting call, a bare `/mode` —
-which asks what the mode is rather than choosing one — writing the answer back,
-and any explicit change saving the mirrored struct whole, so `/settings set
-editor vim` carried `mode = "debate"` to disk with it. The precedence is also
+persisted copy, which is exactly what a save writes. An explicit change crosses
+from one to the other **one key at a time** (`Settings::adopt`), so the only
+value that reaches the file is the one the user named. Three routes used to
+defeat this: `/settings` pushing the live mode across as a persisting call, a
+bare `/mode` — which asks what the mode is rather than choosing one — writing
+the answer back, and any explicit change saving the mirrored struct whole, so
+`/settings set editor vim` carried `mode = "debate"` to disk with it. The
+precedence is also
 resolved **once**, into `config.mode` itself, before anything reads it: the
 resume path that auto-continues a terminal saved path (BUG-136) frames its
 question straight from the config, and while the tier was applied further
 downstream that one question came out Socratic in a session the loop then ran as
 a debate.
+
+<!-- trace:TASK-372 | ai:claude -->
+
+**Which surfaces choose a default, and which change the session.** STORY-367
+demoted a bare `/mode` to mirroring and left `/mode debate` and `/score`
+persisting, on STORY-194's reading that naming a value is choosing a new
+default. That reading does not survive the session log: the live mode is a
+`mode_set` **event**, restored from the log on resume, so `settings.toml`'s
+`mode` is the default for *new* sessions and a mid-session write to it is the
+same category error STORY-367 closed — just one the user initiated. So the line
+is drawn by surface rather than by whether an argument was given (`BUG-378`):
+
+| Surface | What it changes |
+|---|---|
+| `/mode`, `/mode debate`, `/score`, `--mode` | this session — mirrored to the panel, never written |
+| `/settings set mode debate`, the panel's Mode / Score rows | the saved default — the surface whose whole subject *is* defaults |
+
+Two smaller rules fall out of the same seam. A change that **matches what is
+already persisted writes nothing**, so a `/settings set mode socratic` while
+already Socratic leaves the file byte-identical rather than performing a
+read-merge-write of a file it is not changing. And a save that **fails is
+reported** — a line to the user naming the file, plus an entry in the diagnostic
+log — because the change still applied for the session, and silence there is
+indistinguishable from success right up until the next run disagrees.
+
+<!-- trace:TASK-373 | ai:claude -->
+
+The disk half of this is **testable**, which it had not been. TASK-266 kept the
+developer's real config out of the ~730 in-crate tests by compiling the IO out
+under `cfg(test)` — correct about the hazard, but it also meant STORY-367's own
+acceptance ("the persisted value survives a session that overrode it") could
+only be checked one level in, against the model of what a save *would* write. A
+bug in the save itself would have passed. The guard now sits at the **path**
+(`settings::process_config_path`, `None` under `cfg(test)`) and the load/save
+pair take the path as a parameter, so a test injects a temp file and asserts the
+bytes that actually land.
 
 Values parse the way TOML would: double **and** single quotes come off, and an
 inline `# comment` ends the value. `dolt_path = "/mnt/data/dolt"  # the big disk`
@@ -289,16 +325,51 @@ repository rather than a memory of intent:
 
 | `dolt_status` says | Means | quizdom |
 |---|---|---|
-| staged, uncommitted | an earlier quizdom run that never reached its commit | resumes, and says so |
+| staged, uncommitted | a candidate: possibly an earlier quizdom run that never reached its commit | checks the fingerprint below |
 | unstaged | nobody staged it, so no quizdom write made it | refuses, naming the table |
 
 One spawn, not a following `dolt add`, because a separate staging call leaves a
-window where a killed process's rows look exactly like a hand edit. And read off
-the repository rather than remembered in a breadcrumb file, because a breadcrumb
-saying *quizdom was writing here* would still say "mine" after the user had
-discarded those rows with `dolt reset --hard` and hand-edited the table — which
-is the very recovery the refusal above recommends, so the memory would be wrong
-exactly when it mattered.
+window where a killed process's rows look exactly like a hand edit.
+
+<!-- trace:TASK-368 | ai:claude -->
+
+##### The flag nominates; the content decides
+
+The flag alone answers "did *someone* run `dolt add`", not "was that someone
+quizdom" — so a user who ran `dolt sql -q 'UPDATE nodes …'` **and then `dolt add
+nodes`** produced exactly the state read as quizdom's leftovers, and the guard
+waved through precisely the edit it exists to catch (`BUG-378`).
+
+So every staging write also records the **fingerprint of the content it left
+staged** — `DOLT_HASHOF_DB('STAGED')`, asked as the last statement of the same
+`dolt sql` call, so it costs no extra spawn — into a `.quizdom-staged` marker
+beside `.dolt/`. A resume is claimed only when the repository's *current* staged
+fingerprint is still that one; anything else, including a missing or unreadable
+marker, is a refusal. Cannot-verify refusing is deliberate: a hard-killed
+quizdom costs the user a `db-backup` they can act on, never a silently absorbed
+edit.
+
+Fingerprinting the **content** rather than dropping a bare breadcrumb is what
+makes this survive the documented recovery. A marker saying *quizdom was writing
+here* would still say "mine" after the user had discarded those rows with `dolt
+reset --hard` and hand-edited the table — the very recovery the refusal above
+recommends, so the memory would be wrong exactly when it mattered. A fingerprint
+is not: the reset changed what is staged, so it stops matching. The marker is
+also dropped once its rows are committed, so it never outlives what it describes.
+
+<!-- trace:TASK-369 | ai:claude -->
+
+##### The pre-flight pays for itself
+
+BUG-366 added a probe to every write and left the commit tail's `dolt add` in
+place, so a session write went from three spawns to four — against `STORY-244`,
+which had just cut `curate` from 264 spawns to 4. But the restage had become
+redundant the moment writes began staging themselves: `commit_tables` no longer
+runs `dolt add` at all, which puts a session write back at three spawns (probe,
+self-staging write, commit) and `curate` back at its post-STORY-244 count. It is
+also strictly safer — a restage is the one place a change appearing *after* the
+pre-flight could still have been swept in. Both counts are asserted in tests, so
+the next change to this seam has to notice them.
 
 The three writers share one seam for this (`db_init.rs`): `begin_write` is the
 pre-flight and hands back a `WriteClaim`, and `commit_tables` takes that claim

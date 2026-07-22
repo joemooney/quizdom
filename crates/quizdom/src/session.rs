@@ -1418,20 +1418,24 @@ mod starting_mode_tests {
 /// steelmans the OPPOSING side's CRAFT, never asserting which belief is true.
 ///
 // trace:STORY-367 | ai:claude
-/// Returns whether the user CHOSE a mode — true only on a recognized token.
-/// The caller persists on `true` alone: a bare `/mode` asked what the mode is,
-/// and answering that question must not rewrite the saved default with whatever
-/// this session happened to be overriding it with.
+// trace:TASK-376 | ai:claude
+/// It returns nothing. STORY-367 widened this to `Result<bool>` — "did the user
+/// actually name a mode?" — because the `/mode` handler persisted on `true` and
+/// mirrored on `false`. The `/settings` reconcile then called the same function
+/// with a bare `?;`, discarding the answer, which read as an oversight rather
+/// than the deliberate choice it was. TASK-372 removed the branch it fed: BOTH
+/// forms of `/mode` now mirror, so there is no longer a question to answer and
+/// nothing left for a caller to drop.
 fn set_mode_in_session(
     mode: &mut SessionMode,
     token: &str,
     journal: &mut TurnJournal<'_>,
     output: &mut dyn Write,
-) -> Result<bool> {
+) -> Result<()> {
     let token = token.trim();
     if token.is_empty() {
         writeln!(output, "Current mode: {}", mode.as_str())?;
-        return Ok(false);
+        return Ok(());
     }
     let Some(new_mode) = SessionMode::parse(token) else {
         writeln!(
@@ -1439,7 +1443,7 @@ fn set_mode_in_session(
             "Unknown mode: {token} (expected socratic or debate). Mode unchanged ({}).",
             mode.as_str()
         )?;
-        return Ok(false);
+        return Ok(());
     };
     *mode = new_mode;
     let (scope, turn) = (journal.scope(), journal.turn);
@@ -1449,7 +1453,7 @@ fn set_mode_in_session(
         SessionMode::Socratic => "(The questioner is again a neutral challenger of your OWN position.)",
     };
     writeln!(output, "Mode set: {}\n{note}", new_mode.as_str())?;
-    Ok(true)
+    Ok(())
 }
 
 // trace:STORY-159 | ai:claude
@@ -3181,9 +3185,15 @@ fn run_session_from_current(
                             render_score_gauge_off(fe.out())?;
                         }
                         // trace:STORY-194 | ai:claude — keep the /settings panel in
-                        // sync with the dedicated /score shortcut + persist it: the
-                        // user asked for this gauge state, so it becomes the default.
-                        fe.persist_score(score_gauge_on);
+                        // sync with the dedicated /score shortcut.
+                        // trace:TASK-372 | ai:claude — MIRROR, not persist. The
+                        // gauge the user toggled is this session's; the saved
+                        // default is chosen through /settings, the surface whose
+                        // whole subject is defaults.
+                        fe.mirror_live(LiveSettings {
+                            score: score_gauge_on,
+                            mode,
+                        });
                         continue;
                     }
                     AnswerInput::Goal(text) => {
@@ -3255,27 +3265,27 @@ fn run_session_from_current(
                         // SAME question is re-presented under the new mode.
                         // Belief-neutral: debate argues craft, never which belief is
                         // true.
-                        let chosen = set_mode_in_session(
+                        set_mode_in_session(
                             &mut mode,
                             &token,
                             &mut TurnJournal::new(config, &mut logger, answered_turn),
                             fe.out(),
                         )?;
                         // trace:STORY-194 | ai:claude — keep the /settings panel in
-                        // sync with the dedicated /mode shortcut + persist it.
-                        // trace:STORY-367 | ai:claude — but ONLY when the user
-                        // actually named a mode. A bare `/mode` just prints the
-                        // current one, and under `--mode debate` that live value is
-                        // an override of the saved default, not a new one: writing
-                        // it back is how a flag passed once became permanent.
-                        if chosen {
-                            fe.persist_mode(mode);
-                        } else {
-                            fe.mirror_live(LiveSettings {
-                                score: score_gauge_on,
-                                mode,
-                            });
-                        }
+                        // sync with the dedicated /mode shortcut.
+                        // trace:STORY-367 | ai:claude — MIRROR, never persist. A
+                        // bare `/mode` just prints the current mode, and under
+                        // `--mode debate` that live value is an override of the
+                        // saved default: writing it back is how a flag passed once
+                        // became permanent.
+                        // trace:TASK-372 | ai:claude — and `/mode debate` takes the
+                        // same road, because the live mode belongs to the session
+                        // log (a `mode_set` event, restored on resume), not to
+                        // `settings.toml`.
+                        fe.mirror_live(LiveSettings {
+                            score: score_gauge_on,
+                            mode,
+                        });
                         continue;
                     }
                     AnswerInput::Editor(token) => {

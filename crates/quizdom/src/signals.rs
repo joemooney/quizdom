@@ -764,8 +764,7 @@ mod tests {
             ),
             // trace:BUG-366 | ai:claude — the write's foreign-change pre-flight.
             (0, "{}", ""),
-            (0, "", ""), // the one batched UPDATE
-            (0, "", ""), // dolt add nodes edges
+            (0, "", ""), // the one batched, self-staging UPDATE
             (0, "", ""), // dolt commit
         ]);
         let calls = runner.calls.clone();
@@ -784,11 +783,14 @@ mod tests {
         assert_eq!(outcomes.len(), 2, "Q-1 unhelpful, Q-2 insightful");
         assert_eq!(outcomes[0].question.weight, 38);
         assert_eq!(outcomes[1].question.weight, 62);
+        // trace:TASK-369 | ai:claude — the post-STORY-244 count, unchanged by
+        // BUG-366's pre-flight: the probe replaced the restage rather than
+        // adding to it, so curate still spawns a fixed handful.
         assert_eq!(
             calls.borrow().len(),
-            5,
-            "one read + one pre-flight + one write + add + commit, whatever the \
-             question count"
+            4,
+            "one read + one pre-flight + one self-staging write + commit, \
+             whatever the question count"
         );
     }
 

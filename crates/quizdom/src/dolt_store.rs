@@ -113,9 +113,17 @@ where
         self.runner.run(&self.path, args)
     }
 
-    /// The single query choke point: `dolt sql -r json -q <sql>`, parsed into
-    /// the `rows` array of the JSON result format.
-    fn sql_json(&self, sql: &str) -> Result<Vec<serde_json::Map<String, serde_json::Value>>> {
+    /// The single query choke point: `dolt sql -r json -q <sql>`, returning the
+    /// raw stdout alongside the `rows` array of the JSON result format.
+    ///
+    // trace:TASK-368 | ai:claude — the stdout comes back too, because a WRITE
+    // needs it: `dolt sql -r json` emits one document per result-producing
+    // statement, and a staging write's last one carries the fingerprint the
+    // marker records ([`crate::db_init::record_staged`]).
+    fn sql_raw(
+        &self,
+        sql: &str,
+    ) -> Result<(String, Vec<serde_json::Map<String, serde_json::Value>>)> {
         let args: Vec<String> = ["sql", "-r", "json", "-q", sql]
             .into_iter()
             .map(String::from)
@@ -128,15 +136,17 @@ where
                 crate::db_init::clean_dolt_message(&String::from_utf8_lossy(&output.stderr))
             )));
         }
-        let stdout = String::from_utf8_lossy(&output.stdout);
-        let trimmed = stdout.trim();
-        if trimmed.is_empty() {
-            return Ok(Vec::new());
+        let stdout = String::from_utf8_lossy(&output.stdout).to_string();
+        if stdout.trim().is_empty() {
+            return Ok((stdout, Vec::new()));
         }
-        let value: serde_json::Value = serde_json::from_str(trimmed).map_err(|error| {
-            QuizdomError::Parse(format!("dolt sql -r json output was not JSON: {error}"))
+        // trace:TASK-368 | ai:claude — the LAST document, not the whole stream:
+        // a single-statement query has exactly one, and a multi-statement write
+        // is not a single JSON value at all.
+        let value = crate::db_init::last_json_document(&stdout).ok_or_else(|| {
+            QuizdomError::Parse(format!("dolt sql -r json output was not JSON: {stdout}"))
         })?;
-        Ok(value
+        let rows = value
             .get("rows")
             .and_then(serde_json::Value::as_array)
             .map(|rows| {
@@ -144,7 +154,23 @@ where
                     .filter_map(|row| row.as_object().cloned())
                     .collect()
             })
-            .unwrap_or_default())
+            .unwrap_or_default();
+        Ok((stdout, rows))
+    }
+
+    /// [`Self::sql_raw`] for the READ path, which wants only the rows.
+    fn sql_json(&self, sql: &str) -> Result<Vec<serde_json::Map<String, serde_json::Value>>> {
+        self.sql_raw(sql).map(|(_, rows)| rows)
+    }
+
+    // trace:TASK-368 | ai:claude
+    /// Run one write that STAGES ITSELF, and record the fingerprint of what it
+    /// left staged so the next [`Self::begin_write`] can recognise those rows as
+    /// quizdom's by their content rather than by the bare `staged` flag.
+    fn staging_write(&self, statement: &str) -> Result<()> {
+        let (stdout, _) = self.sql_raw(&crate::db_init::staging_write(statement))?;
+        crate::db_init::record_staged(&self.path, &stdout);
+        Ok(())
     }
 
     // trace:TASK-247 | ai:claude
@@ -416,7 +442,7 @@ where
         let id = format!("{prefix}{next}");
         // trace:BUG-366 | ai:claude — the write stages itself, so it is quizdom's
         // in `dolt_status` from the instant it lands.
-        self.sql_json(&crate::db_init::staging_write(&format!(
+        self.staging_write(&format!(
             "INSERT INTO nodes (id, kind, title, body, tags, weight) \
              VALUES ({}, '{kind_value}', {}, {}, {}, {});",
             sql_quote(&id),
@@ -424,7 +450,7 @@ where
             sql_quote(&node.description),
             sql_quote(&node.tags.join(",")),
             node.weight
-        )))?;
+        ))?;
         self.commit(&claim, &format!("quizdom: add node {id}"))?;
         Ok(id)
     }
@@ -435,11 +461,11 @@ where
         let kind = edge.as_str();
         // The (from_id, to_id, kind) primary key makes a duplicate insert a
         // dolt error — matching the trait contract (existing edge is an error).
-        self.sql_json(&crate::db_init::staging_write(&format!(
+        self.staging_write(&format!(
             "INSERT INTO edges (from_id, to_id, kind) VALUES ({}, {}, '{kind}');",
             sql_quote(from),
             sql_quote(to)
-        )))?;
+        ))?;
         self.commit(&claim, &format!("quizdom: add edge {from} -{kind}-> {to}"))
     }
 
@@ -447,11 +473,11 @@ where
         // trace:BUG-366 | ai:claude
         let claim = self.begin_write()?;
         let kind = edge.as_str();
-        self.sql_json(&crate::db_init::staging_write(&format!(
+        self.staging_write(&format!(
             "INSERT IGNORE INTO edges (from_id, to_id, kind) VALUES ({}, {}, '{kind}');",
             sql_quote(from),
             sql_quote(to)
-        )))?;
+        ))?;
         self.commit(
             &claim,
             &format!("quizdom: ensure edge {from} -{kind}-> {to}"),
@@ -462,11 +488,11 @@ where
     fn update_weight_and_tags(&self, id: &str, weight: u32, tags: &[String]) -> Result<()> {
         // trace:BUG-366 | ai:claude
         let claim = self.begin_write()?;
-        self.sql_json(&crate::db_init::staging_write(&format!(
+        self.staging_write(&format!(
             "UPDATE nodes SET tags = {}, weight = {weight} WHERE id = {};",
             sql_quote(&tags.join(",")),
             sql_quote(id)
-        )))?;
+        ))?;
         self.commit(&claim, &format!("quizdom: reweight {id}"))
     }
 
@@ -632,10 +658,10 @@ where
                 .map(|row| row.id.as_str())
                 .collect::<Vec<_>>()
                 .join(", ");
-            self.sql_json(&crate::db_init::staging_write(&format!(
+            self.staging_write(&format!(
                 "UPDATE nodes SET tags = CASE id{tag_arms} END, \
                  weight = CASE id{weight_arms} END WHERE id IN ({ids});"
-            )))?;
+            ))?;
         }
         self.commit(&claim, &format!("quizdom: reweight {count} node(s)"))
     }
@@ -1033,8 +1059,7 @@ mod tests {
     fn create_node_mints_the_next_id_and_commits() {
         let store = writing_store(vec![
             (0, r#"{"rows":[{"id":"Q-7"},{"id":"Q-3"}]}"#, ""), // max scan
-            (0, "", ""),                                        // insert
-            (0, "", ""),                                        // add nodes edges
+            (0, "", ""),                                        // self-staging insert
             (0, "", ""),                                        // commit
         ]);
         let node = NewNode {
@@ -1064,13 +1089,49 @@ mod tests {
         );
         assert!(insert.contains(", 55)"), "weight in the column: {insert}");
         // trace:BUG-366 | ai:claude — and stages itself in the same statement.
+        // trace:TASK-297 | ai:claude — the tables quizdom owns, by name.
         assert!(
-            insert.ends_with("CALL DOLT_ADD('nodes', 'edges');"),
+            insert.contains("CALL DOLT_ADD('nodes', 'edges');"),
             "{insert}"
         );
-        // trace:TASK-297 | ai:claude — the tables quizdom owns, by name.
-        assert_eq!(calls[3], ["add", "nodes", "edges"]);
-        assert_eq!(&calls[4][0..2], &["commit", "-m"]);
+        // trace:TASK-369 | ai:claude — so the commit tail needs no `dolt add` of
+        // its own: pre-flight, id scan, self-staging insert, commit.
+        assert_eq!(calls.len(), 4, "{calls:?}");
+        assert_eq!(&calls[3][0..2], &["commit", "-m"]);
+        assert!(
+            !calls.iter().any(|call| call[0] == "add"),
+            "no restage spawn: {calls:?}"
+        );
+    }
+
+    // trace:TASK-369 | ai:claude
+    /// The spawn budget of the two writes a SESSION actually makes, asserted so
+    /// the next change to the write seam has to notice it. BUG-366 added a
+    /// pre-flight probe to every write and left the commit tail's `dolt add`
+    /// in place, taking a session write from three spawns to four — against
+    /// STORY-244, which had just cut curate from 264 to 4. Folding the staging
+    /// into the write itself pays for the probe.
+    #[test]
+    fn a_session_write_costs_the_same_three_spawns_it_did_before_the_pre_flight() {
+        let store = writing_store(vec![(0, "", ""), (0, "", "")]);
+        store
+            .create_edge("Q-1", "Q-2", EdgeKind::Begets)
+            .expect("edge create should succeed");
+        assert_eq!(
+            store.runner.calls.borrow().len(),
+            3,
+            "pre-flight, self-staging insert, commit"
+        );
+
+        let reweight = writing_store(vec![(0, "", ""), (0, "", "")]);
+        reweight
+            .update_weight_and_tags("Q-1", 62, &["topic:x".to_string()])
+            .expect("reweight should succeed");
+        assert_eq!(
+            reweight.runner.calls.borrow().len(),
+            3,
+            "pre-flight, self-staging update, commit"
+        );
     }
 
     #[test]
@@ -1103,8 +1164,7 @@ mod tests {
     #[test]
     fn ensure_edge_tolerates_the_nothing_to_commit_no_op() {
         let store = writing_store(vec![
-            (0, "", ""),                       // insert ignore (no-op)
-            (0, "", ""),                       // add nodes edges
+            (0, "", ""),                       // self-staging insert ignore (no-op)
             (1 << 8, "", "nothing to commit"), // commit refuses
             (0, "{}", ""),                     // the clean-tree probe behind it
         ]);
@@ -1359,10 +1419,12 @@ mod tests {
             .expect("batch reweight should succeed");
 
         let calls = store.runner.calls.borrow();
+        // trace:TASK-369 | ai:claude — three, the post-STORY-244 count: the
+        // BUG-366 pre-flight is paid for by the restage it replaced.
         assert_eq!(
             calls.len(),
-            4,
-            "one pre-flight + one UPDATE + one add + one commit, not four per row"
+            3,
+            "one pre-flight + one self-staging UPDATE + one commit, not three per row"
         );
         let update = sql_of(&calls[1]);
         assert!(
@@ -1377,8 +1439,7 @@ mod tests {
             "{update}"
         );
         assert!(update.contains("WHERE id IN ('Q-1', 'Q-2')"), "{update}");
-        assert_eq!(calls[2], ["add", "nodes", "edges"]);
-        assert_eq!(&calls[3][0..2], &["commit", "-m"]);
+        assert_eq!(&calls[2][0..2], &["commit", "-m"]);
     }
 
     #[test]
@@ -1478,8 +1539,7 @@ mod tests {
             let hits: usize = statements.iter().map(|sql| sql.matches(&arm).count()).sum();
             assert_eq!(hits, 2, "one tags arm + one weight arm for {id}");
         }
-        // Still one add + one commit for the whole batch, not one per chunk.
-        assert_eq!(calls[calls.len() - 2], ["add", "nodes", "edges"]);
+        // Still one commit for the whole batch, not one per chunk.
         assert_eq!(&calls[calls.len() - 1][0..2], &["commit", "-m"]);
         assert_eq!(
             calls.iter().filter(|call| call[0] == "commit").count(),
@@ -1648,11 +1708,16 @@ mod tests {
         // stages like the store does. Leaving these unstaged would make the
         // NEXT store write refuse them as a hand edit, which is the pre-flight
         // working correctly against a test wearing the wrong hat.
+        // trace:TASK-368 | ai:claude — and it goes through the store's own
+        // `staging_write`, which also RECORDS the fingerprint. Staging alone is
+        // no longer enough to pass the pre-flight, and a fixture that stages
+        // without recording is indistinguishable from a hand-run `dolt add` —
+        // which is exactly the hole this task closed.
         store
-            .sql_json(&crate::db_init::staging_write(&format!(
+            .staging_write(&format!(
                 "INSERT INTO nodes (id, kind, title, body, tags, weight) VALUES {};",
                 fan_rows.join(", ")
-            )))
+            ))
             .expect("fan node insert should succeed");
         let values: Vec<String> = targets
             .iter()
@@ -1665,10 +1730,10 @@ mod tests {
             })
             .collect();
         store
-            .sql_json(&crate::db_init::staging_write(&format!(
+            .staging_write(&format!(
                 "INSERT INTO edges (from_id, to_id, kind) VALUES {};",
                 values.join(", ")
-            )))
+            ))
             .expect("same-second edge insert should succeed");
         let mut lexical = targets.clone();
         lexical.sort();
@@ -1803,6 +1868,137 @@ mod tests {
             store.fetch_node("Q-900").unwrap().title,
             "written by hand",
             "and the edit is still there — refusing is not discarding"
+        );
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    // trace:TASK-368 | ai:claude
+    /// The hole BUG-366 left, against the real engine: the same hand edit as
+    /// above, but STAGED by the user's own `dolt add`.
+    ///
+    /// BUG-366 answered "whose rows are these?" from `dolt_status.staged`
+    /// alone, so this sequence — the one difference being a `dolt add` — read
+    /// as quizdom's own unfinished run and was carried into the next
+    /// quizdom-labelled commit. The guard waved through precisely the edit it
+    /// exists to catch, and did it more confidently than the unstaged case it
+    /// did refuse. The flag now only nominates a candidate; the staged CONTENT
+    /// has to be the content quizdom recorded staging.
+    #[test]
+    #[ignore = "requires the dolt binary on PATH"]
+    fn real_dolt_a_session_write_refuses_a_hand_edit_the_user_staged() {
+        let dir = std::env::temp_dir().join(format!(
+            "quizdom-dolt-store-staged-by-hand-{}",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_dir_all(&dir);
+        crate::db_init::run_db_init(
+            [
+                "db-init".to_string(),
+                "--path".to_string(),
+                dir.display().to_string(),
+            ],
+            &mut Vec::new(),
+        )
+        .expect("bootstrap should succeed");
+        let store = DoltDomainStore::new(&dir);
+        let seed = store
+            .create_node(&NewNode {
+                kind: NodeKind::Question,
+                title: "seed".to_string(),
+                description: String::new(),
+                tags: Vec::new(),
+                weight: 50,
+            })
+            .expect("the ordinary write path works");
+
+        // The hand edit, and then the user's own `dolt add` — someone partway
+        // through committing their work in their own words.
+        store
+            .sql_json(
+                "INSERT INTO nodes (id, kind, title, body, tags, weight) \
+                 VALUES ('Q-900', 'question', 'written by hand', '', '', 0);\n\
+                 CALL DOLT_ADD('nodes');",
+            )
+            .expect("a hand-run staged write is a supported thing to do");
+
+        match store.update_weight_and_tags(&seed, 12, &[]) {
+            Err(QuizdomError::Dolt(message)) => {
+                assert!(
+                    message.contains("do not match what any quizdom run recorded staging"),
+                    "the refusal describes what it actually saw: {message}"
+                );
+                assert!(message.contains("nodes"), "it names the table: {message}");
+            }
+            other => panic!("a staged hand edit is still a hand edit, got {other:?}"),
+        }
+
+        let history: Vec<serde_json::Map<String, serde_json::Value>> = store
+            .sql_json("SELECT message FROM dolt_log WHERE message LIKE '%reweight%';")
+            .unwrap();
+        assert!(
+            history.is_empty(),
+            "no commit describing a reweight carries the hand-written row: {history:?}"
+        );
+        assert_eq!(
+            store.fetch_node("Q-900").unwrap().title,
+            "written by hand",
+            "and the edit is still there — refusing is not discarding"
+        );
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    // trace:TASK-368 | ai:claude
+    /// The other side of the same coin, against the real engine: quizdom's OWN
+    /// staged leftovers are still resumed. A guard that closed the hole by
+    /// refusing everything staged would have reintroduced BUG-366 — a run that
+    /// failed after writing could never retry — so the resume has to survive.
+    #[test]
+    #[ignore = "requires the dolt binary on PATH"]
+    fn real_dolt_our_own_staged_leftovers_are_still_resumed() {
+        let dir =
+            std::env::temp_dir().join(format!("quizdom-dolt-store-resume-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        crate::db_init::run_db_init(
+            [
+                "db-init".to_string(),
+                "--path".to_string(),
+                dir.display().to_string(),
+            ],
+            &mut Vec::new(),
+        )
+        .expect("bootstrap should succeed");
+        let store = DoltDomainStore::new(&dir);
+
+        // A write that staged and recorded its fingerprint, but never committed
+        // — what a killed process leaves behind.
+        store
+            .staging_write(
+                "INSERT INTO nodes (id, kind, title, body, tags, weight) \
+                 VALUES ('Q-900', 'question', 'half-written', '', '', 0);",
+            )
+            .expect("the interrupted run's write lands");
+
+        let seed = store
+            .create_node(&NewNode {
+                kind: NodeKind::Question,
+                title: "the retry".to_string(),
+                description: String::new(),
+                tags: Vec::new(),
+                weight: 50,
+            })
+            .expect("its own leftovers are not grounds to refuse");
+
+        // One commit carries both, which is what `resumed_note` announces.
+        assert_eq!(store.fetch_node(&seed).unwrap().title, "the retry");
+        assert_eq!(store.fetch_node("Q-900").unwrap().title, "half-written");
+        let pending: Vec<serde_json::Map<String, serde_json::Value>> = store
+            .sql_json("SELECT table_name FROM dolt_status;")
+            .unwrap();
+        assert!(
+            pending.is_empty(),
+            "the resumed run committed everything it carried: {pending:?}"
         );
 
         let _ = std::fs::remove_dir_all(&dir);

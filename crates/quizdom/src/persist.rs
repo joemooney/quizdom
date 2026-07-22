@@ -708,9 +708,9 @@ mod user_authored_tests {
         );
 
         let calls = runner.calls.borrow();
-        // Standalone -> pre-flight + mint scan + insert + add + commit, no
-        // edge insert.
-        assert_eq!(calls.len(), 5);
+        // trace:TASK-369 | ai:claude — standalone: pre-flight + mint scan +
+        // self-staging insert + commit, no edge insert and no restage spawn.
+        assert_eq!(calls.len(), 4);
         let insert = ScriptedDoltRunner::sql_of_call(&calls[2]);
         assert!(insert.contains("'Q-21'"));
         assert!(insert.contains("'question'"));
@@ -737,10 +737,10 @@ mod user_authored_tests {
 
         assert_eq!(persisted.id, "Q-30");
         let calls = runner.calls.borrow();
-        // pre-flight + mint + insert + add + commit, then a second pre-flight
-        // + edge insert + add + commit.
-        assert_eq!(calls.len(), 9);
-        let edge = ScriptedDoltRunner::sql_of_call(&calls[6]);
+        // trace:TASK-369 | ai:claude — pre-flight + mint + insert + commit, then
+        // a second pre-flight + edge insert + commit.
+        assert_eq!(calls.len(), 7);
+        let edge = ScriptedDoltRunner::sql_of_call(&calls[5]);
         // begets is origin -> new.
         assert!(edge.contains("INSERT INTO edges"));
         assert!(edge.contains("'Q-7', 'Q-30', 'begets'"));
@@ -764,7 +764,7 @@ mod user_authored_tests {
         assert_eq!(persisted.id, "Q-31");
         assert!(persisted.tags.contains(&"answer:free-text".to_string()));
         let calls = runner.calls.borrow();
-        let edge = ScriptedDoltRunner::sql_of_call(&calls[6]);
+        let edge = ScriptedDoltRunner::sql_of_call(&calls[5]);
         // probes is new -> term.
         assert!(edge.contains("'Q-31', 'TERM-3', 'probes'"));
     }
@@ -805,8 +805,7 @@ mod user_authored_tests {
         let (status, out, err) = mint_scan("Q-49");
         let (persister, _runner) = persister_with(vec![
             (status, &out, &err),
-            (0, "", ""),                  // insert
-            (0, "", ""),                  // add -A
+            (0, "", ""),                  // self-staging insert
             (0, "", ""),                  // commit
             (1 << 8, "", "no such node"), // edge insert fails
         ]);

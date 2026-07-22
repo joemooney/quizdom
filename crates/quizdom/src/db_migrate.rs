@@ -40,8 +40,8 @@
 //! that also feeds the spot-check BFS.
 
 use crate::db_init::{
-    begin_write, commit_tables, staging_write, DoltRunner, SystemDoltRunner, DEFAULT_DOLT_DB_PATH,
-    QUIZDOM_TABLES,
+    begin_write, commit_tables, run_staging_write, DoltRunner, SystemDoltRunner,
+    DEFAULT_DOLT_DB_PATH, QUIZDOM_TABLES,
 };
 use crate::error::{QuizdomError, Result};
 use crate::store::{parse_node_show, CommandRunner, SystemCommandRunner};
@@ -234,11 +234,15 @@ fn db_migrate(
     // leaves rows the retry recognises as its own. Per BATCH, not once at the
     // end: a migration that failed on batch 7 of 10 must not have batches 1-6
     // looking like someone's hand edit either.
+    // trace:TASK-368 | ai:claude — each batch also records the fingerprint of what
+    // it left staged, so a retry after a failed parity run recognises its own
+    // rows by their CONTENT rather than by the bare `staged` flag (which a user's
+    // own `dolt add` sets just as well).
     for batch in chunk_statements(nodes_upsert_sql(&nodes), SQL_BATCH_BUDGET) {
-        run_dolt_sql(dolt, &config.path, &staging_write(&batch))?;
+        run_staging_write(dolt, &config.path, &batch)?;
     }
     for batch in chunk_statements(edges_insert_sql(&kept), SQL_BATCH_BUDGET) {
-        run_dolt_sql(dolt, &config.path, &staging_write(&batch))?;
+        run_staging_write(dolt, &config.path, &batch)?;
     }
     writeln!(
         output,
@@ -893,8 +897,11 @@ mod tests {
             }
         }
 
+        /// The SQL of recorded call `index` — the LAST argument, since a
+        /// self-staging write spawns `sql -r json -q <sql>` (it needs the
+        /// fingerprint back) while a plain query spawns `sql -q <sql>`.
         fn sql(&self, index: usize) -> String {
-            self.calls.borrow()[index][2].clone()
+            self.calls.borrow()[index].last().cloned().unwrap()
         }
     }
 
@@ -1016,6 +1023,12 @@ mod tests {
     const OUR_FAILED_RUNS_ROWS: &str =
         r#"{"rows":[{"table_name":"nodes","staged":1},{"table_name":"edges","staged":1}]}"#;
 
+    // trace:TASK-368 | ai:claude — the staged-content fingerprint an aborted run
+    // recorded, and the probe response that says the repo still holds it.
+    const OUR_FINGERPRINT: &str = "qs451oll9qcms75498hipo54jhsbsme2";
+    const OUR_FINGERPRINT_ROW: &str =
+        r#"{"rows":[{"staged_hash":"qs451oll9qcms75498hipo54jhsbsme2"}]}"#;
+
     fn dolt_repo_dir(label: &str) -> PathBuf {
         let dir =
             std::env::temp_dir().join(format!("quizdom-db-migrate-{label}-{}", std::process::id()));
@@ -1069,10 +1082,12 @@ mod tests {
         .expect("migration should succeed");
 
         let calls = dolt.calls.borrow();
+        // trace:TASK-369 | ai:claude — the commit tail is one spawn now: the
+        // batches staged themselves, so there is no `dolt add` to re-run.
         assert_eq!(
             calls.len(),
-            8,
-            "pre-flight, nodes, edges, two parity queries, spot-check, commit tail"
+            7,
+            "pre-flight, nodes, edges, two parity queries, spot-check, commit"
         );
         drop(calls);
 
@@ -1105,11 +1120,15 @@ mod tests {
         // a message that says what it carried.
         // trace:TASK-296 | ai:claude — and it lands LAST, after the three
         // queries whose answers that message depends on.
-        // trace:TASK-297 | ai:claude — staging `nodes` / `edges` by name.
+        // trace:TASK-297 | ai:claude — staging `nodes` / `edges` by name, which
+        // each batch did for itself (TASK-369), so the tail is the commit alone.
         let calls = dolt.calls.borrow();
-        assert_eq!(calls[6], ["add", "nodes", "edges"].map(String::from));
+        assert!(
+            !calls.iter().any(|args| args[0] == "add"),
+            "no restage spawn: {calls:?}"
+        );
         assert_eq!(
-            calls[7],
+            calls[6],
             [
                 "commit".to_string(),
                 "-m".to_string(),
@@ -1617,14 +1636,19 @@ mod tests {
     #[test]
     fn the_retry_after_a_failed_parity_run_carries_on_and_commits() {
         let dir = dolt_repo_dir("retry");
+        // trace:TASK-368 | ai:claude — the aborted run recorded the fingerprint
+        // of what it left staged; the repo still holds exactly that, so the
+        // retry recognises the rows as its own rather than as a hand edit.
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join(".quizdom-staged"), OUR_FINGERPRINT).unwrap();
         let dolt = RecordingDolt::new(&[
             OUR_FAILED_RUNS_ROWS, // pre-flight: the aborted run's own rows
+            OUR_FINGERPRINT_ROW,  // ...whose content is the one we recorded
             "",                   // nodes
             "",                   // edges
             NODES_PARITY,
             EDGES_PARITY,
             SPOT_CHECK,
-            "", // add
             "", // commit
         ]);
         let mut output = Vec::new();
@@ -1676,8 +1700,7 @@ mod tests {
 
         for (index, what) in [(1, "the nodes batch"), (2, "the edges batch")] {
             assert!(
-                dolt.sql(index)
-                    .ends_with("CALL DOLT_ADD('nodes', 'edges');"),
+                dolt.sql(index).contains("CALL DOLT_ADD('nodes', 'edges');"),
                 "{what} must stage itself: {}",
                 dolt.sql(index)
             );

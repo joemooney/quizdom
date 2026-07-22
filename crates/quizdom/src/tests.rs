@@ -627,9 +627,9 @@ fn llm_strategy_persists_generated_question_when_configured() {
     );
     assert_eq!(next.weight, 50);
     let calls = handle.calls.borrow();
-    // pre-flight + mint scan + insert + add + commit, then a second pre-flight
-    // + edge insert + add + commit.
-    assert_eq!(calls.len(), 9);
+    // trace:TASK-369 | ai:claude — pre-flight + mint scan + self-staging insert
+    // + commit, then a second pre-flight + edge insert + commit.
+    assert_eq!(calls.len(), 7);
     let insert = ScriptedDoltRunner::sql_of_call(&calls[2]);
     assert!(insert.contains("'Q-42'"));
     assert!(insert.contains("'What definition of responsibility are you using?'"));
@@ -638,7 +638,7 @@ fn llm_strategy_persists_generated_question_when_configured() {
         "tags column carries no weight tag: {insert}"
     );
     assert!(insert.contains(", 50)"), "weight in the column: {insert}");
-    let edge = ScriptedDoltRunner::sql_of_call(&calls[6]);
+    let edge = ScriptedDoltRunner::sql_of_call(&calls[5]);
     assert!(edge.contains("'Q-1', 'Q-42', 'begets'"));
 }
 
@@ -3853,15 +3853,15 @@ fn quick_add_issues_begets_edge_for_later_sessions() {
     .unwrap();
 
     let calls = handle.calls.borrow();
-    // pre-flight + mint scan + insert + add + commit, then a second pre-flight
-    // + edge insert + add + commit.
-    assert_eq!(calls.len(), 9);
+    // trace:TASK-369 | ai:claude — pre-flight + mint scan + self-staging insert
+    // + commit, then a second pre-flight + edge insert + commit.
+    assert_eq!(calls.len(), 7);
     let insert = ScriptedDoltRunner::sql_of_call(&calls[2]);
     assert!(insert.contains("'Q-77'"));
     assert!(insert.contains("'source:user-authored,topic:free-will,answer:yes-no,seed'"));
     assert!(insert.contains(", 50)"), "weight in the column: {insert}");
     // begets is current -> new.
-    let edge = ScriptedDoltRunner::sql_of_call(&calls[6]);
+    let edge = ScriptedDoltRunner::sql_of_call(&calls[5]);
     assert!(edge.contains("'Q-23', 'Q-77', 'begets'"));
     drop(calls);
 

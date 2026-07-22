@@ -1150,3 +1150,76 @@ fails when `mirror_live` is made to persist. A TUI twin covers the panel, and
 **Docs.** `OVERVIEW.md` § *Settings, and how a relative path resolves* gains the
 display-copy/persisted-copy rule, all three closed routes, and why the tier moved
 upstream; `CLAUDE.md`'s settings paragraph carries the short form.
+
+## Session — 2026-07-22 · BUG-378: the invariants two merged PRs left behind
+
+**Request.** `/aida-pickup BUG-378` — the consolidated regressions the reviews
+found in PR-109 (BUG-366) and PR-110 (STORY-367). Filed as one bug because they
+share a cause: both changes altered a persistence/commit seam without
+re-establishing its invariants.
+
+**`/mode debate` was never a choice about the default (TASK-372).** STORY-367
+demoted a *bare* `/mode` to mirroring and left `/mode <arg>` and `/score`
+persisting, on STORY-194's reading that naming a value is choosing a new default.
+That reading does not survive the session log: the live mode is a `mode_set`
+event, restored from the log on resume, so `settings.toml`'s `mode` is the
+default for *new* sessions and a mid-session write to it is the same category
+error STORY-367 closed — one the user initiated. The line is now drawn by
+**surface**: `/mode`, `/mode debate` and `/score` mirror; `/settings set …` and
+the panel rows persist. `FrontEnd::persist_score` / `persist_mode` are gone.
+
+**That dissolved TASK-376 rather than papering over it.** `set_mode_in_session`
+returned `Result<bool>` only so the `/mode` handler could branch persist-vs-
+mirror, and the `/settings` reconcile discarded it with a bare `?;` — deliberate,
+but unreadable as such. With no branch left to feed, it returns `Result<()>`:
+there is no value for a caller to drop.
+
+**The no-change guard, restored one level in (TASK-375).** STORY-367 replaced a
+guarded `sync_*` pair with an unguarded `persist_*` one, so a `/settings set mode
+socratic` while already Socratic did a full read-merge-write of a file it was not
+changing — and put TASK-268's "refuse when the file is unreadable" path in the way
+of a no-op. Guarded inside `persist(key)`, so the one-key seam stays intact.
+
+**The acceptance STORY-367 could not express (TASK-373).** Its first criterion was
+"the persisted value survives a session that overrode it (test)", and no test
+could assert it literally: TASK-266 kept the developer's real config out of the
+suite by compiling the IO out under `cfg(test)`, so the only thing checkable was
+the model one level in. The guard moved from the IO to the **path** —
+`settings::process_config_path` is `None` under `cfg(test)`, and `load_or_seed_at`
+/ `save_at` take the path as a parameter — so `a_session_override_never_reaches_
+the_file` now round-trips a real temp file and asserts the bytes. A failed save is
+also reported (a line to the user, an entry in the diagnostic log) rather than
+swallowed by `let _ =`.
+
+**The staged flag nominates; the content decides (TASK-368).** BUG-366 answered
+"whose rows are these?" from `dolt_status.staged`, which says someone ran `dolt
+add`, not that the someone was quizdom — so `dolt sql -q 'UPDATE nodes …'`
+followed by `dolt add nodes` read as quizdom's leftovers and rode into the next
+quizdom-labelled commit, the exact failure the guard exists to prevent. Every
+staging write now records the **fingerprint of what it staged**
+(`DOLT_HASHOF_DB('STAGED')`, appended as the last statement of the same `dolt sql`
+call, so no extra spawn) into a `.quizdom-staged` marker; a resume is claimed only
+when the repo's current staged fingerprint is still that one, and a missing or
+unreadable marker refuses. Fingerprinting the *content* is what a bare breadcrumb
+could not do — the documented recovery is `dolt reset --hard` then a hand edit,
+which a "quizdom was writing here" marker would have waved through.
+
+**The pre-flight paid for itself (TASK-369).** BUG-366 added a probe per write and
+kept the commit tail's `dolt add`, taking a session write from three spawns to
+four — against STORY-244, which had just cut `curate` from 264 to 4. The restage
+had been redundant since writes began staging themselves, so `commit_tables` no
+longer runs `dolt add`: a session write is back to three spawns, `curate` to its
+post-STORY-244 count, and both are now asserted.
+
+**Verified.** `cargo fmt --all --check` clean; `cargo clippy --workspace
+--all-targets -- -D warnings` exits 0; 731 unit tests green (+7 in `llm`); all 14
+`real_dolt` acceptance tests green against dolt 2.2.1. The real-dolt suite earned
+its keep twice: it caught a fixture staging out of band without recording (the
+guard working correctly against a test wearing the wrong hat), and two new
+`#[ignore]`d tests prove TASK-368 both ways against a live engine — a user's own
+`dolt add` is refused, and quizdom's own staged leftovers are still resumed.
+
+**Docs.** `OVERVIEW.md` gains *The flag nominates; the content decides* and *The
+pre-flight pays for itself* under the commit-provenance section, plus the
+surface-by-surface persistence table and the injectable-path rationale under
+settings; `CLAUDE.md` carries the short form of both.
