@@ -2140,9 +2140,13 @@ impl<R: BufRead, B: Backend> TuiFrontEnd<R, B> {
                     body.push(Line::from(line.trim_end().to_string()));
                 }
                 body.push(Line::from(""));
+                // trace:TASK-331 | ai:claude — the log path is only half the
+                // answer; the panel is where a mid-session user meets it, so it
+                // is also where the command that READS it belongs.
                 body.push(Line::from(
                     "↑/↓ move · Enter/Space toggle · Esc close · the last three rows are \
-                     read-only (dolt_path / auto_backup / log_path in settings.toml)",
+                     read-only (dolt_path / auto_backup / log_path in settings.toml) · \
+                     read the diagnostics with `quizdom logs`",
                 ));
                 let widget = Paragraph::new(body)
                     .block(
@@ -2357,7 +2361,6 @@ impl<R: BufRead, B: Backend> FrontEnd for TuiFrontEnd<R, B> {
     /// so the user walks the SAME prompts as the headless line front-end. EOF
     /// (Ctrl-C/Ctrl-D) on any prompt unwinds the core gracefully, and control
     /// returns to the question afterward (the caller re-presents it).
-    #[allow(clippy::too_many_arguments)]
     fn author_question(
         &mut self,
         existing: &[crate::model::Question],

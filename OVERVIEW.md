@@ -218,22 +218,36 @@ close that, in increasing order of automation:
 
    <!-- trace:TASK-325 | ai:claude -->
 
-   **A probe that cannot answer does not cancel the push.** The two halves of
-   the blind-probe rule differ because the costs differ. For the *reminder*,
-   silence is right: a failed probe is not evidence of drift, and nagging on a
-   broken probe costs your trust in every later reminder. For the *push*,
-   silence was wrong — it turned an `auto_backup` you explicitly opted into
-   into a no-op, which is the exact failure `auto_backup` exists to prevent. A
-   redundant push costs seconds; a skipped one costs the graph. So an opted-in
-   session pushes anyway and says why:
+   **A probe that cannot answer does not cancel the push.** Reading a failed
+   probe as "nothing to do" turned an `auto_backup` you explicitly opted into
+   into a no-op — the exact failure `auto_backup` exists to prevent. A redundant
+   push costs seconds; a skipped one costs the graph. So an opted-in session
+   pushes anyway and says why:
 
    ```
    Could not tell whether the domain graph was backed up, so pushed it to /home/you/.local/share/quizdom/dolt-backup anyway.
    ```
 
-   With `auto_backup` off the session still says nothing, but the blind probe
-   now lands in the diagnostic log — it was the one path through the
-   end-of-session decision that left no trace anywhere.
+   <!-- trace:TASK-328 | ai:claude -->
+
+   **…and it does not cancel the notice either.** The other half of the
+   blind-probe rule stayed silent for a while, on the reasoning that a failed
+   probe is not evidence of drift and nagging on one costs your trust in every
+   later reminder. The first clause is right; silence was the wrong conclusion
+   from it. *Nothing* is what a backed-up graph looks like, so the default
+   configuration — `auto_backup` off — learnt nothing at all from a probe that
+   had failed. It now says exactly what it knows:
+
+   ```
+   Could not tell whether the domain graph is backed up — run `quizdom db-backup` to be sure it reaches /home/you/.local/share/quizdom/dolt-backup, and `quizdom logs` for why the check failed.
+   ```
+
+   That is a weaker claim than the reminder's assertion of drift, so it cannot
+   be wrong in the way that would spend the reminder's credibility — and the
+   line only appears at all when *this* session wrote to the graph, so it is
+   feedback on what you just did rather than ambient nagging. Both branches also
+   record the blind probe in the diagnostic log, so neither is a path through the
+   end-of-session decision that leaves no trace.
 
 3. **Cron / a systemd timer**, which covers the machine rather than the session
    — including the hand-run `dolt sql` no session end will ever see:
@@ -263,16 +277,49 @@ one line per event. Nothing in the seam ever writes to the terminal, and a log
 that cannot be written is dropped silently — a breadcrumb that takes down the
 session it was meant to explain is worse than none.
 
+<!-- trace:TASK-331 | ai:claude -->
+
+**Reading it: `quizdom logs`.** A three-tier path is a three-tier guessing game
+for anyone trying to `cat` the file, so the reader names the resolved path above
+whatever it prints, and `--tail N` cuts it to the last N entries — the shape you
+want right after a session said something went wrong. A missing log is the
+healthy case and reads as a plain message with an exit code of 0, not an error.
+The reader lives outside the write seam on purpose (`logs.rs`, not
+`diagnostics.rs`): *diagnostics writes and never prints; logs prints and never
+writes*, so the seam's never-touch-the-terminal scan below stays a true
+statement about every path through it.
+
 <!-- trace:TASK-321 | ai:claude -->
 
 **Bounded at 1 MiB.** Append-only is not the same as unbounded. A healthy
 install writes nothing at all, but a persistently broken store writes a line per
 probed read per turn — unbounded growth in exactly the situation you are least
-likely to be watching. At the limit the file is renamed to `quizdom.log.1` and a
-fresh one opens with a line saying so, capping the pair at ~2 MiB. One
-generation and one `rename`: the previous entries are kept rather than
-truncated, because the run of entries explaining the breakage is the reason the
-file exists.
+likely to be watching. At the limit the contents move to `quizdom.log.1` and the
+live file restarts with a line saying so, capping the pair at ~2 MiB. One
+generation: the previous entries are kept rather than truncated, because the run
+of entries explaining the breakage is the reason the file exists. `quizdom logs`
+points at the kept generation when there is one, so a `--tail` cannot be mistaken
+for the whole story.
+
+<!-- trace:TASK-333 | ai:claude -->
+
+**Safe when two quizdoms are running.** A TUI session in one terminal and a
+`db-backup` from cron in another share the log, so rotation is concurrent — and
+`stat`-then-`rename` is a time-of-check/time-of-use race. Both processes see an
+over-sized file; the first renames it to `quizdom.log.1`; the second renames the
+near-empty file that replaced it *over* that rotated generation, and the
+megabyte of history explaining the breakage is gone, in exactly the pathological
+case rotation exists to survive. Two changes close it, and they are one
+mechanism: every append takes an **exclusive advisory lock** on the log
+(`File::lock`, std — no dependency), making the size check, the rotation, and
+the write one critical section across processes; and rotation **copies then
+truncates in place** rather than renaming, so the live log keeps its identity
+and a writer holding it open across a rotation keeps writing to the live file
+instead of silently into the dead generation. The copy is staged and renamed
+into place before the truncate, so `quizdom.log.1` is never observable
+half-written and a rotation that fails leaves the log whole. A lock that cannot
+be taken (a filesystem without locking) degrades to the unlocked write rather
+than dropping the breadcrumb.
 
 <!-- trace:TASK-322 | ai:claude -->
 

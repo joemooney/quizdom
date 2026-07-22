@@ -22,6 +22,8 @@ fn main() {
         // trace:STORY-261 | ai:claude — the TASK-243 durability path.
         Some("db-backup") => quizdom::run_db_backup(args, &mut std::io::stdout()),
         Some("db-restore") => quizdom::run_db_restore(args, &mut std::io::stdout()),
+        // trace:TASK-331 | ai:claude — the reader for the STORY-299 log.
+        Some("logs") => quizdom::run_logs(args, &mut std::io::stdout()),
         // trace:STORY-87 | ai:claude
         Some("question") if args.get(1).map(String::as_str) == Some("add") => {
             quizdom::run_question_add(args, std::io::stdin(), std::io::stdout())

@@ -391,7 +391,8 @@ impl Settings {
         out.push_str(
             "  (toggle with /editor, /mouse, /score, /mode — or /settings set <key> <value>;\n   \
              the three rows above are read-only here — set dolt_path / auto_backup / log_path\n   \
-             in settings.toml, or $QUIZDOM_DOLT_PATH / $QUIZDOM_AUTO_BACKUP / $QUIZDOM_LOG_PATH)\n",
+             in settings.toml, or $QUIZDOM_DOLT_PATH / $QUIZDOM_AUTO_BACKUP / $QUIZDOM_LOG_PATH;\n   \
+             read the diagnostics with `quizdom logs`)\n",
         );
         out
     }
