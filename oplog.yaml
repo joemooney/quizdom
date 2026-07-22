@@ -5086,5 +5086,31 @@ operations:
     req_type: Story
     status: Approved
     priority: Medium
-clock: 455
+- id: 019f88bb-a789-72c0-9ab2-58f07a9e8fe1
+  target_id: 019f88bb-a529-75d3-b0fb-40c55c8882fe
+  author: aida
+  node_id: ''
+  lamport: 456
+  timestamp: 2026-07-22T07:30:27.337500720Z
+  kind: !Create
+    title: db-backup/db-restore print unquoted paths in their copy-paste hints
+    description: |
+      `db-backup` prints "Restore with: quizdom db-restore --path <path> --from <backup>"
+      (crates/quizdom/src/db_backup.rs:227-234) and `db-restore` prints
+      "Verify with: cd <path> && dolt sql -q ..." (db_backup.rs:291-297). Both
+      interpolate the paths unquoted.
+
+      The functionality is fine — verified against real dolt that
+      `--to "/tmp/qzb/My Drive/quizdom bk"` backs up and restores correctly — but the
+      printed command is not copy-pasteable when the path contains a space, which is
+      exactly the synced-folder / removable-disk case OVERVIEW.md's durability section
+      recommends ("Google Drive", "My Passport").
+
+      Fix: shell-quote the interpolated paths in the two hint strings.
+
+      Raised in review of PR-95: https://github.com/joemooney/quizdom/pull/95#issuecomment-5043111435
+    req_type: Task
+    status: Draft
+    priority: Medium
+clock: 456
 node_id: ''
