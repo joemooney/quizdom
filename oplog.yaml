@@ -5378,5 +5378,36 @@ operations:
     req_type: Task
     status: Draft
     priority: Medium
-clock: 469
+- id: 019f88d4-990b-7150-a2ee-44566ada261e
+  target_id: 019f88d4-968a-7e80-8a6a-eadc9b9a1bc0
+  author: aida
+  node_id: ''
+  lamport: 470
+  timestamp: 2026-07-22T07:57:42.027491845Z
+  kind: !Create
+    title: BUG-277's actual vector — an unpinned manual db-backup run — is still unguarded
+    description: |
+      BUG-277's root cause was a *verification run* that executed `db-backup` with no
+      `--to`, resolved the default backup path, and claimed the user's real backup
+      directory with a throwaway two-commit fixture. PR-96's first defect fix guards
+      the `cargo test` vector; it does not guard `cargo run -p quizdom -- db-backup`,
+      which is what actually happened.
+
+      This is materially de-fanged by the PR's second fix — the poisoning is no longer
+      silent or destructive: nothing is lost, and the new message names the backup
+      path and walks the user through recovery. It is also documented honestly rather
+      than hidden (OVERVIEW.md:143-152 says plainly that manual runs are advised to
+      pin a scratch dir, not forced to). So this is a residual, not a regression.
+
+      Possible hardening, if it earns its keep: have `db-backup` refuse to initialize
+      a *fresh* remote in the resolved default backup directory when the source repo
+      has a suspiciously shallow history (the throwaway-fixture signature), or require
+      an explicit `--to` whenever the source `--path` is not the resolved default
+      dolt path — the mismatch is the tell that this is a scratch run.
+
+      Raised in review of PR-96: https://github.com/joemooney/quizdom/pull/96#issuecomment-5043339135
+    req_type: Task
+    status: Draft
+    priority: Medium
+clock: 470
 node_id: ''
