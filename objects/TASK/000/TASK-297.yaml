@@ -25,9 +25,16 @@ priority: Medium
 owner: ''
 feature: Uncategorized
 created_at: 2026-07-22T15:19:00.271582846Z
-modified_at: 2026-07-22T19:40:35.995738604Z
+modified_at: 2026-07-22T19:40:50.599276831Z
 req_type: Task
 tags:
 - dolt
 - from-review:PR-98
 - severity:cosmetic
+comments:
+- id: 019f8b58-5827-7380-bec5-6b7754bef1ce
+  author: joe
+  content: 'Split commit_all into commit_working_set (dolt add -A, sole caller db-backup''s snapshot, where breadth is the point) and commit_tables (dolt add nodes edges, every other writer). Staging is table-granular, so naming tables cannot separate a hand-run UPDATE nodes from quizdom''s own rows once both are pending — added refuse_on_foreign_changes as a PRE-FLIGHT on db-init and db-migrate, asked before either writes. Side effect that needed chasing: the TASK-276 clean-tree probe counted every pending row, which with partial staging would turn a no-op re-run into a hard failure whenever an unrelated table was dirty; pending_changes_sql now takes the scope the caller staged. NOT covered: DoltDomainStore''s per-write commit stages nodes/edges by name (so foreign TABLES are safe) but has no pre-flight, so a hand edit to nodes present at session start is still absorbed by the first store write. Deliberate — a mid-session refusal is worse UX and it is a different file; filed as a follow-up.'
+  created_at: 2026-07-22T19:40:50.599276831Z
+  modified_at: 2026-07-22T19:40:50.599276831Z
+  session_id: 019f8b4a-315a-7943-a9bb-673f22445199
