@@ -1261,8 +1261,10 @@ mod tests {
 
     /// The STORY-207/208 acceptance check against a real dolt binary:
     /// bootstrap a fixture repo and run the full trait surface against it,
-    /// including a 3+ hop recursive-CTE traversal. Ignored in CI (no dolt
-    /// there); run locally with: cargo test real_dolt -- --ignored
+    /// including a 3+ hop recursive-CTE traversal. `#[ignore]`d so a plain
+    /// `cargo test` never needs a dolt binary; CI installs dolt and runs the
+    /// `real_dolt` family explicitly (TASK-219), as does:
+    /// cargo test real_dolt -- --ignored
     #[test]
     #[ignore = "requires the dolt binary on PATH"]
     fn real_dolt_full_trait_surface() {

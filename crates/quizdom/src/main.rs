@@ -19,6 +19,9 @@ fn main() {
         Some("db-init") => quizdom::run_db_init(args, &mut std::io::stdout()),
         // trace:STORY-206 | ai:claude
         Some("db-migrate") => quizdom::run_db_migrate(args, &mut std::io::stdout()),
+        // trace:STORY-261 | ai:claude — the TASK-243 durability path.
+        Some("db-backup") => quizdom::run_db_backup(args, &mut std::io::stdout()),
+        Some("db-restore") => quizdom::run_db_restore(args, &mut std::io::stdout()),
         // trace:STORY-87 | ai:claude
         Some("question") if args.get(1).map(String::as_str) == Some("add") => {
             quizdom::run_question_add(args, std::io::stdin(), std::io::stdout())

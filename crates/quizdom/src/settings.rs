@@ -34,8 +34,9 @@
 //! ## The file is shared, so this module owns the whole of it (STORY-258)
 //!
 //! Keys outside the `/settings` surface live in the same file — `dolt_path`
-//! selects the Dolt domain-graph repo. Two consequences, both handled here so
-//! no second reader/writer of the file can drift from this one:
+//! selects the Dolt domain-graph repo and `dolt_backup_path` its file-remote
+//! backup directory (STORY-261). Two consequences, both handled here so no
+//! second reader/writer of the file can drift from this one:
 //!
 //! * **Foreign keys survive a save.** [`Settings::to_toml_merged`] rewrites the
 //!   modelled keys IN PLACE and keeps every other line verbatim, so saving from
@@ -44,7 +45,9 @@
 //!   [`Settings::from_toml`] share [`config_entry`], so the same file resolves
 //!   identically whichever reader sees it (TASK-222), and
 //!   [`resolve_dolt_path`] is the single env/settings/default chain the runtime
-//!   store and the `db-init` / `db-migrate` subcommands all call (TASK-228).
+//!   store and the `db-init` / `db-migrate` subcommands all call (TASK-228),
+//!   with [`resolve_dolt_backup_path`] the same shape for `db-backup` /
+//!   `db-restore`.
 
 use crate::db_init::DEFAULT_DOLT_DB_PATH;
 use crate::editor::{editor_model_from_editor, EditorModel};
@@ -453,18 +456,58 @@ pub(crate) fn resolve_dolt_path() -> PathBuf {
 /// file reads so it is testable without touching the process environment (the
 /// same pattern as [`EditorChoice::resolve`]).
 fn dolt_path_from(env_path: Option<&str>, config: &str) -> PathBuf {
+    tiered_path(
+        env_path,
+        config,
+        "dolt_path",
+        PathBuf::from(DEFAULT_DOLT_DB_PATH),
+    )
+}
+
+// trace:STORY-261 | ai:claude — TASK-243's backup directory, same chain shape.
+/// THE resolution chain for the Dolt BACKUP directory (the file remote
+/// `quizdom db-backup` pushes to and `db-restore` clones from):
+/// `QUIZDOM_DOLT_BACKUP_PATH` (env) > `dolt_backup_path` (settings.toml) >
+/// [`default_dolt_backup_path`]. `--to` / `--from` sit on top, exactly as
+/// `--path` does over [`resolve_dolt_path`].
+pub(crate) fn resolve_dolt_backup_path() -> PathBuf {
+    tiered_path(
+        env::var("QUIZDOM_DOLT_BACKUP_PATH").ok().as_deref(),
+        &config_text(),
+        "dolt_backup_path",
+        default_dolt_backup_path(),
+    )
+}
+
+/// The platform default backup directory: `$XDG_DATA_HOME/quizdom/dolt-backup`,
+/// else `$HOME/.local/share/quizdom/dolt-backup`. Deliberately OUTSIDE the
+/// project tree — a backup that lives under `data/` alongside the repo it
+/// protects is no backup at all against the common `rm -rf data/` accident.
+/// With neither var set (no home to speak of) it degrades to a sibling of the
+/// repo, which still survives deleting `data/dolt` itself.
+fn default_dolt_backup_path() -> PathBuf {
+    env::var_os("XDG_DATA_HOME")
+        .map(PathBuf::from)
+        .filter(|path| !path.as_os_str().is_empty())
+        .or_else(|| {
+            env::var_os("HOME").map(|home| PathBuf::from(home).join(".local").join("share"))
+        })
+        .map(|base| base.join("quizdom").join("dolt-backup"))
+        .unwrap_or_else(|| PathBuf::from("data/dolt-backup"))
+}
+
+/// The shared env > settings > default selection both Dolt paths use. Blank
+/// values fall through to the next tier so an exported-but-empty variable
+/// cannot silently repoint the app at `""`.
+fn tiered_path(env_path: Option<&str>, config: &str, key: &str, default: PathBuf) -> PathBuf {
     fn non_blank(value: &str) -> Option<PathBuf> {
         let trimmed = value.trim();
         (!trimmed.is_empty()).then(|| PathBuf::from(trimmed))
     }
     env_path
         .and_then(non_blank)
-        .or_else(|| {
-            config_value(config, "dolt_path")
-                .as_deref()
-                .and_then(non_blank)
-        })
-        .unwrap_or_else(|| PathBuf::from(DEFAULT_DOLT_DB_PATH))
+        .or_else(|| config_value(config, key).as_deref().and_then(non_blank))
+        .unwrap_or(default)
 }
 
 /// The settings file's text, or empty when it is absent / unreadable — the
@@ -805,6 +848,47 @@ mod tests {
             dolt_path_from(Some(""), "dolt_path = \"\"\n"),
             PathBuf::from(DEFAULT_DOLT_DB_PATH)
         );
+    }
+
+    // trace:STORY-261 | ai:claude — the backup directory rides the SAME chain
+    // (TASK-243), so `--to` > env > settings > platform data dir, and a blank
+    // tier still falls through rather than pointing the remote at "".
+    #[test]
+    fn dolt_backup_path_chain_matches_the_repo_path_chain() {
+        let default = PathBuf::from("/home/someone/.local/share/quizdom/dolt-backup");
+        let config = "editor = \"vim\"\ndolt_backup_path = \"/mnt/usb/quizdom\"\n";
+        assert_eq!(
+            tiered_path(None, "", "dolt_backup_path", default.clone()),
+            default
+        );
+        assert_eq!(
+            tiered_path(None, config, "dolt_backup_path", default.clone()),
+            PathBuf::from("/mnt/usb/quizdom")
+        );
+        assert_eq!(
+            tiered_path(
+                Some(" /env/backup "),
+                config,
+                "dolt_backup_path",
+                default.clone()
+            ),
+            PathBuf::from("/env/backup")
+        );
+        assert_eq!(
+            tiered_path(Some("  "), config, "dolt_backup_path", default.clone()),
+            PathBuf::from("/mnt/usb/quizdom")
+        );
+        assert_eq!(
+            tiered_path(
+                Some(""),
+                "dolt_backup_path = \"\"\n",
+                "dolt_backup_path",
+                default.clone()
+            ),
+            default
+        );
+        // The backup default must not sit inside the repo it protects.
+        assert!(!default_dolt_backup_path().starts_with(DEFAULT_DOLT_DB_PATH));
     }
 
     // trace:STORY-194 | ai:claude — the printed list (headless panel degrade) shows

@@ -313,8 +313,10 @@ mod tests {
 
     /// End-to-end acceptance check against a real dolt binary: init a fresh
     /// repo, apply the schema, load the hand-inserted fixture, and walk the
-    /// `begets` chain with a recursive CTE. Ignored in CI (no dolt there);
-    /// run locally with: cargo test real_dolt -- --ignored
+    /// `begets` chain with a recursive CTE. `#[ignore]`d so a plain `cargo
+    /// test` never needs a dolt binary; CI installs dolt and runs the whole
+    /// `real_dolt` family explicitly (TASK-219), as does:
+    /// cargo test real_dolt -- --ignored
     #[test]
     #[ignore = "requires the dolt binary on PATH"]
     fn real_dolt_bootstrap_fixture_and_recursive_cte() {

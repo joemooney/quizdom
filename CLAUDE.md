@@ -51,7 +51,16 @@ cargo run -p quizdom       # run the CLI session loop (reads the Dolt domain gra
 cargo build                # build
 cargo run -p quizdom -- db-init     # bootstrap the Dolt repo (data/dolt)
 cargo run -p quizdom -- db-migrate  # import a legacy AIDA-store domain graph
+cargo run -p quizdom -- db-backup   # snapshot + push data/dolt to its file remote
+cargo run -p quizdom -- db-restore  # clone it back after a disk loss
 ```
+
+CI installs a pinned dolt and runs the `real_dolt` acceptance tests
+(`cargo test --workspace real_dolt -- --ignored`), so the storage layer is
+verified in the pipeline, not only on a developer's machine (STORY-261).
+The domain graph's durability path — a file-based Dolt remote defaulting to
+`~/.local/share/quizdom/dolt-backup`, with the recovery steps spelled out — is
+documented in `OVERVIEW.md` § *Durability and recovery*.
 
 Layout: `Cargo.toml` (workspace) · `crates/quizdom/{src/main.rs,src/lib.rs}`.
 
@@ -91,9 +100,11 @@ of `--spec` (which errors "already owned").
   runs fmt + clippy + test, so `aida pr ship` self-completes (no `gh` fallback).
   A spec is `Completed` only when its PR **merges**. Domain seed data (e.g.
   seed clusters) lands in the local Dolt repo (`data/dolt`, gitignored) via
-  `quizdom question add` / `quizdom db-migrate` — the Dolt backend commits
-  every write into Dolt's own history (STORY-208; `aida push --store-only`
-  no longer carries domain data). AIDA-store pushes remain for project
+  `quizdom question add` / `quizdom db-migrate` — the Dolt *store* commits
+  every write it makes into Dolt's own history (STORY-208; `aida push
+  --store-only` no longer carries domain data), though `db-init`'s DDL and
+  `db-migrate`'s bulk import land in the working set uncommitted, which is
+  why `db-backup` snapshots before it pushes. AIDA-store pushes remain for project
   intent only.
 - Reap a finished worktree from the MAIN repo (not from inside it): exit the
   agent, then `aida session end <lease-id> --skip-ci -y` (`--skip-ci` avoids the

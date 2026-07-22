@@ -1326,8 +1326,10 @@ mod tests {
 
     /// End-to-end against a real dolt binary: bootstrap a repo, migrate the
     /// scripted store into it twice (the second run proves idempotency), and
-    /// let the real recursive CTE serve the spot-check. Ignored in CI (no
-    /// dolt there); run locally with: cargo test real_dolt -- --ignored
+    /// let the real recursive CTE serve the spot-check. `#[ignore]`d so a plain
+    /// `cargo test` never needs a dolt binary; CI installs dolt and runs the
+    /// `real_dolt` family explicitly (TASK-219), as does:
+    /// cargo test real_dolt -- --ignored
     #[test]
     #[ignore = "requires the dolt binary on PATH"]
     fn real_dolt_migrate_is_idempotent_and_passes_parity() {

@@ -80,6 +80,58 @@ Still open:
   nodes joined by `begets` / `contradicts` / `refines` / `agrees` / `disagrees`
   custom edges (`docs/architecture/graph-schema.md`).
 
+## Durability and recovery
+
+<!-- trace:STORY-261 | ai:claude -->
+
+The domain graph lives only in the local Dolt repo (`data/dolt`, gitignored),
+so it needs its own backup — the AIDA store stopped carrying domain data at
+STORY-209. The mechanism is a **file-based Dolt remote**: no hosted account, no
+credentials, no network. Point it at a removable disk or a synced folder and
+the same command covers off-machine.
+
+```bash
+cargo run -p quizdom -- db-backup      # snapshot + push to the backup remote
+```
+
+`db-backup` commits anything sitting in the working set first (a push carries
+committed data only, and `db-init` / `db-migrate` leave their writes
+uncommitted), points the `backup` remote at the backup directory, and pushes
+`main`. Run it after a session that wrote to the graph, or from cron:
+
+```cron
+0 * * * * cd /path/to/quizdom && ./target/release/quizdom db-backup
+```
+
+The backup directory resolves as `$QUIZDOM_DOLT_BACKUP_PATH` > `dolt_backup_path`
+in `~/.config/quizdom/settings.toml` > `~/.local/share/quizdom/dolt-backup` —
+deliberately outside the project tree, so `rm -rf data/` cannot take the backup
+with it.
+
+**Recovery — from a deleted `data/dolt`:**
+
+```bash
+# 1. Confirm the backup is there (a Dolt remote directory, not a repo).
+ls ~/.local/share/quizdom/dolt-backup
+
+# 2. Restore. --path defaults to the same chain the app reads
+#    ($QUIZDOM_DOLT_PATH > dolt_path > data/dolt), so a bare run puts the
+#    graph back exactly where the session loop looks for it.
+cargo run -p quizdom -- db-restore
+
+# 3. Verify the graph came back whole.
+cd data/dolt && dolt sql -q 'SELECT COUNT(*) FROM nodes; SELECT COUNT(*) FROM edges'
+# -> 75 nodes / 75 edges for the current seed + session-grown graph
+```
+
+`db-restore` refuses to touch an existing repo — recovery must never be the
+command that destroys the copy you still had. To restore beside a live repo,
+pass `--path /tmp/graph-check` and compare.
+
+The round trip (seed → backup → delete the repo → restore → count rows) is
+`real_dolt_backup_restore_round_trip`, which runs in CI alongside the other
+`real_dolt` acceptance tests now that the pipeline installs dolt.
+
 ## Non-goals (v1)
 
 - Not trivia; no scoring of "correctness."

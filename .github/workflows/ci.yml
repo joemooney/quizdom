@@ -32,3 +32,29 @@ jobs:
         # Ignored live-API smoke tests (claude-cli / anthropic) do not run here,
         # so no secrets are required.
         run: cargo test --workspace
+
+      # trace:STORY-261 | ai:claude — TASK-219: the storage layer EPIC-202
+      # replaced was the one layer CI could not verify, because the `real_dolt`
+      # acceptance tests are #[ignore]d without a dolt binary. Pinned rather
+      # than `latest` so a dolt release cannot turn CI red on its own schedule;
+      # bump DOLT_VERSION deliberately.
+      - name: Install dolt
+        env:
+          DOLT_VERSION: "2.2.1"
+        run: |
+          set -euo pipefail
+          curl -fsSL "https://github.com/dolthub/dolt/releases/download/v${DOLT_VERSION}/dolt-linux-amd64.tar.gz" -o /tmp/dolt.tar.gz
+          tar -xzf /tmp/dolt.tar.gz -C /tmp
+          sudo install /tmp/dolt-linux-amd64/bin/dolt /usr/local/bin/dolt
+          dolt version
+          # `dolt init` / `dolt commit` refuse to run without an author identity,
+          # and the store commits every write into Dolt's history (STORY-208).
+          dolt config --global --add user.name "quizdom CI"
+          dolt config --global --add user.email "ci@quizdom.invalid"
+
+      - name: Dolt acceptance tests
+        # The EPIC-202 acceptance surface: db-init bootstrap + recursive CTE,
+        # db-migrate idempotency + parity, the full DomainStore trait surface,
+        # and the STORY-261 backup/restore round trip. Each spawns the real
+        # dolt binary, so these are minutes, not seconds.
+        run: cargo test --workspace real_dolt -- --ignored

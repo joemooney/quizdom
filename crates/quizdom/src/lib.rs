@@ -7,6 +7,8 @@ mod contradiction;
 mod db_init;
 // trace:STORY-206 | ai:claude — AIDA-store → Dolt exporter with parity check (EPIC-202).
 mod db_migrate;
+// trace:STORY-261 | ai:claude — the file-remote durability path for the Dolt graph (TASK-243).
+mod db_backup;
 // trace:STORY-207 | ai:claude — the Dolt-backed DomainStore + backend selection (EPIC-202).
 mod dolt_store;
 // trace:STORY-180 | ai:claude — the capable TUI free-text editor (tui-textarea).
@@ -62,6 +64,8 @@ pub use contradiction::{
 // trace:STORY-205 | ai:claude
 pub use db_init::{run_db_init, DEFAULT_DOLT_DB_PATH, DOLT_SCHEMA_SQL};
 pub use db_migrate::{run_db_migrate, DEFAULT_SPOT_CHECK_ROOT};
+// trace:STORY-261 | ai:claude
+pub use db_backup::{run_db_backup, run_db_restore, BACKUP_REMOTE_NAME};
 // trace:STORY-207 | ai:claude
 // trace:STORY-208 | ai:claude — the Dolt store is the only domain backend.
 pub use dolt_store::{domain_store_from_config, DoltDomainStore};
@@ -130,6 +134,8 @@ pub fn top_level_usage() -> String {
         "  curate                   Re-weight the question bank from session signals",
         "  db-init                  Create the Dolt domain-graph repo and apply its schema",
         "  db-migrate               Migrate the domain graph from the AIDA store into Dolt",
+        "  db-backup                Push the domain graph to its file-remote backup",
+        "  db-restore               Restore the domain graph from its file-remote backup",
         "  question add             Author a new question into the bank",
         "  -h, --help               Show this help",
         "",
