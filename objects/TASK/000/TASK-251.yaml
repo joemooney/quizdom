@@ -27,9 +27,16 @@ priority: Medium
 owner: ''
 feature: Uncategorized
 created_at: 2026-07-22T05:51:17.897842360Z
-modified_at: 2026-07-22T05:51:17.897842360Z
+modified_at: 2026-07-22T14:52:49.855826733Z
 req_type: Task
 tags:
 - from-implementer:TASK-246
 - kind:bug-spotted
 - severity:cosmetic
+comments:
+- id: 019f8a50-a93f-7610-9c8b-51bf2f207241
+  author: joe
+  content: 'Moot: fixed by TASK-233/STORY-260 (PR-97), which cleared all six lints and switched CI to gate on -D warnings. Verified on main 2026-07-22: cargo clippy --workspace --all-targets -- -D warnings reports 0.'
+  created_at: 2026-07-22T14:52:49.855826733Z
+  modified_at: 2026-07-22T14:52:49.855826733Z
+  session_id: 789bafdb-f673-41c5-affc-d550f95e51e5
