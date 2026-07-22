@@ -8,7 +8,7 @@ priority: Medium
 owner: joe
 feature: Uncategorized
 created_at: 2026-05-31T14:18:44.260654725Z
-modified_at: 2026-07-22T05:45:39.687217332Z
+modified_at: 2026-07-22T14:49:45.636335293Z
 req_type: Task
 tags:
 - upstream:aida
@@ -29,4 +29,10 @@ comments:
   content: 'No longer blocking quizdom (ADR-201: weight becomes a real column in Dolt). Stands as an upstream AIDA engine finding.'
   created_at: 2026-07-19T18:42:36.097694373Z
   modified_at: 2026-07-19T18:42:36.097694373Z
+  session_id: 789bafdb-f673-41c5-affc-d550f95e51e5
+- id: 019f8a4d-d9a4-7b52-854d-1d0918f67a4c
+  author: joe
+  content: 'Archived from quizdom 2026-07-22: this is an AIDA engine finding, not quizdom work. Routed upstream for triage via ~/aida-upstream-triage-prompt.md (tagged upstream:aida). Archived Draft deliberately — not rejected, not abandoned; the upstream advisor owns the verdict.'
+  created_at: 2026-07-22T14:49:45.636335293Z
+  modified_at: 2026-07-22T14:49:45.636335293Z
   session_id: 789bafdb-f673-41c5-affc-d550f95e51e5
