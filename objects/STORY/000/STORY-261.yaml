@@ -21,9 +21,25 @@ priority: Medium
 owner: ''
 feature: Uncategorized
 created_at: 2026-07-22T06:19:25.233066008Z
-modified_at: 2026-07-22T07:05:14.305418073Z
+modified_at: 2026-07-22T07:22:55.209578242Z
 req_type: Story
 relationships:
 - rel_type: Child
   target_id: 019f885d-96af-7591-80ec-cb27a5e08351
   created_at: 2026-07-22T06:19:27.280309035Z
+comments:
+- id: 019f88b4-c169-77c1-abfd-17e6002db3b5
+  author: joe
+  content: |-
+    Implemented on branch story-261 (commit 31dcff3):
+
+    - TASK-243: new `quizdom db-backup` / `db-restore` over a file-based Dolt remote (crates/quizdom/src/db_backup.rs); backup dir resolves $QUIZDOM_DOLT_BACKUP_PATH > dolt_backup_path > ~/.local/share/quizdom/dolt-backup via a shared `tiered_path` helper in settings.rs.
+    - TASK-219: CI installs pinned dolt 2.2.1 + the author identity dolt requires, and runs `cargo test --workspace real_dolt -- --ignored` as its own step.
+    - TASK-241: docs/architecture/session-log-promotion.md rewritten in Dolt terms (nodes/edges rows, numeric weight column, DomainStore calls, SQL worked example).
+    - Acceptance verified against the live graph: db-backup then db-restore into a scratch path returned 75 nodes / 75 edges.
+
+    Test status: 604 quizdom + 7 llm tests green; all 4 real_dolt acceptance tests pass against dolt 2.2.1; fmt clean, no new clippy warnings.
+    Follow-up: TASK-272 (db-init/db-migrate never commit, so their writes sit untracked — db-backup snapshots as a workaround), TASK-273 (backups are explicit, not an auto-push after session writes).
+  created_at: 2026-07-22T07:22:55.209578242Z
+  modified_at: 2026-07-22T07:22:55.209578242Z
+  session_id: 019f88a4-92b6-7b73-acb6-ae4da7798722
