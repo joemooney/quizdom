@@ -2443,9 +2443,9 @@ impl<R: BufRead, B: Backend> FrontEnd for TuiFrontEnd<R, B> {
         }
     }
 
-    // trace:TASK-266 | ai:claude
-    fn persisted_score(&self) -> bool {
-        self.settings.score
+    // trace:TASK-266 | ai:claude — widened by TASK-300.
+    fn persisted_settings(&self) -> crate::settings::Settings {
+        self.settings
     }
 
     // trace:STORY-194 | ai:claude

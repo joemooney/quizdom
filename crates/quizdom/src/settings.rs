@@ -64,6 +64,12 @@
 //!   Before that, `dolt_path = "/mnt/data"  # the big disk` resolved to the
 //!   literal string *including* the comment — and `db-init` would cheerfully
 //!   CREATE a repo at that garbage path.
+//! * **A double-quoted value is a TOML BASIC string** (TASK-307), so its
+//!   backslash escapes are processed and the closing quote is the first
+//!   UNESCAPED one; a single-quoted value is a LITERAL string, taken verbatim.
+//! * **A leading `~` expands to `$HOME`** (TASK-307), the way it does in every
+//!   shell and every other config file the user writes — see [`expand_tilde`].
+//!   `dolt_path = "~/graphs/main"` used to name a literal `~` directory.
 //! * **Relative paths are ANCHORED to this file's directory** (TASK-263), not
 //!   to the process cwd — see [`anchor_to_config_dir`] for the rule and why.
 //! * **A save never silently loses keys.** [`merged_body`] refuses to write when
@@ -228,11 +234,37 @@ pub(crate) struct ReadOnlyRows {
 
 impl ReadOnlyRows {
     /// Resolve all three through the live env > settings > default chains.
+    ///
+    // trace:TASK-306 | ai:claude
+    /// **Under `cfg(test)` this returns [`ReadOnlyRows::hermetic`] without
+    /// reading the environment or the disk** — the TASK-266 pattern that
+    /// `load_or_seed` / `save` already run on, applied to the last reader of the
+    /// real user config left in the crate. [`Settings::render_list`] calls this,
+    /// and `render_list` is on the `/settings` path the front-end tests drive, so
+    /// the developer's own `~/.config/quizdom/settings.toml` decided what those
+    /// tests saw: a `dolt_path` line on one machine and not another. The
+    /// resolution itself stays covered — the chain tests drive `dolt_path_from` /
+    /// `tiered_path` directly, which is where the behaviour lives.
     pub(crate) fn resolved() -> Self {
+        if cfg!(test) {
+            return Self::hermetic();
+        }
         Self {
             dolt_path: resolve_dolt_path(),
             auto_backup: resolve_auto_backup(),
             log_path: resolve_log_path(),
+        }
+    }
+
+    // trace:TASK-306 | ai:claude
+    /// The fixed rows [`ReadOnlyRows::resolved`] hands back under `cfg(test)`,
+    /// and the fixture the row tests render. Deliberately recognisable: a value
+    /// from here showing up in real output is a bug someone can name on sight.
+    pub(crate) fn hermetic() -> Self {
+        Self {
+            dolt_path: PathBuf::from("/home/someone/graphs/quizdom"),
+            auto_backup: true,
+            log_path: PathBuf::from("/home/someone/logs/quizdom.log"),
         }
     }
 
@@ -558,8 +590,14 @@ fn config_entry(line: &str) -> Option<(String, String)> {
 
 // trace:TASK-222 | ai:claude
 /// Read one key out of the flat config schema, matching [`Settings::from_toml`]
-/// exactly: case-insensitive keys, matched-pair unquoting, and LAST occurrence
-/// wins on a repeated key. Returns `None` when the key is absent.
+/// exactly — both go through [`config_entry`], so both get case-insensitive
+/// keys and the same [`parse_value`] reading of the value (TOML quoting, inline
+/// comments, escapes). A repeated key is LAST occurrence wins. Returns `None`
+/// when the key is absent.
+//
+// trace:TASK-305 | ai:claude — this used to advertise "matched-pair unquoting",
+// which TASK-265 replaced with a TOML-legal parse; the stale line described a
+// degrade path (`strip_matched_double_quotes`) as if it were the rule.
 pub(crate) fn config_value(text: &str, key: &str) -> Option<String> {
     let key = key.to_ascii_lowercase();
     text.lines()
@@ -756,7 +794,8 @@ fn auto_backup_from(env_value: Option<&str>, config: &str) -> bool {
 /// values fall through to the next tier so an exported-but-empty variable
 /// cannot silently repoint the app at `""`. Only the SETTINGS tier is anchored
 /// ([`anchor_to_config_dir`]) — the env tier and the compiled default are
-/// per-invocation / per-checkout and stay cwd-relative.
+/// per-invocation / per-checkout and stay cwd-relative. Both WRITTEN tiers get
+/// [`expand_tilde`]; the compiled default has no `~` to expand.
 fn tiered_path(
     env_path: Option<&str>,
     config: &str,
@@ -766,7 +805,7 @@ fn tiered_path(
 ) -> PathBuf {
     fn non_blank(value: &str) -> Option<PathBuf> {
         let trimmed = value.trim();
-        (!trimmed.is_empty()).then(|| PathBuf::from(trimmed))
+        (!trimmed.is_empty()).then(|| expand_tilde(trimmed))
     }
     if let Some(from_env) = env_path.and_then(non_blank) {
         return from_env;
@@ -802,6 +841,46 @@ fn anchor_to_config_dir(path: PathBuf, config_dir: Option<&Path>) -> PathBuf {
         Some(dir) if path.is_relative() => dir.join(path),
         _ => path,
     }
+}
+
+// trace:TASK-307 | ai:claude
+/// EXPAND a leading `~` to the user's home directory, the way every shell and
+/// every other config file the user writes does.
+///
+/// `~/graphs/main` is exactly the value someone reaches for when they want the
+/// graph in their home directory, and before TASK-307 it named a LITERAL `~`
+/// directory relative to the settings file — so `db-init` would create
+/// `~/.config/quizdom/~/graphs/main` and every later session would read it back
+/// without ever mentioning that it was not the path that was asked for.
+///
+/// Only a leading `~` on its own or followed by a separator expands. `~alice/x`
+/// is left alone: resolving another user's home needs the password database, and
+/// a value we cannot resolve is better left recognisable than half-translated.
+/// With no `$HOME` the value is also left alone — there is nothing to expand to.
+fn expand_tilde(value: &str) -> PathBuf {
+    expand_tilde_from(value, home_dir().as_deref())
+}
+
+/// The pure half of [`expand_tilde`], split from the env read so it is testable
+/// without touching the process environment.
+fn expand_tilde_from(value: &str, home: Option<&Path>) -> PathBuf {
+    let Some(home) = home else {
+        return PathBuf::from(value);
+    };
+    match value {
+        "~" => home.to_path_buf(),
+        _ => match value.strip_prefix("~/") {
+            Some(rest) => home.join(rest),
+            None => PathBuf::from(value),
+        },
+    }
+}
+
+/// `$HOME`, or `None` when it is unset or empty.
+fn home_dir() -> Option<PathBuf> {
+    env::var_os("HOME")
+        .map(PathBuf::from)
+        .filter(|path| !path.as_os_str().is_empty())
 }
 
 /// The settings file's text, or empty when it is absent / unreadable — the
@@ -984,17 +1063,29 @@ pub(crate) fn parse_on_off(value: &str) -> Option<bool> {
 /// quote falls back to the pre-TASK-265 matched-pair strip, so `""/tmp/x""`
 /// still yields `"/tmp/x"` and `"vim` still yields `"vim` (which then fails
 /// [`EditorChoice::parse`] and leaves the setting at its default).
+///
+// trace:TASK-307 | ai:claude
+/// A DOUBLE-quoted value is a TOML *basic* string, so its BACKSLASH ESCAPES are
+/// processed ([`unescape_basic`]) and the closing quote is the first UNESCAPED
+/// one — `dolt_path = "/mnt/say \"yes\"/dolt"` is one value, not a truncated one.
+/// A SINGLE-quoted value is a TOML *literal* string and is taken verbatim, which
+/// is the escape hatch for a path full of backslashes.
 fn parse_value(value: &str) -> String {
     let trimmed = value.trim();
     match trimmed.chars().next() {
         Some(quote @ ('"' | '\'')) => {
-            // The closing quote is the next one of the SAME kind; the remainder
-            // has to be blank or a comment for this to be a legal TOML value.
-            if let Some(offset) = trimmed[quote.len_utf8()..].find(quote) {
-                let close = quote.len_utf8() + offset;
-                let rest = trimmed[close + quote.len_utf8()..].trim();
+            // The closing quote is the next one of the SAME kind (skipping the
+            // escaped ones in a basic string); the remainder has to be blank or a
+            // comment for this to be a legal TOML value.
+            let body = &trimmed[quote.len_utf8()..];
+            if let Some(close) = closing_quote(body, quote) {
+                let rest = body[close + quote.len_utf8()..].trim();
                 if rest.is_empty() || rest.starts_with('#') {
-                    return trimmed[quote.len_utf8()..close].to_string();
+                    let inner = &body[..close];
+                    return match quote {
+                        '"' => unescape_basic(inner),
+                        _ => inner.to_string(),
+                    };
                 }
             }
             strip_matched_double_quotes(trimmed)
@@ -1007,6 +1098,102 @@ fn parse_value(value: &str) -> String {
             .trim()
             .to_string(),
     }
+}
+
+// trace:TASK-307 | ai:claude
+/// The byte index (within `body`, the text AFTER the opening quote) of the quote
+/// that CLOSES it, or `None` when the value is unterminated.
+///
+/// A LITERAL string (`'…'`) ends at the next quote, full stop — TOML gives it no
+/// escape character at all. A BASIC string (`"…"`) ends at the next quote that a
+/// backslash does not escape, so `"say \"yes\""` is one value.
+fn closing_quote(body: &str, quote: char) -> Option<usize> {
+    if quote != '"' {
+        return body.find(quote);
+    }
+    let mut escaped = false;
+    for (index, ch) in body.char_indices() {
+        match ch {
+            _ if escaped => escaped = false,
+            '\\' => escaped = true,
+            '"' => return Some(index),
+            _ => {}
+        }
+    }
+    None
+}
+
+// trace:TASK-307 | ai:claude
+/// Process the escape sequences of a TOML BASIC string: `\b \t \n \f \r \" \\`
+/// and the `\uXXXX` / `\UXXXXXXXX` code points.
+///
+/// An UNRECOGNIZED (or malformed) escape is kept VERBATIM, backslash and all,
+/// rather than being dropped or treated as fatal — the same tolerance the rest of
+/// this parser runs on. That is also the friendly reading of the one case a user
+/// hits by accident: `dolt_path = "C:\Users\me"` has no legal `\U` escape after
+/// it (TOML wants `\\`), and a path that comes back unchanged is far better than
+/// one silently missing characters. `'C:\Users\me'` — a literal string — is the
+/// spelling that needs no escaping at all.
+fn unescape_basic(inner: &str) -> String {
+    if !inner.contains('\\') {
+        return inner.to_string();
+    }
+    let mut out = String::with_capacity(inner.len());
+    let mut chars = inner.chars();
+    while let Some(ch) = chars.next() {
+        if ch != '\\' {
+            out.push(ch);
+            continue;
+        }
+        let Some(escape) = chars.next() else {
+            // A trailing lone backslash: keep it.
+            out.push('\\');
+            break;
+        };
+        match escape {
+            'b' => out.push('\u{8}'),
+            't' => out.push('\t'),
+            'n' => out.push('\n'),
+            'f' => out.push('\u{c}'),
+            'r' => out.push('\r'),
+            '"' => out.push('"'),
+            '\\' => out.push('\\'),
+            'u' | 'U' => {
+                let width = if escape == 'u' { 4 } else { 8 };
+                match take_code_point(&mut chars, width) {
+                    Some(decoded) => out.push(decoded),
+                    None => {
+                        out.push('\\');
+                        out.push(escape);
+                    }
+                }
+            }
+            other => {
+                out.push('\\');
+                out.push(other);
+            }
+        }
+    }
+    out
+}
+
+// trace:TASK-307 | ai:claude
+/// Read `width` hex digits off `chars` and decode them as a Unicode scalar.
+/// `None` — leaving the iterator untouched — when there are not that many hex
+/// digits or they do not name a real character, so the caller can keep the
+/// sequence verbatim.
+fn take_code_point(chars: &mut std::str::Chars<'_>, width: usize) -> Option<char> {
+    let digits: Vec<char> = chars.clone().take(width).collect();
+    if digits.len() != width || !digits.iter().all(char::is_ascii_hexdigit) {
+        return None;
+    }
+    let digits: String = digits.into_iter().collect();
+    let decoded = char::from_u32(u32::from_str_radix(&digits, 16).ok()?)?;
+    // Only now that it decoded do we consume the digits.
+    for _ in 0..width {
+        chars.next();
+    }
+    Some(decoded)
 }
 
 /// The pre-TASK-265 tolerant strip, kept as the degrade path for values that are
@@ -1487,13 +1674,11 @@ mod tests {
         assert!(list.contains("Editor mode"), "{list}");
     }
 
-    /// The read-only trio with recognisable values, for the row tests.
+    /// The read-only trio with recognisable values, for the row tests — the SAME
+    /// rows `resolved()` hands back under `cfg(test)` (TASK-306), so a test that
+    /// renders the live list and one that renders the fixture agree.
     fn test_read_only_rows() -> ReadOnlyRows {
-        ReadOnlyRows {
-            dolt_path: PathBuf::from("/home/someone/graphs/quizdom"),
-            auto_backup: true,
-            log_path: PathBuf::from("/home/someone/logs/quizdom.log"),
-        }
+        ReadOnlyRows::hermetic()
     }
 
     // trace:TASK-320 | ai:claude — STORY-299 added `auto_backup` and `log_path`
@@ -1616,6 +1801,161 @@ mod tests {
         );
     }
 
+    // trace:TASK-300 | ai:claude — `mode` is `score`'s twin, and it was left out of
+    // the TASK-266 bundle, so it still shipped broken: the engine started every
+    // session at the compiled Socratic default and the first `/settings` pushed
+    // that default back across `sync_mode` and SAVED it over a `mode = "debate"`
+    // the user had written. The engine now seeds from `persisted_settings`, so the
+    // value that comes back out is the value that went in.
+    #[test]
+    fn a_persisted_mode_survives_a_load_save_round_trip() {
+        let on_disk = "# hand-edited\n\
+                       dolt_path = \"/mnt/data/dolt\"\n\
+                       mode = \"debate\"\n";
+
+        // LOAD: the persisted mode is honoured, not ignored.
+        let loaded = Settings::from_toml(on_disk);
+        assert_eq!(
+            loaded.mode,
+            SessionMode::Debate,
+            "a persisted `mode = \"debate\"` must load as Debate"
+        );
+
+        // SAVE (with nothing else changed): still debate on disk, foreign lines
+        // intact.
+        let saved = loaded.to_toml_merged(on_disk);
+        assert!(saved.contains("mode = \"debate\""), "{saved}");
+        assert!(saved.contains("dolt_path = \"/mnt/data/dolt\""), "{saved}");
+        assert_eq!(Settings::from_toml(&saved), loaded);
+
+        // The clobber the engine used to perform, spelled out: writing the
+        // ENGINE's hardcoded default over the file is what lost the setting.
+        let clobbered = Settings {
+            mode: SessionMode::Socratic,
+            ..loaded
+        }
+        .to_toml_merged(on_disk);
+        assert!(clobbered.contains("mode = \"socratic\""), "{clobbered}");
+        assert_eq!(
+            Settings::from_toml(&clobbered).mode,
+            SessionMode::Socratic,
+            "sanity: this is the regression the seed prevents"
+        );
+    }
+
+    // trace:TASK-307 | ai:claude — `~/graphs/main` is exactly the value a user
+    // writes for "in my home directory", and it used to name a LITERAL `~`
+    // directory, anchored under `~/.config/quizdom/` by TASK-263 — so `db-init`
+    // would create the graph somewhere nobody would ever look for it.
+    #[test]
+    fn a_leading_tilde_expands_to_the_home_directory() {
+        let home = PathBuf::from("/home/someone");
+
+        assert_eq!(
+            expand_tilde_from("~/graphs/main", Some(&home)),
+            PathBuf::from("/home/someone/graphs/main")
+        );
+        // A bare `~` is the home directory itself.
+        assert_eq!(expand_tilde_from("~", Some(&home)), home);
+        // Only a LEADING `~` expands, and only as a whole path component: a `~`
+        // mid-path is an ordinary character, and `~alice` needs the password
+        // database we do not have, so it stays recognisable rather than becoming
+        // a half-translated path.
+        for untouched in ["~alice/graphs", "/mnt/~/graphs", "graphs/~/main"] {
+            assert_eq!(
+                expand_tilde_from(untouched, Some(&home)),
+                PathBuf::from(untouched),
+                "{untouched}"
+            );
+        }
+        // No `$HOME` — nothing to expand to, so the value is left alone rather
+        // than resolving under `/`.
+        assert_eq!(
+            expand_tilde_from("~/graphs/main", None),
+            PathBuf::from("~/graphs/main")
+        );
+
+        // The whole chain, since that is what `db-init` and the runtime store use
+        // — and the expansion makes it ABSOLUTE, so TASK-263's anchoring correctly
+        // leaves it alone instead of burying it under the config directory.
+        let config_dir = PathBuf::from("/home/someone/.config/quizdom");
+        let resolved = tiered_path(
+            None,
+            "dolt_path = \"~/graphs/main\"\n",
+            Some(&config_dir),
+            "dolt_path",
+            PathBuf::from("data/dolt"),
+        );
+        let expected = match home_dir() {
+            Some(home) => home.join("graphs/main"),
+            // No `$HOME` at all (a stripped environment): nothing to expand to,
+            // so the value stays literal and TASK-263 anchors it like any other
+            // relative path. Stated rather than skipped, so the degrade is
+            // covered too.
+            None => config_dir.join("~/graphs/main"),
+        };
+        assert_eq!(resolved, expected);
+        assert!(resolved.ends_with("graphs/main"), "{resolved:?}");
+    }
+
+    // trace:TASK-307 | ai:claude — a double-quoted value is a TOML BASIC string:
+    // its escapes are processed and the closing quote is the first UNESCAPED one.
+    // A single-quoted value is a LITERAL string and is taken verbatim.
+    #[test]
+    fn basic_strings_honour_toml_escapes_and_literal_strings_do_not() {
+        for (line, expected) in [
+            // The escapes that have a meaning.
+            ("dolt_path = \"/mnt/a\\tb\"", "/mnt/a\tb"),
+            ("dolt_path = \"/mnt/a\\nb\"", "/mnt/a\nb"),
+            ("dolt_path = \"C:\\\\graphs\\\\main\"", "C:\\graphs\\main"),
+            ("dolt_path = \"\\u0041/graphs\"", "A/graphs"),
+            ("dolt_path = \"\\U0001F600\"", "\u{1F600}"),
+            // An ESCAPED quote does not end the value...
+            (
+                "dolt_path = \"/mnt/say \\\"yes\\\"/dolt\"",
+                "/mnt/say \"yes\"/dolt",
+            ),
+            // ...and a trailing comment after the real closing quote still goes.
+            ("dolt_path = \"/mnt/a\\tb\"  # tabbed", "/mnt/a\tb"),
+            // A LITERAL string escapes nothing — the spelling for a Windows path.
+            ("dolt_path = 'C:\\graphs\\main'", "C:\\graphs\\main"),
+            // An UNKNOWN escape is kept verbatim rather than dropped: `\U` here
+            // wants 8 hex digits and has none, and a path that comes back
+            // unchanged beats one silently missing characters.
+            ("dolt_path = \"C:\\Users\\me\"", "C:\\Users\\me"),
+            ("dolt_path = \"a\\qb\"", "a\\qb"),
+            // A malformed code point degrades the same way.
+            ("dolt_path = \"\\u00ZZ\"", "\\u00ZZ"),
+        ] {
+            assert_eq!(
+                config_value(line, "dolt_path").as_deref(),
+                Some(expected),
+                "{line}"
+            );
+        }
+    }
+
+    // trace:TASK-306 | ai:claude — no test reads the REAL user config. `resolved()`
+    // is the last reader that did, and `render_list` calls it, so the developer's
+    // own `~/.config/quizdom/settings.toml` decided what the `/settings` tests saw
+    // — passing on one machine and failing on another. Under `cfg(test)` it now
+    // hands back fixed rows (the TASK-266 pattern), which is what makes
+    // `render_list` safe to call in a test at all.
+    #[test]
+    fn the_read_only_rows_are_hermetic_under_test() {
+        assert_eq!(
+            ReadOnlyRows::resolved().rows(),
+            ReadOnlyRows::hermetic().rows(),
+            "a test must never see the developer's real settings file"
+        );
+        // And the live entry point renders exactly what the fixture does, so the
+        // tests below can use either and mean the same thing.
+        assert_eq!(
+            Settings::default().render_list(),
+            Settings::default().render_list_showing(&test_read_only_rows())
+        );
+    }
+
     // trace:STORY-194 | ai:claude — the printed list (headless panel degrade) shows
     // every setting's current value label.
     #[test]
@@ -1626,7 +1966,7 @@ mod tests {
             score: true,
             mode: SessionMode::Debate,
         };
-        let list = s.render_list();
+        let list = s.render_list_showing(&test_read_only_rows());
         assert!(list.contains("Editor mode"));
         assert!(list.contains("Vim"));
         assert!(list.contains("Mouse"));

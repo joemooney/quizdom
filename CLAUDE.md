@@ -33,8 +33,10 @@ data substrate.
   `~/.config/quizdom/settings.toml` — a **relative** `dolt_path` anchors to
   that settings file's directory, not the cwd, so one config line names one
   graph from every worktree; the env var, the `--path` flag, and the compiled
-  `data/dolt` default stay cwd-relative. Rule and rationale: `OVERVIEW.md`
-  § *Settings, and how a relative path resolves* (`STORY-290`)).
+  `data/dolt` default stay cwd-relative. A leading `~` expands to `$HOME`, and a
+  double-quoted value is a TOML *basic* string (escapes processed) while a
+  single-quoted one is *literal* (`STORY-350`). Rule and rationale:
+  `OVERVIEW.md` § *Settings, and how a relative path resolves* (`STORY-290`)).
   AIDA remains canonical for project
   intent, including contradiction-resolution decision nodes and
   `references` edges (`AidaIntentStore` — the only runtime aida writes).

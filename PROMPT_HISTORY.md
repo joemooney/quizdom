@@ -824,3 +824,66 @@ concurrency rule, and § *Durability* gains the blind-probe notice; `CLAUDE.md`
 names `quizdom logs` in the command list and in the durability paragraph; both
 `/settings` surfaces (headless list and TUI panel) now name the command beside
 the log path they already showed.
+
+## 2026-07-22 — STORY-350: mode, score's twin; TOML escapes and `~`; the last hermeticity leak
+
+**Request.** `/aida-pickup STORY-350` — bundle TASK-300, TASK-307, TASK-306 and
+TASK-305, all in `settings.rs`.
+
+**TASK-300 — the clobber score already had fixed.** STORY-290/TASK-266 taught
+the engine to seed `score_gauge_on` from the front-end's loaded settings, because
+otherwise the engine's own default flowed back across `sync_score` on the first
+`/settings` and was *saved* over the user's file. `mode` has the identical shape
+and was not in that bundle, so it still shipped broken: a `mode = "debate"` was
+ignored on load and destroyed on the next write. Rather than add a second
+single-key accessor, the seam was widened — `FrontEnd::persisted_score() -> bool`
+became `persisted_settings() -> Settings`, one accessor for every engine-owned
+setting, so the next one added inherits the seed instead of repeating the bug a
+third time. `editor` and `mouse` were checked and do *not* share the defect: both
+are front-end-owned and already seeded from the loaded file.
+
+Mode has two sources that outrank the saved default, so the seed needed a
+precedence rather than a straight read: `--mode` > the mode a resumed session
+logged > `settings.toml` > Socratic. `SessionConfig::mode_provided` became
+`mode_pinned` and the resume restore now sets it, since both mean *this session's
+mode is already decided*; `starting_mode` is the one pure function that decides,
+and it is table-tested across all four cells. The `session_started` event now
+logs the **live** seeded mode, not `config.mode` — otherwise a persisted debate
+would run as a debate and be logged (and resumed) as a Socratic.
+
+Reproduced end to end before and after against a scratch `XDG_CONFIG_HOME`: a
+file carrying `mode = "debate"`, a session, a `/settings`, a quit. The panel now
+reads `Session mode: Debate` and the file still says `debate` afterwards.
+
+**TASK-307 — values that parse like TOML, continued.** A double-quoted value is
+a TOML *basic* string, so escapes are processed (`\t`, `\n`, `\\`, `\"`,
+`\uXXXX`, `\UXXXXXXXX`) and the closing quote is the first *unescaped* one; a
+single-quoted value is a *literal* string, taken verbatim, which is the spelling
+for a Windows path. An unrecognised escape is kept as written rather than dropped
+— the tolerant reading the rest of this parser runs on, and the friendly one for
+`"C:\Users\me"`, which has no legal `\U` escape after it. A leading `~` now
+expands to `$HOME` in both written tiers; `dolt_path = "~/graphs/main"` used to
+name a *literal* `~` directory, anchored under `~/.config/quizdom/` by TASK-263,
+where nobody would look for it. `~alice/x` is left alone: resolving another
+user's home needs a password database, and a value we cannot resolve is better
+left recognisable than half-translated. Verified end to end with `quizdom logs`,
+which prints the path it resolved.
+
+**TASK-306 — the last reader of the real user config.** `render_list()` resolved
+the three read-only rows live, and it sits on the `/settings` path the front-end
+tests drive, so the developer's own `~/.config/quizdom/settings.toml` decided
+what those tests saw. Fixed at the seam with the TASK-266 pattern rather than at
+the call sites: `ReadOnlyRows::resolved()` returns fixed, deliberately
+recognisable rows under `cfg(test)`, and the row-test fixture is now that same
+function, so the two cannot drift. A test asserts the hermeticity directly.
+
+**TASK-305.** `config_value`'s doc still advertised "matched-pair unquoting"
+after TASK-265 replaced it with a TOML-legal parse — it described a degrade path
+as if it were the rule.
+
+**Verified.** `cargo fmt --all` applied; `cargo clippy --workspace --all-targets
+-- -D warnings` exits 0; 698 quizdom + 7 llm tests green (6 new).
+
+**Docs.** `OVERVIEW.md` § *Settings, and how a relative path resolves* gains the
+escape/`~` rules and a paragraph on why the engine seeds the two settings it
+owns; `CLAUDE.md` names the two new parsing rules in the `dolt_path` paragraph.
