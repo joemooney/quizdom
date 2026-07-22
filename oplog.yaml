@@ -9290,5 +9290,31 @@ operations:
     req_type: Task
     status: Draft
     priority: Medium
-clock: 670
+- id: 019f8b9e-b88d-7e23-aa2e-7a6f762a129d
+  target_id: 019f8b9e-b42b-7f83-9b9b-516fedb15818
+  author: aida
+  node_id: ''
+  lamport: 671
+  timestamp: 2026-07-22T20:57:42.797615838Z
+  kind: !Create
+    title: 'Review PR-110: STORY-367: finish the mode seam — a flag stops becoming a default, a resume stops changing its mind'
+    description: |
+      Auto-filed by `aida pr auto-queue-review` (typically from /aida-pr) (session `019f8b90`) for branch `story-367`.
+
+      - PR: <https://github.com/joemooney/quizdom/pull/110>
+      - Branch: `story-367` → `main`
+
+      ## Covers
+
+      - STORY-367
+
+      ## Acceptance
+
+      - Generate a structured review prompt with `aida review prompt --pr 110` and verify each spec's acceptance criteria.
+      - Approve and merge, or request changes by spec id.
+      - Mark this story `completed` once the PR is merged.
+    req_type: Story
+    status: Approved
+    priority: Medium
+clock: 671
 node_id: ''
