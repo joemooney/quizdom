@@ -7312,5 +7312,43 @@ operations:
     req_type: Task
     status: Draft
     priority: Medium
-clock: 563
+- id: 019f8af3-6b03-7ff0-80a0-da7d69b38e8b
+  target_id: 019f8af3-68d6-7570-9a89-20e5264c3074
+  author: aida
+  node_id: ''
+  lamport: 564
+  timestamp: 2026-07-22T17:50:36.291818474Z
+  kind: !Create
+    title: diagnostics.rs was added to BUG-200's Command::new allowlist
+    description: |
+      `no_raw_command_spawns_outside_the_choke_point` (crates/quizdom/src/aida_cmd.rs)
+      fails if `Command::new` appears in any src file outside a filename allowlist,
+      so that every `aida` spawn goes through `aida_command()` with
+      `AIDA_OUTPUT_FORMAT=human` pinned. STORY-326's terminal-safety capture spawns
+      the TEST BINARY (see the sibling finding), which tripped it, so
+      `diagnostics.rs` joined `aida_cmd.rs` / `db_init.rs` / `editor.rs` on the list.
+
+      Why this shape rather than the alternative: the allowlist is the mechanism the
+      guard already provides for "this file spawns something that is not `aida`" —
+      `editor.rs` spawns `$EDITOR`, `db_init.rs` spawns `dolt`, and now
+      `diagnostics.rs`'s test spawns the test binary. The considered alternative was
+      to narrow the SCAN to each file's non-test half (splitting at
+      `#[cfg(test)] mod tests {`, the trick diagnostics' own source scan uses), which
+      would have let the guard keep flagging `diagnostics.rs` proper. That is
+      arguably the better long-term shape — the invariant is about RUNTIME spawns —
+      but it silently drops guard coverage of every file's test module, which felt
+      like a bigger change than a spec about backups and logging should make on its
+      way past.
+
+      Residual risk: a future RUNTIME spawn added to `diagnostics.rs` would not be
+      flagged. Low — the module's whole contract is one append-only file and no
+      subprocess — but it is a real reduction in guard coverage, filed so it is a
+      decision rather than a side effect.
+
+      Raised by the implementer while working STORY-326.
+      Branch: story-326  ·  Commit: 99956f4  (PR link added on merge)
+    req_type: Task
+    status: Draft
+    priority: Medium
+clock: 564
 node_id: ''
