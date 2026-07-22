@@ -31,9 +31,16 @@ priority: Medium
 owner: ''
 feature: Uncategorized
 created_at: 2026-07-22T18:19:05.752644763Z
-modified_at: 2026-07-22T18:19:05.752644763Z
+modified_at: 2026-07-22T18:29:06.548609594Z
 req_type: Task
 tags:
 - from-implementer:STORY-327
 - kind:design-choice
 - severity:cosmetic
+comments:
+- id: 019f8b16-ab74-74d3-8796-a10f67583328
+  author: joe
+  content: 'Implementation-choice record: a typed BatchSeam is stronger than the seam-neutral tail TASK-319 proposed, since it makes the seam unmistakable at the type level. Accepted as shipped.'
+  created_at: 2026-07-22T18:29:06.548609594Z
+  modified_at: 2026-07-22T18:29:06.548609594Z
+  session_id: 789bafdb-f673-41c5-affc-d550f95e51e5
