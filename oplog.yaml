@@ -3332,5 +3332,49 @@ operations:
   timestamp: 2026-07-22T04:38:41.180530042Z
   kind: !SetStatus
     status: In Progress
-clock: 327
+- id: 019f881f-1654-71a0-819a-5fbdf1a8f91b
+  target_id: 019f881f-1220-71c1-8e32-6e4ce5406640
+  author: aida
+  node_id: ''
+  lamport: 328
+  timestamp: 2026-07-22T04:39:26.548711494Z
+  kind: !Create
+    title: apply_log_signals pairs question to signal positionally with zip — a short load_questions misattributes silently
+    description: |
+      crates/quizdom/src/signals.rs:225-233 (STORY-244, PR-90).
+
+      apply_log_signals builds its batch as:
+
+          bank.load_questions(&ids)?.into_iter()
+              .zip(applied.iter().map(|(_, signal)| *signal))
+
+      and then zips the reweighted result against `applied` a second time to
+      build the ReweightOutcome list. Both pairings are POSITIONAL, and `zip`
+      truncates silently.
+
+      If any QuestionBank impl's `load_questions` ever returns fewer than
+      `ids.len()` entries — or the same count in a different order — every
+      question from the drop point on is paired with the PREVIOUS question's
+      signal, and the emitted ReweightOutcome reports the wrong `question_ref`
+      alongside it. Curate would print, and persist, plausible-looking but
+      wrong re-weights with no error.
+
+      Not reachable today: the trait default (`store.rs`-style strict collect
+      into Result) and the Dolt-backed override (`bank.rs:117-124`, strict
+      `fetch_nodes` + `collect::<Result<_>>`) both return exactly one question
+      per id in requested order. But `load_questions` is a DEFAULT trait method
+      any bank may override, and its immediate neighbour `load_terms` is
+      deliberately LENIENT (`filter_map(.ok())`) — so "strict" is a documented
+      convention rather than an enforced one, sitting one method away from its
+      own counterexample.
+
+      Suggested fix: assert the invariant at the seam rather than trusting it —
+      e.g. a length check returning QuizdomError before the zip, or pair by
+      looking each id up in a map keyed by question id instead of by position.
+
+      Raised in review of PR-90: https://github.com/joemooney/quizdom/pull/90#issuecomment-5041919599
+    req_type: Task
+    status: Draft
+    priority: Medium
+clock: 328
 node_id: ''

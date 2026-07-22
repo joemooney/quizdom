@@ -1,0 +1,48 @@
+id: 019f881f-1220-71c1-8e32-6e4ce5406640
+spec_id: TASK-246
+agreed_id: TASK-246
+title: apply_log_signals pairs question to signal positionally with zip — a short load_questions misattributes silently
+description: |
+  crates/quizdom/src/signals.rs:225-233 (STORY-244, PR-90).
+
+  apply_log_signals builds its batch as:
+
+      bank.load_questions(&ids)?.into_iter()
+          .zip(applied.iter().map(|(_, signal)| *signal))
+
+  and then zips the reweighted result against `applied` a second time to
+  build the ReweightOutcome list. Both pairings are POSITIONAL, and `zip`
+  truncates silently.
+
+  If any QuestionBank impl's `load_questions` ever returns fewer than
+  `ids.len()` entries — or the same count in a different order — every
+  question from the drop point on is paired with the PREVIOUS question's
+  signal, and the emitted ReweightOutcome reports the wrong `question_ref`
+  alongside it. Curate would print, and persist, plausible-looking but
+  wrong re-weights with no error.
+
+  Not reachable today: the trait default (`store.rs`-style strict collect
+  into Result) and the Dolt-backed override (`bank.rs:117-124`, strict
+  `fetch_nodes` + `collect::<Result<_>>`) both return exactly one question
+  per id in requested order. But `load_questions` is a DEFAULT trait method
+  any bank may override, and its immediate neighbour `load_terms` is
+  deliberately LENIENT (`filter_map(.ok())`) — so "strict" is a documented
+  convention rather than an enforced one, sitting one method away from its
+  own counterexample.
+
+  Suggested fix: assert the invariant at the seam rather than trusting it —
+  e.g. a length check returning QuizdomError before the zip, or pair by
+  looking each id up in a map keyed by question id instead of by position.
+
+  Raised in review of PR-90: https://github.com/joemooney/quizdom/pull/90#issuecomment-5041919599
+status: Draft
+priority: Medium
+owner: ''
+feature: Uncategorized
+created_at: 2026-07-22T04:39:25.472639847Z
+modified_at: 2026-07-22T04:39:25.472639847Z
+req_type: Task
+tags:
+- from-review:PR-90
+- kind:correctness
+- severity:minor
