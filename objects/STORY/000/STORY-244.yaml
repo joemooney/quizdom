@@ -23,12 +23,12 @@ description: |-
   - Per-item fetch_node / list_node_ids / neighbors / update_weight_and_tags remain on the trait with unchanged behavior; new batch methods have default loop impls.
   - Batch and per-item paths return identical data for the same input (add a test asserting fetch_nodes matches looping fetch_node, and neighbors_many matches looping neighbors, including the ordering guarantees TASK-221 documents).
   - cargo test green; the ignored real_dolt tests green; no clippy regressions.
-status: Approved
+status: InProgress
 priority: Medium
 owner: ''
 feature: Uncategorized
 created_at: 2026-07-22T04:15:17.114492740Z
-modified_at: 2026-07-22T04:15:32.086689759Z
+modified_at: 2026-07-22T04:15:50.203898159Z
 req_type: Story
 relationships:
 - rel_type: References
