@@ -31,7 +31,7 @@ priority: Medium
 owner: ''
 feature: Uncategorized
 created_at: 2026-07-22T18:47:13.904718271Z
-modified_at: 2026-07-22T18:47:46.545039471Z
+modified_at: 2026-07-22T19:00:42.895525330Z
 req_type: Task
 tags:
 - from-implementer:STORY-342
@@ -42,3 +42,10 @@ relationships:
   target_id: 019f8b17-0950-70d3-85ee-ce323bcf5ece
   created_at: 2026-07-22T18:47:46.545034214Z
   created_by: joe
+comments:
+- id: 019f8b33-9b0f-7e13-9ea8-36ed90d09dbd
+  author: joe
+  content: 'Implementation-choice record: copy-then-truncate under a File::lock is the safe answer to TASK-333''s rename race, not a defect. Accepted as shipped.'
+  created_at: 2026-07-22T19:00:42.895525330Z
+  modified_at: 2026-07-22T19:00:42.895525330Z
+  session_id: 789bafdb-f673-41c5-affc-d550f95e51e5
