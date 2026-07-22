@@ -8,12 +8,12 @@ description: |
   Pre-existing from STORY-205/206, but the STORY-208 cutover makes it user-facing (Dolt is now the only backend) and CLAUDE.md's new wording implies the override applies uniformly. Fix: route db-init/db-migrate default path through the same env/config resolution, keeping `--path` as the top-priority override.
 
   Raised in review of PR-86: https://github.com/joemooney/quizdom/pull/86#issuecomment-5017315149
-status: Approved
+status: Completed
 priority: Medium
 owner: ''
 feature: Uncategorized
 created_at: 2026-07-19T20:45:59.965232062Z
-modified_at: 2026-07-22T05:48:08.141167047Z
+modified_at: 2026-07-22T06:39:33.915462695Z
 req_type: Task
 tags:
 - from-review:PR-86
