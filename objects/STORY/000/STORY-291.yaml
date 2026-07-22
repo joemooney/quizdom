@@ -1,0 +1,27 @@
+id: 019f8a51-5a9d-78e1-8a45-43227b11a79a
+spec_id: STORY-291
+agreed_id: STORY-291
+title: 'Dolt commit lifecycle: db-init and db-migrate must commit their own writes'
+description: |-
+  Bundles TASK-272, TASK-270, TASK-271.
+
+  TASK-272 (the substantive one): db-init applies the schema DDL and db-migrate bulk-imports the graph with plain 'dolt sql -q', neither followed by 'dolt add -A' + 'dolt commit'. Only DoltDomainStore commits. Consequence found during STORY-261: a freshly bootstrapped+migrated data/dolt had exactly ONE commit ('Initialize data repository') with all 75 nodes and 75 edges sitting untracked in the working set — so the first db-backup pushed an EMPTY history and reported success. STORY-261 papered over it by having db-backup snapshot the working set first, but the root inconsistency stands: a migrated repo should have real history, and no other command should have to compensate. Make db-init and db-migrate commit their own writes with meaningful messages; keep them idempotent and re-runnable.
+
+  TASK-270: reachable's depth-limit error advises raising a session variable (cte_max_recursion_depth), which the per-spawn CLI model (ADR-203) makes impossible — the advice cannot be followed. Replace it with something actionable for the spawn model.
+
+  TASK-271: the real_dolt same-second tie-break fixture is coupled to node-mint ordering, and its assert_ne guard can fire spuriously — a flaky test in the suite CI now runs for real.
+
+  ## Acceptance
+  - After db-init followed by db-migrate on a clean path, 'dolt log' shows commits covering the schema and the imported data; the working set is clean ('dolt status' reports nothing to commit).
+  - db-backup on such a repo pushes real history (regression test: bootstrap, migrate, backup, clone the remote, assert node/edge counts AND more than one commit).
+  - Both commands stay idempotent — a second run is a no-op and does not create empty commits.
+  - The depth-limit error suggests something achievable under the per-spawn model.
+  - The tie-break fixture cannot fire spuriously; it no longer depends on mint ordering.
+  - cargo test green; real_dolt tests green; clippy clean.
+status: Approved
+priority: Medium
+owner: ''
+feature: Uncategorized
+created_at: 2026-07-22T14:53:35.261170619Z
+modified_at: 2026-07-22T14:53:35.261170619Z
+req_type: Story
