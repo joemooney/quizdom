@@ -28,12 +28,12 @@ description: |
   for") — none assert on the "batch load" phrase, so the change is contained.
 
   Raised in review of PR-101: https://github.com/joemooney/quizdom/pull/101#issuecomment-5049025018
-status: Draft
+status: Completed
 priority: Medium
 owner: ''
 feature: Uncategorized
 created_at: 2026-07-22T16:57:38.565668732Z
-modified_at: 2026-07-22T16:57:38.565668732Z
+modified_at: 2026-07-22T18:28:06.831286739Z
 req_type: Task
 tags:
 - from-review:PR-101
