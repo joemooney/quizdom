@@ -9219,5 +9219,41 @@ operations:
   timestamp: 2026-07-22T20:41:46.797333225Z
   kind: !SetStatus
     status: Completed
-clock: 668
+- id: 019f8b9d-7623-7122-9f91-fcd0a0bf86e5
+  target_id: 019f8b9d-494e-7b30-9c74-9d56aa9300bf
+  author: aida
+  node_id: ''
+  lamport: 669
+  timestamp: 2026-07-22T20:56:20.259882095Z
+  kind: !Create
+    title: STORY-367 kept /mode and /score persisting; only a bare /mode was demoted to mirror-only
+    description: |
+      STORY-367's acceptance names `--mode` as the transient override that must not
+      rewrite `settings.toml`. It says nothing about the in-session `/mode <token>`
+      shortcut, which STORY-194 deliberately made a persisting surface ("the shortcut
+      commands (/mouse, /score, /mode)"), so I preserved that: an explicit `/mode
+      debate` and `/score` still write the file, on the reading that naming a value IS
+      choosing a new default.
+
+      What changed is narrower: `set_mode_in_session` now returns whether the user
+      actually named a mode (crates/quizdom/src/session.rs), and a bare `/mode` — which
+      only prints the current mode — mirrors instead of persisting. Under `--mode
+      debate` that bare form used to write "debate" over a saved "socratic", because
+      the live value differed from the file and the seam persisted any difference.
+
+      The advisor may want to take the other reading: the session mode lives in the
+      session LOG (it is a `mode_set` event, and resume restores it from there), so
+      `settings.toml`'s `mode` is arguably only the default for NEW sessions, and a
+      mid-session `/mode debate` writing it is the same category error STORY-367 is
+      about — just one the user initiated. Under that reading `/mode` would become
+      mirror-only too and `/settings set mode` would be the only mode-persisting
+      surface. I did not take it because it reverses a stated STORY-194 design decision
+      and the spec did not ask for it.
+
+      Raised by the implementer while working STORY-367.
+      Branch: story-367  ·  Commit: be2d554  (PR link added on merge)
+    req_type: Task
+    status: Draft
+    priority: Medium
+clock: 669
 node_id: ''
