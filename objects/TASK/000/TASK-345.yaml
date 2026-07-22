@@ -16,12 +16,12 @@ description: |
 
   Raised by the implementer while working STORY-342.
   Branch: story-342  ·  Commit: 99f2f0a  (PR link added on merge)
-status: Draft
+status: Rejected
 priority: Medium
 owner: ''
 feature: Uncategorized
 created_at: 2026-07-22T18:47:36.836762898Z
-modified_at: 2026-07-22T20:09:56.231202879Z
+modified_at: 2026-07-22T20:09:57.204075522Z
 req_type: Task
 tags:
 - from-implementer:STORY-342
