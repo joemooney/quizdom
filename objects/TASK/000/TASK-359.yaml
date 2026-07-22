@@ -1,0 +1,80 @@
+id: 019f8b61-8b42-79c1-bdc0-0a87b116f751
+spec_id: TASK-359
+agreed_id: TASK-359
+title: db-migrate's foreign-change pre-flight is provenance-blind, so a failed parity run's own leftovers block the retry with a false message
+description: |
+  Raised in review of PR-107: https://github.com/joemooney/quizdom/pull/107#issuecomment-5050751659
+
+  ## What
+
+  Two changes that shipped together in STORY-351 interact on the retry path.
+
+  TASK-296 deliberately leaves the imported rows UNCOMMITTED when a migration
+  fails parity — `db_migrate::tests::real_dolt_failed_parity_leaves_the_history_untouched`
+  asserts exactly that (`SELECT COUNT(*) FROM dolt_status > 0`).
+
+  TASK-297's pre-flight (`db_init::refuse_on_foreign_changes`, db_init.rs:256)
+  asks `dolt_status` which of `nodes`/`edges` carry pending changes. `dolt_status`
+  carries no provenance — it cannot say who wrote a row. `pending_tables`
+  (db_init.rs:282) reads only `table_name`.
+
+  So on the retry of a failed migration, quizdom refuses its own leftovers:
+
+      error: <repo> has uncommitted changes to nodes that quizdom did not make.
+
+  Reproduced against dolt 2.2.1 with a binary built from the PR-107 branch:
+  `db-init` a fresh repo, leave an uncommitted row in `nodes` (what a
+  failed-parity run leaves behind), then run `db-migrate` — it refuses on the
+  probe alone.
+
+  ## Why it matters
+
+  1. The sentence is false on this path. quizdom wrote those rows, minutes
+     earlier, on purpose. STORY-351 exists to stop quizdom asserting things that
+     are not true (TASK-304 is literally "a confident wrong diagnosis costs more
+     than no diagnosis"), so this is the same class of defect the story removed
+     elsewhere.
+  2. The remedy the message recommends FIRST is `quizdom db-backup`, which
+     `commit_working_set`s the half-finished failed import and pushes it to the
+     backup remote — permanent, and replicated. The correct move here is
+     `dolt reset --hard`, which the message offers last and parenthetically.
+  3. The retry of a failed migration is blocked until the user works out which
+     of the three suggestions applies.
+
+  ## Where
+
+  - crates/quizdom/src/db_init.rs:256 `refuse_on_foreign_changes`
+  - crates/quizdom/src/db_init.rs:282 `pending_tables`
+  - crates/quizdom/src/db_migrate.rs:189 (the pre-flight call site)
+  - crates/quizdom/src/db_migrate.rs:306-336 (the failure path that leaves rows)
+
+  ## Design question for the advisor
+
+  The fix is not obvious, which is why this is filed rather than fix-forwarded.
+  Options seen from the diff:
+
+  - Soften the claim: the pre-flight cannot know provenance, so the message
+    could say "uncommitted changes quizdom cannot account for" and lead with
+    `dolt reset --hard` when the pending rows look like a partial import.
+  - Give the failed run a way to say so — e.g. `db-migrate` rolls the working set
+    back on failure (`dolt reset --hard` scoped to nodes/edges), which would keep
+    TASK-296's "no commit asserts refuted counts" guarantee AND leave a clean tree
+    for the retry. Trades away the "the rows are still there to inspect" property
+    the current error advertises.
+  - Leave the behaviour, fix only the wording + the ordering of the suggested
+    remedies.
+
+  Related: TASK-357 (already filed by the implementer) covers the store's
+  per-write path, which got the staging half of TASK-297 but no pre-flight.
+status: Draft
+priority: Medium
+owner: ''
+feature: Uncategorized
+created_at: 2026-07-22T19:50:53.506170328Z
+modified_at: 2026-07-22T19:50:53.506170328Z
+req_type: Task
+tags:
+- dolt
+- from-review:PR-107
+- honesty
+- severity:major
