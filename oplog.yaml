@@ -5665,5 +5665,36 @@ operations:
     req_type: Epic
     status: Approved
     priority: Medium
-clock: 487
+- id: 019f8a51-1f07-77b1-a228-3789d36e99da
+  target_id: 019f8a51-1cb7-7a81-b5a2-d0161a2c1d32
+  author: aida
+  node_id: ''
+  lamport: 488
+  timestamp: 2026-07-22T14:53:20.007419722Z
+  kind: !Create
+    title: 'settings.rs correctness: TOML-legal values, anchored relative paths, and a save that never loses keys'
+    description: |-
+      Bundles TASK-265, TASK-263, TASK-266, TASK-267, TASK-268, TASK-262 — all in settings.rs, file-disjoint from the other EPIC-289 batches.
+
+      TASK-265: unquote() strips only a matched pair of DOUBLE quotes and has no notion of a trailing '# comment', though the file is .toml. So dolt_path = "/tmp/x"  # the big disk resolves to the literal string including the comment, and dolt_path = '/tmp/x' keeps its single quotes. Pre-existing mangling, but the blast radius grew: db-init will now happily CREATE a repo at that garbage path.
+
+      TASK-263: resolve_dolt_path returns the tier's string unanchored, and callers hand it to Command::current_dir / Path::join. The compiled default data/dolt and any relative dolt_path resolve against the PROCESS cwd, while the settings file is per-user and global — so one config line selects a DIFFERENT repo from each sibling worktree. Anchor relative paths to a stable base (project root or the settings file's dir); document which.
+
+      TASK-266: a persisted score setting is ignored on load and clobbered by the engine default on the next save.
+      TASK-267: Settings::rendered_line's catch-all arm silently drops a key added to MODELLED_KEYS — a maintenance trap that loses data the moment someone extends the list.
+      TASK-268: settings::save falls back to a fresh write when the existing file is unreadable, dropping exactly the foreign keys TASK-218 was fixed to preserve.
+      TASK-262: dolt_path stays invisible in /settings after STORY-258 took the preserve-foreign-lines option — surface it so users can see the value that selects their graph.
+
+      ## Acceptance
+      - A TOML-legal settings file parses correctly: double-quoted, single-quoted, and values with trailing inline comments all yield the bare value (tests for each).
+      - A relative dolt_path resolves to the SAME repo from two different worktrees; the anchoring rule is documented in CLAUDE.md or OVERVIEW.md.
+      - A persisted score survives a load/save round trip.
+      - Adding a key to MODELLED_KEYS without updating rendered_line fails a test rather than silently dropping it.
+      - save on an unreadable existing file refuses or preserves, never silently drops foreign keys (test).
+      - /settings shows dolt_path.
+      - cargo test green; clippy clean under -D warnings.
+    req_type: Story
+    status: Approved
+    priority: Medium
+clock: 488
 node_id: ''
