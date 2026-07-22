@@ -6,8 +6,8 @@ use crate::honing::*;
 use crate::input::*;
 use crate::model::*;
 use crate::persist::{
-    AidaCliGeneratedQuestionPersister, AidaCliUserSpecificTermPersister, QuestionLink,
-    QuestionReweighter, UserAuthoredQuestionPersister, UserSpecificTermPersister,
+    QuestionLink, QuestionReweighter, StoreGeneratedQuestionPersister,
+    StoreUserSpecificTermPersister, UserAuthoredQuestionPersister, UserSpecificTermPersister,
 };
 use crate::session::*;
 use crate::store::CommandRunner;
@@ -106,25 +106,25 @@ fn punt_selection_skips_current_thread_and_current_topic() {
             "Q-1",
             70,
             AnswerKind::YesNo,
-            ["topic:free-will", "answer:yes-no", "weight:70"],
+            ["topic:free-will", "answer:yes-no"],
         ),
         question_with_tags(
             "Q-thread",
             90,
             AnswerKind::YesNo,
-            ["topic:ethics", "answer:yes-no", "weight:90"],
+            ["topic:ethics", "answer:yes-no"],
         ),
         question_with_tags(
             "Q-same-topic",
             80,
             AnswerKind::YesNo,
-            ["topic:free-will", "answer:yes-no", "weight:80"],
+            ["topic:free-will", "answer:yes-no"],
         ),
         question_with_tags(
             "Q-other",
             60,
             AnswerKind::YesNo,
-            ["topic:meaning", "answer:yes-no", "weight:60"],
+            ["topic:meaning", "answer:yes-no"],
         ),
     ])
     .with_edges("Q-1", ["Q-thread"]);
@@ -140,18 +140,8 @@ fn punt_selection_skips_current_thread_and_current_topic() {
 fn deterministic_strategy_branches_on_triggering_answer() {
     let bank = FakeBank::new([
         question("Q-1", 0, AnswerKind::YesNo),
-        question_with_tags(
-            "Q-yes",
-            80,
-            AnswerKind::YesNo,
-            ["weight:80", "from-answer:yes"],
-        ),
-        question_with_tags(
-            "Q-no",
-            90,
-            AnswerKind::YesNo,
-            ["weight:90", "from-answer:no"],
-        ),
+        question_with_tags("Q-yes", 80, AnswerKind::YesNo, ["from-answer:yes"]),
+        question_with_tags("Q-no", 90, AnswerKind::YesNo, ["from-answer:no"]),
     ])
     .with_edges("Q-1", ["Q-yes", "Q-no"]);
     let current = bank.load_question("Q-1").unwrap();
@@ -175,13 +165,8 @@ fn deterministic_strategy_branches_on_triggering_answer() {
 fn deterministic_strategy_prefers_matching_answer_over_unconditional() {
     let bank = FakeBank::new([
         question("Q-1", 0, AnswerKind::YesNo),
-        question_with_tags("Q-any", 90, AnswerKind::YesNo, ["weight:90"]),
-        question_with_tags(
-            "Q-yes",
-            50,
-            AnswerKind::YesNo,
-            ["weight:50", "from-answer:yes"],
-        ),
+        question("Q-any", 90, AnswerKind::YesNo),
+        question_with_tags("Q-yes", 50, AnswerKind::YesNo, ["from-answer:yes"]),
     ])
     .with_edges("Q-1", ["Q-any", "Q-yes"]);
     let current = bank.load_question("Q-1").unwrap();
@@ -206,12 +191,7 @@ fn deterministic_strategy_prefers_matching_answer_over_unconditional() {
 fn deterministic_strategy_excludes_mismatched_answer_successors() {
     let bank = FakeBank::new([
         question("Q-1", 0, AnswerKind::YesNo),
-        question_with_tags(
-            "Q-no",
-            90,
-            AnswerKind::YesNo,
-            ["weight:90", "from-answer:no"],
-        ),
+        question_with_tags("Q-no", 90, AnswerKind::YesNo, ["from-answer:no"]),
     ])
     .with_edges("Q-1", ["Q-no"]);
     let current = bank.load_question("Q-1").unwrap();
@@ -304,18 +284,8 @@ fn weighted_strategy_returns_none_when_all_successors_are_zero_weight() {
 fn weighted_strategy_honors_from_answer_filter() {
     let bank = FakeBank::new([
         question("Q-1", 0, AnswerKind::YesNo),
-        question_with_tags(
-            "Q-yes",
-            5,
-            AnswerKind::YesNo,
-            ["weight:5", "from-answer:yes"],
-        ),
-        question_with_tags(
-            "Q-no",
-            90,
-            AnswerKind::YesNo,
-            ["weight:90", "from-answer:no"],
-        ),
+        question_with_tags("Q-yes", 5, AnswerKind::YesNo, ["from-answer:yes"]),
+        question_with_tags("Q-no", 90, AnswerKind::YesNo, ["from-answer:no"]),
     ])
     .with_edges("Q-1", ["Q-yes", "Q-no"]);
     let current = bank.load_question("Q-1").unwrap();
@@ -337,13 +307,8 @@ fn weighted_strategy_honors_from_answer_filter() {
 fn weighted_strategy_samples_only_within_the_top_relevance_tier() {
     let bank = FakeBank::new([
         question("Q-1", 0, AnswerKind::YesNo),
-        question_with_tags("Q-any", 90, AnswerKind::YesNo, ["weight:90"]),
-        question_with_tags(
-            "Q-yes",
-            5,
-            AnswerKind::YesNo,
-            ["weight:5", "from-answer:yes"],
-        ),
+        question("Q-any", 90, AnswerKind::YesNo),
+        question_with_tags("Q-yes", 5, AnswerKind::YesNo, ["from-answer:yes"]),
     ])
     .with_edges("Q-1", ["Q-any", "Q-yes"]);
     let current = bank.load_question("Q-1").unwrap();
@@ -630,7 +595,7 @@ fn llm_strategy_persists_generated_question_when_configured() {
         MockLlm::ok(
             r#"{"action":"generate","question":"What definition of responsibility are you using?","answer_mode":"free-text"}"#,
         ),
-        AidaCliGeneratedQuestionPersister::with_store(DoltDomainStore::with_runner(
+        StoreGeneratedQuestionPersister::with_store(DoltDomainStore::with_runner(
             "/tmp/quizdom-dolt-tests",
             runner,
         )),
@@ -686,7 +651,7 @@ fn llm_strategy_leaves_free_text_followon_unconditional() {
         MockLlm::ok(
             r#"{"action":"generate","question":"What definition of responsibility are you using?","answer_mode":"free-text"}"#,
         ),
-        AidaCliGeneratedQuestionPersister::with_store(DoltDomainStore::with_runner(
+        StoreGeneratedQuestionPersister::with_store(DoltDomainStore::with_runner(
             "/tmp/quizdom-dolt-tests",
             runner,
         )),
@@ -726,7 +691,7 @@ fn llm_strategy_prefers_near_identical_existing_candidate_over_duplicate() {
         MockLlm::ok(
             r#"{"action":"generate","question":"  What definition of responsibility are you using?  ","answer_mode":"free-text"}"#,
         ),
-        AidaCliGeneratedQuestionPersister::with_store(DoltDomainStore::with_runner(
+        StoreGeneratedQuestionPersister::with_store(DoltDomainStore::with_runner(
             "/tmp/quizdom-dolt-tests",
             runner,
         )),
@@ -794,7 +759,7 @@ fn titled_question(id: &str, title: &str, weight: u32) -> Question {
     Question {
         id: id.to_string(),
         title: title.to_string(),
-        tags: vec!["answer:yes-no".to_string(), format!("weight:{weight}")],
+        tags: vec!["answer:yes-no".to_string()],
         answer_kind: AnswerKind::YesNo,
         weight,
     }
@@ -964,7 +929,7 @@ fn session_surfaces_probed_competing_definitions() {
         "Q-23",
         70,
         AnswerKind::YesNo,
-        ["topic:free-will", "answer:yes-no", "weight:70"],
+        ["topic:free-will", "answer:yes-no"],
     )])
     .with_probes("Q-23", ["TERM-24", "TERM-25"])
     .with_terms([
@@ -1014,19 +979,19 @@ fn punt_jumps_to_different_topic_and_records_signal() {
             "Q-1",
             70,
             AnswerKind::YesNo,
-            ["topic:free-will", "answer:yes-no", "weight:70"],
+            ["topic:free-will", "answer:yes-no"],
         ),
         question_with_tags(
             "Q-thread",
             90,
             AnswerKind::YesNo,
-            ["topic:free-will", "answer:yes-no", "weight:90"],
+            ["topic:free-will", "answer:yes-no"],
         ),
         question_with_tags(
             "Q-other",
             60,
             AnswerKind::YesNo,
-            ["topic:meaning", "answer:yes-no", "weight:60"],
+            ["topic:meaning", "answer:yes-no"],
         ),
     ])
     .with_edges("Q-1", ["Q-thread"]);
@@ -1125,7 +1090,7 @@ fn session_asks_user_meaning_and_renders_mapping_proposal() {
         "Q-23",
         70,
         AnswerKind::YesNo,
-        ["topic:free-will", "answer:yes-no", "weight:70"],
+        ["topic:free-will", "answer:yes-no"],
     )])
     .with_probes("Q-23", ["TERM-24", "TERM-25"])
     .with_terms(free_will_terms());
@@ -1169,7 +1134,7 @@ fn explore_runs_honing_then_reasks_same_question() {
         "Q-23",
         70,
         AnswerKind::YesNo,
-        ["topic:free-will", "answer:yes-no", "weight:70"],
+        ["topic:free-will", "answer:yes-no"],
     )])
     .with_probes("Q-23", ["TERM-24", "TERM-25"])
     .with_terms(free_will_terms());
@@ -1213,13 +1178,13 @@ fn settled_definition_is_reapplied_downstream() {
             "Q-23",
             70,
             AnswerKind::YesNo,
-            ["topic:free-will", "answer:yes-no", "weight:70"],
+            ["topic:free-will", "answer:yes-no"],
         ),
         question_with_tags(
             "Q-27",
             60,
             AnswerKind::YesNo,
-            ["topic:free-will", "answer:yes-no", "weight:60"],
+            ["topic:free-will", "answer:yes-no"],
         ),
     ])
     .with_edges("Q-23", ["Q-27"])
@@ -1265,7 +1230,7 @@ fn rejected_mapping_mints_user_specific_term_after_steering() {
         "Q-23",
         70,
         AnswerKind::YesNo,
-        ["topic:free-will", "answer:yes-no", "weight:70"],
+        ["topic:free-will", "answer:yes-no"],
     )])
     .with_probes("Q-23", ["TERM-24", "TERM-25"])
     .with_terms(free_will_terms());
@@ -1276,7 +1241,7 @@ fn rejected_mapping_mints_user_specific_term_after_steering() {
     // mint scan's highest TERM id makes the fresh one TERM-99.
     let runner = ScriptedDoltRunner::new(vec![(0, r#"{"rows":[{"id":"TERM-98"}]}"#, "")]);
     let handle = runner.clone();
-    let persister = AidaCliUserSpecificTermPersister::with_store(DoltDomainStore::with_runner(
+    let persister = StoreUserSpecificTermPersister::with_store(DoltDomainStore::with_runner(
         "/tmp/quizdom-dolt-tests",
         runner,
     ));
@@ -1320,7 +1285,7 @@ fn rejected_mapping_mints_user_specific_term_after_steering() {
 #[test]
 fn user_specific_term_persister_maps_aida_add_output() {
     let runner = ScriptedDoltRunner::new(vec![(0, r#"{"rows":[{"id":"TERM-87"}]}"#, "")]);
-    let persister = AidaCliUserSpecificTermPersister::with_store(DoltDomainStore::with_runner(
+    let persister = StoreUserSpecificTermPersister::with_store(DoltDomainStore::with_runner(
         "/tmp/quizdom-dolt-tests",
         runner,
     ));
@@ -1973,7 +1938,7 @@ fn punt_dead_end_prints_session_id_and_resume_command() {
         "Q-1",
         70,
         AnswerKind::YesNo,
-        ["topic:free-will", "answer:yes-no", "weight:70"],
+        ["topic:free-will", "answer:yes-no"],
     )]);
     let config = test_config(&path, "Q-1");
     let reweighter = RecordingQuestionReweighter::default();
@@ -2214,7 +2179,7 @@ fn dead_end_menu_degrades_offline_and_quits_with_footer() {
         "Q-1",
         10,
         AnswerKind::YesNo,
-        ["topic:free-will", "weight:10"],
+        ["topic:free-will"],
     )]);
     let config = test_config(&path, "Q-1");
     let mut output = Vec::new();
@@ -2265,13 +2230,8 @@ fn dead_end_menu_punt_continues_to_a_different_topic() {
     ));
     let _ = fs::remove_file(&path);
     let bank = FakeBank::new([
-        question_with_tags(
-            "Q-1",
-            10,
-            AnswerKind::YesNo,
-            ["topic:free-will", "weight:10"],
-        ),
-        question_with_tags("Q-2", 50, AnswerKind::YesNo, ["topic:meaning", "weight:50"]),
+        question_with_tags("Q-1", 10, AnswerKind::YesNo, ["topic:free-will"]),
+        question_with_tags("Q-2", 50, AnswerKind::YesNo, ["topic:meaning"]),
     ]);
     let config = test_config(&path, "Q-1");
     let mut output = Vec::new();
@@ -2639,7 +2599,7 @@ fn breadcrumb_shows_the_goal_when_set() {
         "Q-1",
         70,
         AnswerKind::YesNo,
-        ["topic:free-will", "answer:yes-no", "weight:70"],
+        ["topic:free-will", "answer:yes-no"],
     );
     assert_eq!(
         breadcrumb_line(&question, 2, "main", Some("is free will real?")),
@@ -2976,7 +2936,7 @@ fn contradiction_follow_up_persists_resolution_to_graph_and_log() {
         command_output(true, "", ""),
         command_output(true, "", ""),
     ]);
-    let persister = AidaCliContradictionResolutionPersister::with_stores(
+    let persister = StoreContradictionResolutionPersister::with_stores(
         DoltDomainStore::with_runner("/tmp/quizdom-dolt-tests", dolt_runner),
         crate::store::AidaIntentStore::new("aida", aida_runner.clone()),
     );
@@ -3227,7 +3187,7 @@ fn forked_agree_and_disagree_branches_are_recoverable_independently() {
 }
 
 fn question(id: &str, weight: u32, answer_kind: AnswerKind) -> Question {
-    question_with_tags(id, weight, answer_kind, [format!("weight:{weight}")])
+    question_with_tags(id, weight, answer_kind, Vec::<String>::new())
 }
 
 fn question_with_tags(
@@ -3275,18 +3235,8 @@ fn free_will_terms() -> Vec<TermDefinition> {
 fn story_69_branching_bank() -> FakeBank {
     FakeBank::new([
         question("Q-1", 10, AnswerKind::YesNo),
-        question_with_tags(
-            "Q-yes",
-            10,
-            AnswerKind::YesNo,
-            ["weight:10", "from-answer:yes"],
-        ),
-        question_with_tags(
-            "Q-no",
-            10,
-            AnswerKind::YesNo,
-            ["weight:10", "from-answer:no"],
-        ),
+        question_with_tags("Q-yes", 10, AnswerKind::YesNo, ["from-answer:yes"]),
+        question_with_tags("Q-no", 10, AnswerKind::YesNo, ["from-answer:no"]),
         question("Q-3", 1, AnswerKind::YesNo),
     ])
     .with_edges("Q-1", ["Q-yes", "Q-no"])
@@ -3721,7 +3671,7 @@ fn quick_add_authors_and_links_question_from_current_node() {
         "Q-23",
         70,
         AnswerKind::YesNo,
-        ["topic:free-will", "answer:yes-no", "weight:70"],
+        ["topic:free-will", "answer:yes-no"],
     )]);
     let config = test_config(&path, "Q-23");
     let persister = RecordingUserAuthoredPersister::default();
@@ -3775,14 +3725,14 @@ fn quick_add_issues_begets_edge_for_later_sessions() {
         "Q-23",
         70,
         AnswerKind::YesNo,
-        ["topic:free-will", "answer:yes-no", "weight:70"],
+        ["topic:free-will", "answer:yes-no"],
     )]);
     let config = test_config(&path, "Q-23");
     // trace:STORY-208 | ai:claude — the quick-add persists to Dolt: mint scan
     // (highest Q id → Q-77), nodes insert, then the begets edge insert.
     let runner = ScriptedDoltRunner::new(vec![(0, r#"{"rows":[{"id":"Q-76"}]}"#, "")]);
     let handle = runner.clone();
-    let persister = crate::persist::AidaCliUserAuthoredQuestionPersister::with_store(
+    let persister = crate::persist::StoreUserAuthoredQuestionPersister::with_store(
         DoltDomainStore::with_runner("/tmp/quizdom-dolt-tests", runner),
     );
     let mut output = Vec::new();
@@ -3823,13 +3773,13 @@ fn quick_add_reusing_duplicate_persists_nothing() {
             "Q-23",
             70,
             AnswerKind::YesNo,
-            ["topic:free-will", "answer:yes-no", "weight:70"],
+            ["topic:free-will", "answer:yes-no"],
         ),
         question_with_tags(
             "Q-existing",
             50,
             AnswerKind::YesNo,
-            ["topic:free-will", "answer:yes-no", "weight:50"],
+            ["topic:free-will", "answer:yes-no"],
         ),
     ]);
     // Make Q-existing a real near-duplicate of what the user is about to type.
@@ -3874,7 +3824,7 @@ fn quick_add_topic_falls_back_when_current_has_no_topic() {
         "Q-23",
         70,
         AnswerKind::YesNo,
-        ["answer:yes-no", "weight:70"],
+        ["answer:yes-no"],
     )]);
     let config = test_config(&path, "Q-23");
     let persister = RecordingUserAuthoredPersister::default();
@@ -4093,7 +4043,7 @@ fn breadcrumb_line_shows_topic_depth_and_branch() {
         "Q-1",
         70,
         AnswerKind::YesNo,
-        ["topic:free-will", "answer:yes-no", "weight:70"],
+        ["topic:free-will", "answer:yes-no"],
     );
 
     assert_eq!(
@@ -4131,7 +4081,7 @@ fn render_breadcrumb_is_plain_text_when_styling_disabled() {
         "Q-1",
         70,
         AnswerKind::YesNo,
-        ["topic:meaning-of-life", "answer:yes-no", "weight:70"],
+        ["topic:meaning-of-life", "answer:yes-no"],
     );
     crate::style::set_enabled(false);
     let mut output = Vec::new();
@@ -4159,13 +4109,13 @@ fn session_shows_orientation_breadcrumb_each_turn() {
             "Q-1",
             70,
             AnswerKind::YesNo,
-            ["topic:free-will", "answer:yes-no", "weight:70"],
+            ["topic:free-will", "answer:yes-no"],
         ),
         question_with_tags(
             "Q-2",
             60,
             AnswerKind::YesNo,
-            ["topic:meaning", "answer:yes-no", "weight:60"],
+            ["topic:meaning", "answer:yes-no"],
         ),
     ])
     .with_edges("Q-1", ["Q-2"]);
@@ -4213,7 +4163,7 @@ fn in_session_goal_command_sets_goal_and_shows_it_in_the_breadcrumb() {
         "Q-1",
         70,
         AnswerKind::YesNo,
-        ["topic:free-will", "answer:yes-no", "weight:70"],
+        ["topic:free-will", "answer:yes-no"],
     )]);
     let config = test_config(&path, "Q-1");
     let mut output = Vec::new();
@@ -4269,7 +4219,7 @@ fn score_gauge_defaults_off_and_toggles_on_then_off() {
         "Q-1",
         70,
         AnswerKind::YesNo,
-        ["topic:free-will", "answer:yes-no", "weight:70"],
+        ["topic:free-will", "answer:yes-no"],
     )]);
     let mut config = test_config(&path, "Q-1");
     config.goal = Some("is free will real?".to_string());
@@ -4336,7 +4286,7 @@ fn score_gauge_recomputes_only_at_gates_not_every_turn() {
                 &format!("Q-{n}"),
                 70,
                 AnswerKind::YesNo,
-                ["topic:free-will", "answer:yes-no", "weight:70"],
+                ["topic:free-will", "answer:yes-no"],
             )
         })
         .collect();
@@ -4397,7 +4347,7 @@ fn start_records_the_goal_flag_on_the_session_started_event() {
         "Q-1",
         70,
         AnswerKind::YesNo,
-        ["topic:free-will", "answer:yes-no", "weight:70"],
+        ["topic:free-will", "answer:yes-no"],
     )]);
     let mut config = test_config(&path, "Q-1");
     config.goal = Some("is free will real?".to_string());
@@ -4473,7 +4423,7 @@ fn rest_case_enters_the_closing_phase_with_statements_not_questions() {
         "Q-1",
         70,
         AnswerKind::YesNo,
-        ["topic:free-will", "answer:yes-no", "weight:70"],
+        ["topic:free-will", "answer:yes-no"],
     )]);
     let config = test_config(&path, "Q-1");
     let mut output = Vec::new();
@@ -4541,7 +4491,7 @@ fn verdict_renders_the_belief_neutral_assessment_oriented_to_the_goal() {
         "Q-1",
         70,
         AnswerKind::YesNo,
-        ["topic:free-will", "answer:yes-no", "weight:70"],
+        ["topic:free-will", "answer:yes-no"],
     )]);
     let mut config = test_config(&path, "Q-1");
     config.goal = Some("is free will real?".to_string());
@@ -4594,7 +4544,7 @@ fn terminator_forfeits_the_last_word() {
         "Q-1",
         70,
         AnswerKind::YesNo,
-        ["topic:free-will", "answer:yes-no", "weight:70"],
+        ["topic:free-will", "answer:yes-no"],
     )]);
     let config = test_config(&path, "Q-1");
     let mut output = Vec::new();
@@ -4666,7 +4616,7 @@ fn closing_ritual_degrades_gracefully_offline() {
         "Q-1",
         70,
         AnswerKind::YesNo,
-        ["topic:free-will", "answer:yes-no", "weight:70"],
+        ["topic:free-will", "answer:yes-no"],
     )]);
     // The session's observer uses the claude-cli backend; pointing it at a
     // nonexistent command forces the spawn to fail, exercising the offline
@@ -4720,7 +4670,7 @@ fn closing_phase_eof_renders_the_verdict_instead_of_hanging() {
         "Q-1",
         70,
         AnswerKind::YesNo,
-        ["topic:free-will", "answer:yes-no", "weight:70"],
+        ["topic:free-will", "answer:yes-no"],
     )]);
     let config = test_config(&path, "Q-1");
     let mut output = Vec::new();
@@ -4816,7 +4766,7 @@ fn start_records_the_mode_on_the_session_started_event() {
         "Q-1",
         70,
         AnswerKind::YesNo,
-        ["topic:free-will", "answer:yes-no", "weight:70"],
+        ["topic:free-will", "answer:yes-no"],
     )]);
     let mut config = test_config(&path, "Q-1");
     config.mode = SessionMode::Debate;
@@ -4919,7 +4869,7 @@ fn in_session_mode_toggle_sets_debate_and_logs_it() {
         "Q-1",
         70,
         AnswerKind::YesNo,
-        ["topic:free-will", "answer:yes-no", "weight:70"],
+        ["topic:free-will", "answer:yes-no"],
     )]);
     let config = test_config(&path, "Q-1");
     let mut output = Vec::new();
@@ -4962,7 +4912,7 @@ fn debate_mode_verdict_judges_argument_structure_not_truth() {
         "Q-1",
         70,
         AnswerKind::YesNo,
-        ["topic:free-will", "answer:yes-no", "weight:70"],
+        ["topic:free-will", "answer:yes-no"],
     )]);
     let mut config = test_config(&path, "Q-1");
     config.mode = SessionMode::Debate;
@@ -5017,7 +4967,7 @@ fn load_probed_terms_keeps_the_definitions_that_do_exist() {
             "",
         ),
     ]);
-    let bank = AidaCliQuestionBank::with_store(DoltDomainStore::with_runner(
+    let bank = StoreQuestionBank::with_store(DoltDomainStore::with_runner(
         "/tmp/quizdom-dolt-tests",
         runner,
     ));

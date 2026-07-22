@@ -101,7 +101,7 @@ fn unordered_pair(left: String, right: String) -> (String, String) {
 }
 
 /// Reads the `contradicts` neighbours of a belief node. Abstracted so detection
-/// can be unit-tested without shelling out to `aida`.
+/// can be unit-tested without shelling out to `dolt`.
 pub trait ContradictsEdges {
     fn contradicts(&self, belief_id: &str) -> Result<Vec<String>>;
 
@@ -119,11 +119,11 @@ pub trait ContradictsEdges {
 
 /// Resolves `contradicts` edges through the domain store — a one-hop read
 /// per adopted belief (contradiction pairs are direct edges by schema).
-pub struct AidaCliContradictsEdges<S = DoltDomainStore> {
+pub struct StoreContradictsEdges<S = DoltDomainStore> {
     store: S,
 }
 
-impl Default for AidaCliContradictsEdges {
+impl Default for StoreContradictsEdges {
     fn default() -> Self {
         Self {
             store: domain_store_from_config(),
@@ -131,7 +131,7 @@ impl Default for AidaCliContradictsEdges {
     }
 }
 
-impl<S> ContradictsEdges for AidaCliContradictsEdges<S>
+impl<S> ContradictsEdges for StoreContradictsEdges<S>
 where
     S: DomainStore,
 {
@@ -299,12 +299,12 @@ impl ContradictionResolutionPersister for NoopContradictionResolutionPersister {
 // trace:STORY-208 | ai:claude — the resolution write splits across the two
 // stores: confirming the `contradicts` edge is a domain write (Dolt), while
 // the decision node and its `references` edges are AIDA-canonical intent.
-pub struct AidaCliContradictionResolutionPersister<D = DoltDomainStore, I = AidaIntentStore> {
+pub struct StoreContradictionResolutionPersister<D = DoltDomainStore, I = AidaIntentStore> {
     domain: D,
     intent: I,
 }
 
-impl Default for AidaCliContradictionResolutionPersister {
+impl Default for StoreContradictionResolutionPersister {
     fn default() -> Self {
         Self {
             domain: domain_store_from_config(),
@@ -314,7 +314,7 @@ impl Default for AidaCliContradictionResolutionPersister {
 }
 
 #[cfg(test)]
-impl<D, I> AidaCliContradictionResolutionPersister<D, I>
+impl<D, I> StoreContradictionResolutionPersister<D, I>
 where
     D: DomainStore,
     I: IntentStore,
@@ -324,7 +324,7 @@ where
     }
 }
 
-impl<D, I> ContradictionResolutionPersister for AidaCliContradictionResolutionPersister<D, I>
+impl<D, I> ContradictionResolutionPersister for StoreContradictionResolutionPersister<D, I>
 where
     D: DomainStore,
     I: IntentStore,
@@ -356,7 +356,7 @@ where
     }
 }
 
-impl<D, I> AidaCliContradictionResolutionPersister<D, I>
+impl<D, I> StoreContradictionResolutionPersister<D, I>
 where
     D: DomainStore,
     I: IntentStore,
@@ -641,7 +641,7 @@ pub fn run_contradictions(
         return Ok(());
     }
 
-    let edges = AidaCliContradictsEdges::default();
+    let edges = StoreContradictsEdges::default();
     let graph = detect_graph_contradictions(&beliefs, &edges)?;
     let semantic = detect_semantic(&config, &beliefs)?;
     let contradictions = merge_contradictions(graph, semantic);

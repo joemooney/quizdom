@@ -62,6 +62,10 @@ The domain graph's durability path — a file-based Dolt remote defaulting to
 `~/.local/share/quizdom/dolt-backup`, with the recovery steps spelled out — is
 documented in `OVERVIEW.md` § *Durability and recovery*.
 
+Clippy **gates** CI (`-D warnings`) as of STORY-260 — the lint backlog is at
+zero, so a new warning is a new regression, not a known debt. Run
+`cargo clippy --workspace --all-targets -- -D warnings` before pushing.
+
 Layout: `Cargo.toml` (workspace) · `crates/quizdom/{src/main.rs,src/lib.rs}`.
 
 ## Agent working discipline

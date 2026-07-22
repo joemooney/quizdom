@@ -387,3 +387,59 @@ before pushing).
 section in `db_backup.rs`, and a matching note in `OVERVIEW.md` § Durability
 and recovery covering the failure, the `--to`-into-scratch rule for manual
 verification runs, and the tripwire that enforces it in the suite.
+
+---
+
+## Session: 2026-07-22 — STORY-260 post-cutover hygiene
+
+**Request.** `/aida-pickup STORY-260` under a headless `aida queue work
+STORY-260 --auto-complete --no-human=both` drain. The story bundles three
+approved follow-ups from EPIC-249: TASK-226 (rename the `AidaCli*` types),
+TASK-229 (drop decorative `weight:N` test fixtures), TASK-233 (clear the
+clippy backlog).
+
+**TASK-226 — the rename.** Seven types carried an `AidaCli` prefix naming a
+backend they no longer use: `AidaCliQuestionBank`, `AidaCliQuestionReweighter`,
+`AidaCliGeneratedQuestionPersister`, `AidaCliUserAuthoredQuestionPersister`,
+`AidaCliUserSpecificTermPersister`, `AidaCliContradictsEdges`,
+`AidaCliContradictionResolutionPersister`. Every one is generic over
+`DomainStore` with `DoltDomainStore` as the default, so they were renamed to a
+backend-neutral `Store*` prefix (83 references). `AidaIntentStore` keeps its
+name — it genuinely shells out to `aida`, and
+`StoreContradictionResolutionPersister` still holds one (the decision node and
+its `references` edges stay AIDA-canonical intent per ADR-201).
+
+Doc comments were the misleading half of the problem and were corrected
+alongside: `aida rel add` / `aida add --prefix Q` / "the AIDA bank" / "without
+shelling out to `aida`" all described the pre-STORY-208 write path.
+
+**TASK-229 — decorative fixtures.** Test fixtures passed the weight twice: once
+as the real numeric `Question::weight` field and again as a `weight:N` tag no
+code has parsed since STORY-208 moved weight to a column. All such tag entries
+were stripped, and the two helpers that fabricated them (`question`,
+`titled_question`) now build empty / tag-only lists. The `weight:N` occurrences
+that *are* load-bearing were deliberately kept: `parse_node_show`'s legacy
+exporter tests and `db_migrate`'s fixtures, where the tag is exactly the legacy
+input being converted. Two stale doc comments in `persist.rs` (claiming a
+"neutral `weight:50`" tag) and two in `strategy.rs` (`weight:0` successors) were
+reworded to describe the column.
+
+**TASK-233 — clippy.** Six lints, all pre-existing. Four were mechanical:
+three `io::Error::new(io::ErrorKind::Other, e)` → `io::Error::other(e)` and one
+`write!(.., "{c}\n")` → `writeln!`. The two `too_many_arguments` hits were on
+`SessionLogger::contradiction_resolved` and `::next_question_selected`, whose
+parameter lists mirror their JSON event schema field-for-field — and
+`session_started`, two methods above them, already carried
+`#[allow(clippy::too_many_arguments)]` for the same reason. Matching that
+precedent kept all ten writers reading alike; bundling a subset of two of them
+into payload structs would have bought nothing at the call sites. The allows
+carry a comment saying so.
+
+With the backlog at zero the CI clippy step was switched from informational to
+gating (`-D warnings`), which was TASK-233's stated follow-on.
+
+**Verified.** `cargo fmt --all --check` clean; `cargo clippy --workspace
+--all-targets -- -D warnings` exits 0; 607 quizdom + 7 llm tests green; all 5
+`real_dolt` acceptance tests pass against the local dolt (~60s). Behaviour is
+unchanged by construction — the whole story is renames, dead fixture data, and
+lint fixes.

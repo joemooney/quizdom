@@ -9,10 +9,10 @@
 //! when asked, drives the existing [`QuestionReweighter`]. It never edits the
 //! session loop — mirroring the disjoint-from-the-loop discipline of STORY-66.
 
-use crate::bank::{AidaCliQuestionBank, QuestionBank};
+use crate::bank::{QuestionBank, StoreQuestionBank};
 use crate::error::{QuizdomError, Result};
 use crate::model::Question;
-use crate::persist::{AidaCliQuestionReweighter, QuestionReweighter};
+use crate::persist::{QuestionReweighter, StoreQuestionReweighter};
 use crate::strategy::QualitySignal;
 use serde_json::Value;
 use std::collections::{BTreeMap, BTreeSet};
@@ -435,14 +435,14 @@ fn curate(
 
 /// Entry point for the standalone `quizdom curate` command. Reads the user's
 /// session log(s), derives per-question quality signals (STORY-68), and applies
-/// the STORY-66 re-weighting — persisting each change to AIDA — then prints a
+/// the STORY-66 re-weighting — persisting each change to the domain graph — then prints a
 /// summary of what moved. This is the wiring STORY-72 adds: the bank-evolution
 /// loop was built but, until now, nothing invoked it.
 // trace:STORY-72 | ai:claude
 pub fn run_curate(args: impl IntoIterator<Item = String>, output: &mut impl Write) -> Result<()> {
     let config = CurateConfig::parse(args)?;
-    let bank = AidaCliQuestionBank::default();
-    let reweighter = AidaCliQuestionReweighter::default();
+    let bank = StoreQuestionBank::default();
+    let reweighter = StoreQuestionReweighter::default();
     curate(&config, &bank, &reweighter, output)
 }
 
@@ -653,9 +653,9 @@ mod tests {
     /// re-weighted question that made `quizdom curate` a 264-spawn, 2m09s run.
     #[test]
     fn curation_over_the_dolt_backend_spawns_a_fixed_handful() {
-        use crate::bank::AidaCliQuestionBank;
+        use crate::bank::StoreQuestionBank;
         use crate::dolt_store::{DoltDomainStore, ScriptedDoltRunner};
-        use crate::persist::AidaCliQuestionReweighter;
+        use crate::persist::StoreQuestionReweighter;
 
         // Cloning the runner shares one call log and one response queue, so
         // the bank's read and the reweighter's write are counted together.
@@ -672,11 +672,11 @@ mod tests {
             (0, "", ""), // dolt commit
         ]);
         let calls = runner.calls.clone();
-        let bank = AidaCliQuestionBank::with_store(DoltDomainStore::with_runner(
+        let bank = StoreQuestionBank::with_store(DoltDomainStore::with_runner(
             "/tmp/quizdom-dolt",
             runner.clone(),
         ));
-        let reweighter = AidaCliQuestionReweighter::with_store(DoltDomainStore::with_runner(
+        let reweighter = StoreQuestionReweighter::with_store(DoltDomainStore::with_runner(
             "/tmp/quizdom-dolt",
             runner,
         ));
@@ -967,7 +967,7 @@ mod tests {
     fn run_curate_on_unknown_user_reports_nothing() {
         // End-to-end through the real default bank + reweighter: a user with no
         // session logs yields no outcomes, so neither the bank nor the
-        // reweighter ever shells out to aida.
+        // reweighter ever shells out to dolt.
         let mut output = Vec::new();
         run_curate(
             strings(["curate", "--user", "no-such-user-xyz"]),

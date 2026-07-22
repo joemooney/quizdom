@@ -52,11 +52,17 @@ pub trait QuestionBank {
     }
 }
 
-pub struct AidaCliQuestionBank<S = DoltDomainStore> {
+// trace:STORY-260 | ai:claude — was `AidaCliQuestionBank`, a name left over
+// from the pre-STORY-208 era when the bank shelled out to `aida`. Every
+// `Store*` type in this crate reads and writes the domain graph through the
+// [`DomainStore`] seam; `AidaIntentStore` keeps its name because it really is
+// the aida CLI.
+/// Reads questions out of the domain graph through the [`DomainStore`] seam.
+pub struct StoreQuestionBank<S = DoltDomainStore> {
     store: S,
 }
 
-impl Default for AidaCliQuestionBank {
+impl Default for StoreQuestionBank {
     fn default() -> Self {
         Self {
             store: domain_store_from_config(),
@@ -65,7 +71,7 @@ impl Default for AidaCliQuestionBank {
 }
 
 #[cfg(test)]
-impl<S> AidaCliQuestionBank<S>
+impl<S> StoreQuestionBank<S>
 where
     S: DomainStore,
 {
@@ -74,7 +80,7 @@ where
     }
 }
 
-impl<S> QuestionBank for AidaCliQuestionBank<S>
+impl<S> QuestionBank for StoreQuestionBank<S>
 where
     S: DomainStore,
 {

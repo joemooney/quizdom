@@ -266,7 +266,7 @@ pub fn render_transcript(
 
 /// Entry point for the standalone `quizdom session show <id>` command. Resolves
 /// the session's log file, then pretty-prints its full path. Read-only: like
-/// `curate`, it never shells out to aida or mutates anything.
+/// `curate`, it never shells out to dolt or mutates anything.
 // trace:STORY-77 | ai:claude
 pub fn run_session_show(
     args: impl IntoIterator<Item = String>,
