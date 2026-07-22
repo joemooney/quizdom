@@ -3,12 +3,12 @@ spec_id: EPIC-249
 agreed_id: EPIC-249
 title: 'Post-Dolt cleanup: reviewer findings, config-path resolution, store hardening, and CI/backup gaps'
 description: 'Umbrella for the implementable backlog left after EPIC-202 shipped and the STORY-244 batching review landed. Groups the approved TASK-* follow-ups into file-disjoint clusters so implementers can be drained without colliding: (a) config/path resolution — db-init/db-migrate ignoring QUIZDOM_DOLT_PATH, settings save dropping store keys, config_value key-matching drift; (b) Dolt store hardening — neighbors ordering guarantees, weight:0 tag asymmetry, CTE recursion depth; (c) hygiene — decorative weight:N test fixtures, pre-existing clippy lints, renaming the AidaCli* types now backed by Dolt; (d) infra — dolt in CI so the real_dolt acceptance tests actually run, a Dolt remote/backup so the domain graph is not only local, and the stale session-log-promotion doc. Each child carries its own acceptance; this epic exists to cluster the drains, not to add scope.'
-status: Approved
+status: InProgress
 priority: Medium
 owner: ''
 feature: Uncategorized
 created_at: 2026-07-22T05:47:42.639984488Z
-modified_at: 2026-07-22T05:49:31.743920970Z
+modified_at: 2026-07-22T06:00:20.644339566Z
 req_type: Epic
 relationships:
 - rel_type: Parent
