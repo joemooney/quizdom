@@ -4491,5 +4491,35 @@ operations:
   timestamp: 2026-07-22T06:19:41.601476786Z
   kind: !SetStatus
     status: Completed
-clock: 423
+- id: 019f8883-289e-7b41-98c8-76a5bbc51a83
+  target_id: 019f8883-266d-7421-b0fa-d611fa30c3f8
+  author: aida
+  node_id: ''
+  lamport: 424
+  timestamp: 2026-07-22T06:28:44.830963443Z
+  kind: !Create
+    title: STORY-258 took TASK-218 option (a) preserve-foreign-lines; dolt_path stays invisible in /settings
+    description: |
+      TASK-218 named two options: (a) preserve unrecognised lines through settings
+      save, or (b) promote `store` / `dolt_path` into the Settings struct so they
+      round-trip and could surface in the `/settings` panel. STORY-258 shipped (a)
+      (crates/quizdom/src/settings.rs, `Settings::to_toml_merged` + `save`).
+
+      Reasoning: the STORY-208 cutover made `store` a dead selector (Dolt is the only
+      backend), so modelling it would enshrine a key nothing reads; `Settings` is
+      `Copy` and a `String` path field breaks that; and (a) generalises — any future
+      foreign key is preserved, not just these two.
+
+      The cost the advisor should know shipped: `dolt_path` remains invisible in the
+      `/settings` panel. A user who wants to point quizdom at a different Dolt repo
+      still hand-edits the file or exports QUIZDOM_DOLT_PATH. If surfacing it in the
+      panel is wanted, that is now an additive change on top of (a), not a rework —
+      option (b)'s round-trip guarantee is already covered.
+
+      Raised by the implementer while working STORY-258.
+      Branch: story-258  ·  Commit: c31f202  (PR link added on merge)
+    req_type: Task
+    status: Draft
+    priority: Medium
+clock: 424
 node_id: ''
