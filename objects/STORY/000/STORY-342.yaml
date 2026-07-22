@@ -21,7 +21,7 @@ priority: Medium
 owner: ''
 feature: Uncategorized
 created_at: 2026-07-22T18:29:30.576506552Z
-modified_at: 2026-07-22T18:47:48.265175121Z
+modified_at: 2026-07-22T18:48:20.022972158Z
 req_type: Story
 relationships:
 - rel_type: Parent
@@ -34,3 +34,36 @@ relationships:
   target_id: 019f8b27-42f0-7240-84c3-629ae6f4a2bd
   created_at: 2026-07-22T18:47:48.265170896Z
   created_by: joe
+comments:
+- id: 019f8b28-4536-72b0-ad5a-8dd5f104cfc7
+  author: joe
+  content: |-
+    Implemented on branch story-342 (commit 99f2f0a):
+
+    - TASK-331: `quizdom logs [--tail N] [--path <file>]` — a new `logs.rs` module,
+      wired into the dispatcher and the top-level usage. It names the resolved log
+      path above what it prints, says "last N of M entries" under `--tail`, treats a
+      missing/empty log as a plain message with exit 0, and points at the rotated
+      generation when one exists. Kept out of `diagnostics.rs` on purpose:
+      diagnostics writes and never prints, logs prints and never writes, so the
+      seam's never-touch-the-terminal source scan stays true of every path.
+    - TASK-333: rotation is now safe under concurrency — every append takes an
+      exclusive `File::lock` (std, no new dependency) so check + rotate + write are
+      one critical section, and rotation copies-then-truncates in place (staged and
+      renamed before the truncate) instead of renaming, so the live log keeps its
+      identity and `<log>.1` is never observably half-written. Three tests pin it,
+      all verified to FAIL against the pre-fix code.
+    - TASK-328: a blind backup probe with `auto_backup` off no longer stays silent —
+      silence is what a backed-up graph looks like, so the default configuration
+      learnt nothing from a failed check. It now says it could not tell and points at
+      `quizdom logs`. A table-driven test walks all six position × setting cells.
+    - TASK-336: both remaining `clippy::too_many_arguments` allows removed
+      (`frontend.rs`, `tui.rs`) — both vestigial at six arguments. Zero remain.
+
+    Test status: 692 quizdom + 7 llm tests green (13 new); all 8 `real_dolt`
+    acceptance tests pass against local dolt 2.2.1; clippy `-D warnings` exits 0.
+
+    Follow-up: TASK-343 / TASK-344 / TASK-345 filed as implementer findings.
+  created_at: 2026-07-22T18:48:20.022972158Z
+  modified_at: 2026-07-22T18:48:20.022972158Z
+  session_id: 019f8b17-273d-7f80-8e0c-bd18ca8cb150
