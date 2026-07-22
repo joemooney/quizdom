@@ -20,9 +20,53 @@ priority: Medium
 owner: ''
 feature: Uncategorized
 created_at: 2026-07-22T15:30:20.017538708Z
-modified_at: 2026-07-22T16:58:42.249840643Z
+modified_at: 2026-07-22T17:22:54.731696479Z
 req_type: Story
 relationships:
 - rel_type: Child
   target_id: 019f8a50-db6d-7742-9398-5dca3c6179f5
   created_at: 2026-07-22T15:30:23.265214472Z
+comments:
+- id: 019f8ada-108b-7b62-b6c8-e770e3235263
+  author: joe
+  content: |-
+    Implemented on branch story-299 (commit c14f75b):
+
+    - TASK-273 (durability ergonomics): backups stay EXPLICIT — the decision, not an
+      oversight. What closes is the gap that lets "explicit" mean "forgotten": a
+      session that committed a graph write AND sits ahead of its backup ends with one
+      line naming the exact command + destination; a read-only session, or one whose
+      writes are already backed up, says nothing. The write half is a process flag set
+      at DoltDomainStore::commit (the choke point every write passes through) and only
+      when a commit was really created, so an idempotent ensure_edge does not fire it.
+    - The ahead-of-backup probe is one local read-only dolt query — main's hash vs the
+      remotes/backup/main tracking ref, plus dolt_status for a hand-edited working set.
+      It never touches the backup directory, so a session end cannot block on an
+      unmounted disk. Missing tracking ref = Ahead ("never backed up" is the case the
+      reminder exists for); an unanswerable probe = Unknown and stays silent.
+    - auto_backup (off by default, $QUIZDOM_AUTO_BACKUP > settings.toml) pushes instead
+      of reminding; a failed push degrades to the reminder rather than ending the
+      session badly, with dolt's complaint in the diagnostic log. Cron recipe documented
+      beside the setting in OVERVIEW.md.
+    - TASK-257 (observability seam): crates/quizdom/src/diagnostics.rs — one append-only
+      file, one line per event, no levels, no dependency. Takes no writer and returns
+      nothing, so no caller can aim it at the terminal the TUI owns; a failed write is
+      dropped. Path resolves like every other quizdom path ($QUIZDOM_LOG_PATH >
+      log_path > ~/.local/share/quizdom/quizdom.log), anchoring included. Under
+      cfg(test) the sink is a thread-local buffer (TASK-266 pattern).
+    - load_probed_terms' two unwrap_or_default()s now route through it. The degrade was
+      always right; what was wrong is that it rendered identically to a question that
+      genuinely probes no terms, so a store failure looked like an empty graph.
+
+    Test status: 664/664 quizdom + 7/7 llm green; all 8 real_dolt acceptance tests pass
+    against dolt 2.2.1 (including a new one pinning the two dolt system tables the
+    reminder rests on). fmt clean; clippy --workspace --all-targets -D warnings exits 0.
+    Also smoke-run against the release binary in a sandboxed XDG_*: reminder fires,
+    silence in both negative cases, auto_backup pushes, a broken backup destination
+    degrades with the session still exiting 0, and a forced store failure put the real
+    cause in the log with the terminal untouched.
+
+    Follow-up: TASK-320 / TASK-321 / TASK-322 filed as implementer findings.
+  created_at: 2026-07-22T17:22:54.731696479Z
+  modified_at: 2026-07-22T17:22:54.731696479Z
+  session_id: 019f8ac3-ea66-7b92-894d-df8daf190875
