@@ -6840,5 +6840,42 @@ operations:
     req_type: Task
     status: Draft
     priority: Medium
-clock: 539
+- id: 019f8ac2-f02c-7641-8b73-ee5b3ca2fded
+  target_id: 019f8ac2-ee05-7992-b64e-4752f04bd1b9
+  author: aida
+  node_id: ''
+  lamport: 540
+  timestamp: 2026-07-22T16:57:39.116525139Z
+  kind: !Create
+    title: Batch-contract errors say 'a batch load must return one entry per requested id' on the reweight_questions write seam
+    description: |
+      crates/quizdom/src/signals.rs:275-333 (STORY-293 / TASK-253, PR-101).
+
+      The three batch-contract errors share a tail inherited from `take_by_id`:
+
+          a batch load must return one entry per requested id
+
+      `apply_log_signals` raises all three against *both* seams. For
+      `load_questions` the wording is exact. For `reweight_questions` — a batch
+      **write** — "batch load" is wrong:
+
+      - signals.rs:266  `index_by_id(reweighter.reweight_questions(&batch)?, "reweight_questions")`
+      - signals.rs:266  `reject_extras(reweighted, "reweight_questions")`
+      - signals.rs:265  `take_by_id(&mut reweighted, ..., "reweight_questions")` (pre-existing)
+
+      The seam name in the message *prefix* is correct and is the load-bearing part
+      of the diagnostic, so this is presentation only — an operator reading
+      "reweight_questions returned Q-99 ... a batch load must return one entry per
+      requested id" still knows exactly which seam misbehaved.
+
+      Cheapest fix: make the tail seam-neutral, e.g. "a batch must return one entry
+      per requested id", in all three messages. Note that three tests assert on
+      substrings of these messages ("not requested", "more than once", "no question
+      for") — none assert on the "batch load" phrase, so the change is contained.
+
+      Raised in review of PR-101: https://github.com/joemooney/quizdom/pull/101#issuecomment-5049025018
+    req_type: Task
+    status: Draft
+    priority: Medium
+clock: 540
 node_id: ''
