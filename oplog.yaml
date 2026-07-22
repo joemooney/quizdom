@@ -4677,5 +4677,37 @@ operations:
     req_type: Task
     status: Draft
     priority: Medium
-clock: 429
+- id: 019f888c-301d-7c73-a5b9-2522e53d3e73
+  target_id: 019f888c-2db5-75b3-97b5-6e10a399ac3a
+  author: aida
+  node_id: ''
+  lamport: 430
+  timestamp: 2026-07-22T06:38:36.573749594Z
+  kind: !Create
+    title: Settings::rendered_line's catch-all arm silently drops a key added to MODELLED_KEYS
+    description: |
+      `Settings::rendered_line` (crates/quizdom/src/settings.rs:347) matches the
+      modelled keys by string and ends in:
+
+          // Unreachable for MODELLED_KEYS; a nothing-line is the safe degrade.
+          _ => String::new(),
+
+      The comment is true today, but the invariant is unenforced. Adding a fifth
+      entry to `MODELLED_KEYS` (settings.rs:158) without a matching arm compiles
+      clean and silently omits that key from BOTH `to_toml` and `to_toml_merged` —
+      so the setting never persists and there is no warning.
+
+      `save_preserves_keys_the_settings_surface_does_not_model` (settings.rs:687)
+      would only catch it for a key whose test value differs from its default; a new
+      key added with a default-valued assertion slips through.
+
+      Fix shape: either a `#[test]` asserting `to_toml` contains every entry of
+      `MODELLED_KEYS`, or key the render off the `SettingKey` enum so the match is
+      exhaustive and the compiler enforces it.
+
+      Raised in review of PR-93: https://github.com/joemooney/quizdom/pull/93#issuecomment-5042707911
+    req_type: Task
+    status: Draft
+    priority: Medium
+clock: 430
 node_id: ''
