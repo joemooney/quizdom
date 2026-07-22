@@ -8,14 +8,10 @@ priority: Medium
 owner: joe
 feature: Uncategorized
 created_at: 2026-06-01T03:40:23.810889834Z
-modified_at: 2026-06-01T07:13:40.546590349Z
+modified_at: 2026-07-22T05:46:03.329587379Z
 req_type: Task
 tags:
-- from-advisor:VIS-2
-- kind:observation
-- linked:VIS-2
-- recurrence:2
-- severity:minor
+- upstream:aida
 comments:
 - id: 019e8207-f6c2-7ca0-bc4e-79acf0a3b7cf
   author: joe
