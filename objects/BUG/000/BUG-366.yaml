@@ -15,10 +15,10 @@ description: |-
   - The session write path gets the same protection as db-migrate — a hand edit is never silently absorbed into a quizdom commit.
   - The pre-flight lives at the shared commit seam, not duplicated per caller.
   - cargo test green; real_dolt green; clippy clean.
-status: Approved
+status: InProgress
 priority: Medium
 owner: ''
 feature: Uncategorized
 created_at: 2026-07-22T20:10:21.176535970Z
-modified_at: 2026-07-22T20:10:21.176535970Z
+modified_at: 2026-07-22T20:10:38.109810497Z
 req_type: Bug
