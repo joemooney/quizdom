@@ -1,0 +1,36 @@
+id: 019f8b27-8518-7482-94d6-30bb21d29422
+spec_id: TASK-344
+agreed_id: TASK-344
+title: quizdom logs shipped with --path and two /settings pointers beyond the stated acceptance
+description: |
+  TASK-331's acceptance names only "prints the log, --tail N limits output, a
+  missing log is a clear message". Three additions went in on top, each small and
+  each a judgement call the advisor may want to see:
+
+  - `--path <file>` (crates/quizdom/src/logs.rs) — reads a file other than the
+    resolved one, which is how you read the rotated `quizdom.log.1` and how the
+    parse tests stay free of the ambient environment.
+  - The reader points at `<log>.1` when it exists, because a `--tail` never
+    reaches the live log's "-- rotated at N bytes --" first line and would
+    otherwise read as the whole story.
+  - Both /settings surfaces (the headless value list in settings.rs and the TUI
+    panel footer in tui.rs) now name `quizdom logs` beside the log path they
+    already showed — the panel is where a mid-session user meets the path, so it
+    is where the command that reads it belongs.
+
+  None of this changes an existing behaviour; all of it widens the surface
+  TASK-331 was filed to close.
+
+  Raised by the implementer while working STORY-342.
+  Branch: story-342  ·  Commit: 99f2f0a  (PR link added on merge)
+status: Draft
+priority: Medium
+owner: ''
+feature: Uncategorized
+created_at: 2026-07-22T18:47:30.840225644Z
+modified_at: 2026-07-22T18:47:30.840225644Z
+req_type: Task
+tags:
+- from-implementer:STORY-342
+- kind:design-choice
+- severity:cosmetic
