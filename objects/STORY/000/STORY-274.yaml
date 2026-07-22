@@ -1,0 +1,26 @@
+id: 019f88b5-7895-74c2-a867-db59422d3a4c
+spec_id: STORY-274
+agreed_id: STORY-274
+title: 'Review PR-95: STORY-261: durability + CI — dolt in the pipeline, a file-remote backup for data/dolt, and the promotion doc'
+description: |
+  Auto-filed by `aida pr auto-queue-review` (typically from /aida-pr) (session `019f88a4`) for branch `story-261`.
+
+  - PR: <https://github.com/joemooney/quizdom/pull/95>
+  - Branch: `story-261` → `main`
+
+  ## Covers
+
+  - STORY-261
+
+  ## Acceptance
+
+  - Generate a structured review prompt with `aida review prompt --pr 95` and verify each spec's acceptance criteria.
+  - Approve and merge, or request changes by spec id.
+  - Mark this story `completed` once the PR is merged.
+status: Approved
+priority: Medium
+owner: ''
+feature: Uncategorized
+created_at: 2026-07-22T07:23:42.101215103Z
+modified_at: 2026-07-22T07:23:42.101215103Z
+req_type: Story
