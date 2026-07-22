@@ -5754,5 +5754,31 @@ operations:
     req_type: Story
     status: Approved
     priority: Medium
-clock: 490
+- id: 019f8a51-f015-7eb0-b310-efca50cf64ca
+  target_id: 019f8a51-ec52-73b1-b31d-7564589d935c
+  author: aida
+  node_id: ''
+  lamport: 491
+  timestamp: 2026-07-22T14:54:13.525478578Z
+  kind: !Create
+    title: Trait contract follow-through and dead-code hygiene
+    description: |-
+      Bundles TASK-253, TASK-256, TASK-254, TASK-285, TASK-286 — store.rs, signals.rs, session.rs, persist.rs. Scheduled LAST in EPIC-289 because it touches the widest file set.
+
+      TASK-253: apply_log_signals enforces the batch contract in ONE direction only — a missing id errors, but EXTRA returned entries are silently dropped. Complete the contract so both violations are caught.
+      TASK-256: DomainStore::fetch_nodes_present's default does self.fetch_node(id).ok(), swallowing genuine store failures and absent rows alike, while the Dolt override propagates failures. This is exactly the default-vs-override asymmetry TASK-247 removed from load_terms, reintroduced one layer down. Noted as currently unavoidable because QuizdomError has no not-found variant, so missing_node and a query failure share the Dolt(String) variant — so the real fix is probably a NotFound variant that lets the default distinguish them. Latent today (one impl, and it overrides), but it will trap the second backend.
+      TASK-254: take_by_id's doc-comment justifies remove-over-get with a scenario the caller makes unreachable, and it is untested — fix the rationale or make it reachable and test it.
+      TASK-285: STORY-260 silenced clippy::too_many_arguments with #[allow] rather than introducing payload structs; do the refactor the lint was asking for.
+      TASK-286: two genuinely-dead helpers survive behind #[allow(dead_code)] in persist.rs — delete them.
+
+      ## Acceptance
+      - An over-returning batch is an error naming the seam, symmetric with the missing-id case (test both directions).
+      - The default fetch_nodes_present distinguishes 'absent' from 'store failed' — introduce the error variant needed rather than string-matching — and a test proves the default propagates a genuine failure instead of swallowing it.
+      - No #[allow(too_many_arguments)] or #[allow(dead_code)] remains in the touched code; the dead helpers are gone.
+      - take_by_id's documented rationale matches reality and is covered.
+      - cargo test green; clippy clean under -D warnings; no behavior change beyond the stated contract fixes.
+    req_type: Story
+    status: Approved
+    priority: Medium
+clock: 491
 node_id: ''
