@@ -22,12 +22,12 @@ description: |-
   - save on an unreadable existing file refuses or preserves, never silently drops foreign keys (test).
   - /settings shows dolt_path.
   - cargo test green; clippy clean under -D warnings.
-status: InProgress
+status: Done
 priority: Medium
 owner: ''
 feature: Uncategorized
 created_at: 2026-07-22T14:53:19.415682342Z
-modified_at: 2026-07-22T15:38:23.423566110Z
+modified_at: 2026-07-22T15:38:27.968875434Z
 req_type: Story
 relationships:
 - rel_type: Child
@@ -59,3 +59,7 @@ comments:
   created_at: 2026-07-22T15:37:32.355841554Z
   modified_at: 2026-07-22T15:37:32.355841554Z
   session_id: 019f8a69-6676-7940-88a8-e965c3ebed19
+implementation_info:
+  implemented: true
+  implemented_at: 2026-07-22T15:38:27.968875434Z
+  implemented_by: joe
