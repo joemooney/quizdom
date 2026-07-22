@@ -45,7 +45,13 @@ data substrate.
   query (`ADR-203`, no daemon). Multi-hop traversal is a single recursive
   CTE (`DomainStore::reachable`; retired ADR-31's app-side per-hop walk),
   and the selection weight is the numeric `weight` column (retired ADR-22's
-  in-app `weight:N` tags).
+  in-app `weight:N` tags). A second backend inherits one non-obvious
+  obligation — the **absent-node invariant** (`STORY-327`): `fetch_node` must
+  report "no such node" as `QuizdomError::NotFound`, because the lenient
+  `fetch_nodes_present` keys its skip off exactly that variant. Build the error
+  with `store::missing_node` and call `store::assert_absence_contract` from the
+  backend's tests; the rule and its rationale are in
+  `docs/architecture/graph-schema.md` § *The absent-node invariant*.
 - **Interface: CLI/TUI** (`ADR-4`); web deferred.
 
 ## Development

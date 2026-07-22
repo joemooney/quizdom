@@ -239,21 +239,21 @@ pub fn apply_log_signals(
     // counterexample). A positional `zip` would truncate silently and pair every
     // question past the drop point with the wrong signal; looking each id up by
     // name turns that into an error at the seam instead.
-    let mut loaded = index_by_id(bank.load_questions(&ids)?, "load_questions")?;
+    let mut loaded = index_by_id(bank.load_questions(&ids)?, LOAD_QUESTIONS)?;
     let batch: Vec<(Question, QualitySignal)> = applied
         .iter()
         .map(|(question_ref, signal)| {
-            take_by_id(&mut loaded, question_ref, "load_questions")
+            take_by_id(&mut loaded, question_ref, LOAD_QUESTIONS)
                 .map(|question| (question, *signal))
         })
         .collect::<Result<_>>()?;
-    reject_extras(loaded, "load_questions")?;
+    reject_extras(loaded, LOAD_QUESTIONS)?;
 
-    let mut reweighted = index_by_id(reweighter.reweight_questions(&batch)?, "reweight_questions")?;
+    let mut reweighted = index_by_id(reweighter.reweight_questions(&batch)?, REWEIGHT_QUESTIONS)?;
     let outcomes: Vec<ReweightOutcome> = applied
         .into_iter()
         .map(|(question_ref, signal)| {
-            let question = take_by_id(&mut reweighted, &question_ref, "reweight_questions")?;
+            let question = take_by_id(&mut reweighted, &question_ref, REWEIGHT_QUESTIONS)?;
             Ok(ReweightOutcome {
                 question_ref,
                 signal,
@@ -261,9 +261,50 @@ pub fn apply_log_signals(
             })
         })
         .collect::<Result<_>>()?;
-    reject_extras(reweighted, "reweight_questions")?;
+    reject_extras(reweighted, REWEIGHT_QUESTIONS)?;
 
     Ok(outcomes)
+}
+
+// trace:TASK-319 | ai:claude
+// trace:STORY-327 | ai:claude — the three contract errors below used to end in a
+// tail inherited from `take_by_id`: "a batch load must return one entry per
+// requested id". `apply_log_signals` raises all three against BOTH seams, and
+// `reweight_questions` is a batch WRITE — so half the diagnostics described the
+// wrong kind of operation. Naming the seam and its direction in one value means
+// a message can no longer disagree with the seam that produced it: adding a
+// third seam is a new constant, not a new string to keep in sync by hand.
+/// One batch seam of [`apply_log_signals`] — its name and whether it reads or
+/// writes — as the contract errors below report it.
+#[derive(Debug, Clone, Copy, Eq, PartialEq)]
+struct BatchSeam {
+    /// The function whose result violated the contract, e.g. `load_questions`.
+    name: &'static str,
+    /// What that call was doing, filled into "a batch {verb} must return one
+    /// entry per requested id": `load` for a read, `write` for a write.
+    verb: &'static str,
+}
+
+/// `QuestionBank::load_questions` — the batch READ.
+const LOAD_QUESTIONS: BatchSeam = BatchSeam {
+    name: "load_questions",
+    verb: "load",
+};
+
+/// `QuestionReweighter::reweight_questions` — the batch WRITE.
+const REWEIGHT_QUESTIONS: BatchSeam = BatchSeam {
+    name: "reweight_questions",
+    verb: "write",
+};
+
+impl BatchSeam {
+    /// The shared tail every contract error ends in, phrased for this seam.
+    fn contract(self) -> String {
+        format!(
+            "a batch {} must return one entry per requested id",
+            self.verb
+        )
+    }
 }
 
 // trace:TASK-246 | ai:claude
@@ -275,13 +316,15 @@ pub fn apply_log_signals(
 /// result that names the same question twice is an error: the second entry
 /// would silently shadow the first, and only one of them can be the
 /// re-weight the caller asked for.
-fn index_by_id(questions: Vec<Question>, source: &str) -> Result<BTreeMap<String, Question>> {
+fn index_by_id(questions: Vec<Question>, seam: BatchSeam) -> Result<BTreeMap<String, Question>> {
     let mut indexed: BTreeMap<String, Question> = BTreeMap::new();
     for question in questions {
         if let Some(shadowed) = indexed.insert(question.id.clone(), question) {
             return Err(QuizdomError::Parse(format!(
-                "{source} returned question {} more than once: a batch load must return one entry per requested id",
-                shadowed.id
+                "{} returned question {} more than once: {}",
+                seam.name,
+                shadowed.id,
+                seam.contract()
             )));
         }
     }
@@ -304,11 +347,13 @@ fn index_by_id(questions: Vec<Question>, source: &str) -> Result<BTreeMap<String
 fn take_by_id(
     questions: &mut BTreeMap<String, Question>,
     id: &str,
-    source: &str,
+    seam: BatchSeam,
 ) -> Result<Question> {
     questions.remove(id).ok_or_else(|| {
         QuizdomError::Parse(format!(
-            "{source} returned no question for {id}: a batch load must return one entry per requested id"
+            "{} returned no question for {id}: {}",
+            seam.name,
+            seam.contract()
         ))
     })
 }
@@ -320,15 +365,17 @@ fn take_by_id(
 // questions are in play, which is the same class of bug as a short batch.
 /// Fail if the drained batch index still holds entries: whatever is left was
 /// returned without being requested.
-fn reject_extras(leftover: BTreeMap<String, Question>, source: &str) -> Result<()> {
+fn reject_extras(leftover: BTreeMap<String, Question>, seam: BatchSeam) -> Result<()> {
     if leftover.is_empty() {
         return Ok(());
     }
     let extras: Vec<&str> = leftover.keys().map(String::as_str).collect();
     Err(QuizdomError::Parse(format!(
-        "{source} returned {} question(s) that were not requested ({}): a batch load must return one entry per requested id",
+        "{} returned {} question(s) that were not requested ({}): {}",
+        seam.name,
         extras.len(),
-        extras.join(", ")
+        extras.join(", "),
+        seam.contract()
     )))
 }
 
@@ -939,11 +986,11 @@ mod tests {
     fn take_by_id_drains_the_entry_it_claims() {
         let mut indexed = index_by_id(
             vec![question("Q-1", 50), question("Q-2", 50)],
-            "load_questions",
+            LOAD_QUESTIONS,
         )
         .expect("two distinct ids index cleanly");
 
-        let claimed = take_by_id(&mut indexed, "Q-1", "load_questions").expect("Q-1 is present");
+        let claimed = take_by_id(&mut indexed, "Q-1", LOAD_QUESTIONS).expect("Q-1 is present");
         assert_eq!(claimed.id, "Q-1");
         assert_eq!(
             indexed.keys().collect::<Vec<_>>(),
@@ -951,14 +998,69 @@ mod tests {
             "the claimed entry is removed, leaving only what was never asked for"
         );
 
-        let error = take_by_id(&mut indexed, "Q-1", "load_questions")
+        let error = take_by_id(&mut indexed, "Q-1", LOAD_QUESTIONS)
             .expect_err("a drained entry cannot be claimed a second time");
         assert!(error.to_string().contains("no question for Q-1"));
 
         // What remains after every claim is the surplus `reject_extras` reports.
-        let error = reject_extras(indexed, "load_questions")
+        let error = reject_extras(indexed, LOAD_QUESTIONS)
             .expect_err("Q-2 was never requested in this pairing");
         assert!(error.to_string().contains("Q-2"), "{error}");
+    }
+
+    // trace:TASK-319 | ai:claude
+    // trace:STORY-327 | ai:claude — the accuracy TASK-319 was filed against.
+    // Every contract error carries a tail describing the seam that produced it;
+    // the write seam's must not call itself a load. Asserted on all three
+    // violations, from both directions, so a future seam added by copying one of
+    // these messages cannot re-introduce the mismatch unnoticed.
+    #[test]
+    fn contract_errors_describe_the_seam_that_raised_them() {
+        let load_failures = [
+            index_by_id(
+                vec![question("Q-1", 50), question("Q-1", 50)],
+                LOAD_QUESTIONS,
+            )
+            .expect_err("a repeated id"),
+            take_by_id(&mut BTreeMap::new(), "Q-1", LOAD_QUESTIONS).expect_err("a missing id"),
+            reject_extras(
+                [("Q-9".to_string(), question("Q-9", 50))]
+                    .into_iter()
+                    .collect(),
+                LOAD_QUESTIONS,
+            )
+            .expect_err("an unrequested extra"),
+        ];
+        for failure in &load_failures {
+            let message = failure.to_string();
+            assert!(message.contains("load_questions"), "{message}");
+            assert!(message.contains("a batch load must"), "{message}");
+        }
+
+        let write_failures = [
+            index_by_id(
+                vec![question("Q-1", 50), question("Q-1", 50)],
+                REWEIGHT_QUESTIONS,
+            )
+            .expect_err("a repeated id"),
+            take_by_id(&mut BTreeMap::new(), "Q-1", REWEIGHT_QUESTIONS).expect_err("a missing id"),
+            reject_extras(
+                [("Q-9".to_string(), question("Q-9", 50))]
+                    .into_iter()
+                    .collect(),
+                REWEIGHT_QUESTIONS,
+            )
+            .expect_err("an unrequested extra"),
+        ];
+        for failure in &write_failures {
+            let message = failure.to_string();
+            assert!(message.contains("reweight_questions"), "{message}");
+            assert!(message.contains("a batch write must"), "{message}");
+            assert!(
+                !message.contains("load"),
+                "the write seam must not describe itself as a load: {message}"
+            );
+        }
     }
 
     /// A reweighter whose batch write returns one fewer question than it was

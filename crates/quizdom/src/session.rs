@@ -1198,6 +1198,42 @@ fn prompt_to_conclude(fe: &mut dyn FrontEnd) -> Result<bool> {
     Ok(matches!(choice.as_str(), "c" | "conclude" | "y" | "yes"))
 }
 
+// trace:TASK-315 | ai:claude
+// trace:STORY-327 | ai:claude — the payload struct STORY-293 built for the
+// logger's writers (`EventScope`), applied one layer up to the session-loop
+// helpers. Every one of them took the same three arguments — the config the
+// event scope is drawn from, the logger to write through, and the turn the
+// event belongs to — and threading them individually is what pushed five of
+// them past the `clippy::too_many_arguments` threshold. The triple is one
+// concept, so it travels as one value; the helpers below take it WITHOUT
+// exception, which is what makes the rule discoverable rather than a
+// convention half of them follow.
+/// Where a session-loop helper writes its events: the config the
+/// [`EventScope`] is drawn from, the open log, and the turn in progress.
+struct TurnJournal<'a> {
+    config: &'a CliConfig,
+    logger: &'a mut SessionLogger,
+    turn: u64,
+}
+
+impl<'a> TurnJournal<'a> {
+    fn new(config: &'a CliConfig, logger: &'a mut SessionLogger, turn: u64) -> Self {
+        Self {
+            config,
+            logger,
+            turn,
+        }
+    }
+
+    /// The scope every event written through this journal belongs to.
+    ///
+    /// Borrowed from the config, not from the journal, so a caller can hold
+    /// the scope and still write through [`Self::logger`].
+    fn scope(&self) -> EventScope<'a> {
+        self.config.event_scope()
+    }
+}
+
 // trace:STORY-159 | ai:claude
 /// Apply an in-session goal command. A non-empty `text` SETS the live goal and
 /// logs a `goal_set` event (so resume restores it and the arc/synopsis orient to
@@ -1209,9 +1245,7 @@ fn set_goal_in_session(
     goal: &mut Option<String>,
     text: &str,
     source: &str,
-    config: &CliConfig,
-    logger: &mut SessionLogger,
-    turn: u64,
+    journal: &mut TurnJournal<'_>,
     output: &mut dyn Write,
 ) -> Result<()> {
     let text = text.trim();
@@ -1226,7 +1260,8 @@ fn set_goal_in_session(
         return Ok(());
     }
     *goal = Some(text.to_string());
-    logger.goal_set(config.event_scope(), turn, text, source)?;
+    let (scope, turn) = (journal.scope(), journal.turn);
+    journal.logger.goal_set(scope, turn, text, source)?;
     writeln!(
         output,
         "Goal set: {text}\n(Questions and the roundedness score now orient toward resolving it.)"
@@ -1244,9 +1279,7 @@ fn set_goal_in_session(
 fn set_mode_in_session(
     mode: &mut SessionMode,
     token: &str,
-    config: &CliConfig,
-    logger: &mut SessionLogger,
-    turn: u64,
+    journal: &mut TurnJournal<'_>,
     output: &mut dyn Write,
 ) -> Result<()> {
     let token = token.trim();
@@ -1263,7 +1296,8 @@ fn set_mode_in_session(
         return Ok(());
     };
     *mode = new_mode;
-    logger.mode_set(config.event_scope(), turn, new_mode)?;
+    let (scope, turn) = (journal.scope(), journal.turn);
+    journal.logger.mode_set(scope, turn, new_mode)?;
     let note = match new_mode {
         SessionMode::Debate => "(The questioner now steelmans the OPPOSING side; the verdict will judge which CASE was better-argued — never which belief is true.)",
         SessionMode::Socratic => "(The questioner is again a neutral challenger of your OWN position.)",
@@ -1312,14 +1346,11 @@ fn arc_for_goal_request(log_path: &Path, branch: &str) -> SessionArc {
 /// / a non-TTY prompt is treated as decline, so a piped or offline run never sets
 /// a goal on the user's behalf. Returns `true` when a goal was set. Belief-neutral
 /// throughout: the proposal (and any edit) is the QUESTION being resolved.
-#[allow(clippy::too_many_arguments)]
 fn offer_goal_proposal(
     goal: &mut Option<String>,
     proposal: &crate::observer::GoalProposal,
     source: &str,
-    config: &CliConfig,
-    logger: &mut SessionLogger,
-    turn: u64,
+    journal: &mut TurnJournal<'_>,
     fe: &mut dyn FrontEnd,
 ) -> Result<bool> {
     writeln!(
@@ -1363,7 +1394,7 @@ fn offer_goal_proposal(
         // Anything else — including `d`/`decline`/a blank line — keeps exploring.
         _ => return Ok(false),
     };
-    set_goal_in_session(goal, &to_set, source, config, logger, turn, fe.out())?;
+    set_goal_in_session(goal, &to_set, source, journal, fe.out())?;
     Ok(true)
 }
 
@@ -1379,9 +1410,7 @@ fn maybe_propose_goal(
     goal: &mut Option<String>,
     observer: &ObserverEngine,
     arc: &SessionArc,
-    config: &CliConfig,
-    logger: &mut SessionLogger,
-    turn: u64,
+    journal: &mut TurnJournal<'_>,
     fe: &mut dyn FrontEnd,
 ) -> Result<()> {
     // Only propose when free-flowing — a session that already has a goal does not
@@ -1397,7 +1426,7 @@ fn maybe_propose_goal(
     let Some(proposal) = proposal else {
         return Ok(());
     };
-    offer_goal_proposal(goal, &proposal, "observer", config, logger, turn, fe)?;
+    offer_goal_proposal(goal, &proposal, "observer", journal, fe)?;
     Ok(())
 }
 
@@ -1413,9 +1442,7 @@ fn maybe_propose_goal(
 fn request_goal_on_demand(
     goal: &mut Option<String>,
     observer: &ObserverEngine,
-    config: &CliConfig,
-    logger: &mut SessionLogger,
-    turn: u64,
+    journal: &mut TurnJournal<'_>,
     fe: &mut dyn FrontEnd,
 ) -> Result<()> {
     // A goal is already set — show it (the on-demand request never overrides a
@@ -1433,7 +1460,7 @@ fn request_goal_on_demand(
         )?;
         return Ok(());
     }
-    let arc = arc_for_goal_request(&config.log_path, &config.branch_id);
+    let arc = arc_for_goal_request(&journal.config.log_path, &journal.config.branch_id);
     let positions = positions_from_arc(&arc);
     let proposal = {
         let _spinner = crate::spinner::Spinner::start("reading for a thesis");
@@ -1446,7 +1473,7 @@ fn request_goal_on_demand(
         )?;
         return Ok(());
     };
-    offer_goal_proposal(goal, &proposal, "user", config, logger, turn, fe)?;
+    offer_goal_proposal(goal, &proposal, "user", journal, fe)?;
     Ok(())
 }
 
@@ -1463,15 +1490,12 @@ fn request_goal_on_demand(
 // probe to the turn-envelope's `goal_offer` field (ADR-187): this helper now only
 // applies the SURFACING rules (free-flow + one-shot guard) over the proposal the
 // one turn-call already produced. No LLM spawn here.
-#[allow(clippy::too_many_arguments)]
 fn maybe_offer_goal_on_crystallize(
     goal: &mut Option<String>,
     offer_made: &mut bool,
     goal_offer: Option<crate::observer::GoalProposal>,
     recent_path: &[AnsweredQuestion],
-    config: &CliConfig,
-    logger: &mut SessionLogger,
-    turn: u64,
+    journal: &mut TurnJournal<'_>,
     fe: &mut dyn FrontEnd,
 ) -> Result<()> {
     // One-shot guard: never offer again once an offer has been surfaced, and never
@@ -1497,7 +1521,7 @@ fn maybe_offer_goal_on_crystallize(
     // A thesis crystallized: this is the single offer. Mark it spent BEFORE
     // surfacing it so a declined (or accepted) offer is never repeated.
     *offer_made = true;
-    offer_goal_proposal(goal, &proposal, "observer", config, logger, turn, fe)?;
+    offer_goal_proposal(goal, &proposal, "observer", journal, fe)?;
     Ok(())
 }
 
@@ -1515,15 +1539,12 @@ fn maybe_offer_goal_on_crystallize(
 // (ADR-187): this helper now only applies the SURFACING rules (free-flow +
 // one-shot guard) over the objection the one turn-call already produced. No LLM
 // spawn here; deterministic / offline strategies pass `None` and nothing surfaces.
-#[allow(clippy::too_many_arguments)]
 fn maybe_interrogator_objection(
     objection_state: &mut Option<ObjectionState>,
     objection_made: &mut bool,
     objection: Option<String>,
     recent_path: &[AnsweredQuestion],
-    config: &CliConfig,
-    logger: &mut SessionLogger,
-    turn: u64,
+    journal: &mut TurnJournal<'_>,
     output: &mut dyn Write,
 ) -> Result<()> {
     // One-at-a-time + one-shot guards: never raise over an open objection, and
@@ -1559,9 +1580,7 @@ fn maybe_interrogator_objection(
         objection_state,
         &text,
         ObjectionParty::Interrogator,
-        config,
-        logger,
-        turn,
+        journal,
         output,
     )?;
     Ok(())
@@ -1613,14 +1632,11 @@ fn render_objection_clear_motif(output: &mut dyn Write) -> Result<()> {
 /// current open objection (or notes none is open). On success the exchange enters
 /// the OBJECTION state, the questioner narrows to the point, and the gavel motif is
 /// shown. Belief-neutral: the objection names a STRUCTURAL tension, never a belief.
-#[allow(clippy::too_many_arguments)]
 fn raise_objection(
     objection_state: &mut Option<ObjectionState>,
     text: &str,
     objector: ObjectionParty,
-    config: &CliConfig,
-    logger: &mut SessionLogger,
-    turn: u64,
+    journal: &mut TurnJournal<'_>,
     output: &mut dyn Write,
 ) -> Result<()> {
     let text = text.trim();
@@ -1653,7 +1669,10 @@ fn raise_objection(
         text: text.to_string(),
         objector,
     };
-    logger.objection_raised(config.event_scope(), turn, objector.as_str(), text)?;
+    let (scope, turn) = (journal.scope(), journal.turn);
+    journal
+        .logger
+        .objection_raised(scope, turn, objector.as_str(), text)?;
     render_objection_motif(&state, output)?;
     *objection_state = Some(state);
     Ok(())
@@ -1668,9 +1687,7 @@ fn raise_objection(
 fn resolve_objection(
     objection_state: &mut Option<ObjectionState>,
     caller: ObjectionParty,
-    config: &CliConfig,
-    logger: &mut SessionLogger,
-    turn: u64,
+    journal: &mut TurnJournal<'_>,
     output: &mut dyn Write,
 ) -> Result<bool> {
     let Some(open) = objection_state.as_ref() else {
@@ -1690,7 +1707,10 @@ fn resolve_objection(
         return Ok(false);
     }
     let text = open.text.clone();
-    logger.objection_cleared(config.event_scope(), turn, "resolved", &text)?;
+    let (scope, turn) = (journal.scope(), journal.turn);
+    journal
+        .logger
+        .objection_cleared(scope, turn, "resolved", &text)?;
     writeln!(
         output,
         "Objection resolved by the objector — \"{text}\" withdrawn/accepted. Returning to normal flow."
@@ -1709,16 +1729,13 @@ fn resolve_objection(
 /// successful ruling the objection CLEARS; a SUSTAINED ruling returns the tracked
 /// OPEN THREAD (the resolving condition) so the caller folds it into the gauge.
 /// Belief-neutral: the ruling judges STRUCTURE, never which belief is true.
-#[allow(clippy::too_many_arguments)]
 fn judge_objection(
     objection_state: &mut Option<ObjectionState>,
     caller: ObjectionParty,
     observer: &ObserverEngine,
     context: &str,
     goal: Option<&str>,
-    config: &CliConfig,
-    logger: &mut SessionLogger,
-    turn: u64,
+    journal: &mut TurnJournal<'_>,
     output: &mut dyn Write,
 ) -> Result<JudgeOutcome> {
     let Some(open) = objection_state.as_ref() else {
@@ -1760,8 +1777,9 @@ fn judge_objection(
         crate::observer::JudgeVerdict::Sustained => Some(ruling.resolving_condition.clone()),
         crate::observer::JudgeVerdict::Overruled => None,
     };
-    logger.objection_cleared(
-        config.event_scope(),
+    let (scope, turn) = (journal.scope(), journal.turn);
+    journal.logger.objection_cleared(
+        scope,
         turn,
         ruling.verdict.as_str(),
         &ruling.resolving_condition,
@@ -2424,13 +2442,15 @@ pub(crate) fn run_session_with_term_persister(
     let user_authored_persister = StoreUserAuthoredQuestionPersister::default();
     run_session_from_current(
         config,
-        bank,
-        strategy,
-        term_persister,
-        &contradiction_edges,
-        &contradiction_resolution_persister,
-        &question_reweighter,
-        &user_authored_persister,
+        SessionWiring {
+            bank,
+            strategy,
+            term_persister,
+            contradiction_edges: &contradiction_edges,
+            contradiction_resolution_persister: &contradiction_resolution_persister,
+            question_reweighter: &question_reweighter,
+            user_authored_persister: &user_authored_persister,
+        },
         input,
         output,
         0,
@@ -2471,13 +2491,15 @@ pub(crate) fn run_session_with_contradiction_edges_and_resolution_persister(
 ) -> Result<()> {
     run_session_from_current(
         config,
-        bank,
-        strategy,
-        &NoopUserSpecificTermPersister,
-        edges,
-        resolution_persister,
-        &NoopQuestionReweighter,
-        &NoopUserAuthoredQuestionPersister,
+        SessionWiring {
+            bank,
+            strategy,
+            term_persister: &NoopUserSpecificTermPersister,
+            contradiction_edges: edges,
+            contradiction_resolution_persister: resolution_persister,
+            question_reweighter: &NoopQuestionReweighter,
+            user_authored_persister: &NoopUserAuthoredQuestionPersister,
+        },
         input,
         output,
         0,
@@ -2498,13 +2520,16 @@ pub(crate) fn run_session_with_user_authored_persister(
 ) -> Result<()> {
     run_session_from_current(
         config,
-        bank,
-        strategy,
-        &NoopUserSpecificTermPersister,
-        &StoreContradictsEdges::default(),
-        &crate::contradiction::NoopContradictionResolutionPersister,
-        &NoopQuestionReweighter,
-        user_authored_persister,
+        SessionWiring {
+            bank,
+            strategy,
+            term_persister: &NoopUserSpecificTermPersister,
+            contradiction_edges: &StoreContradictsEdges::default(),
+            contradiction_resolution_persister:
+                &crate::contradiction::NoopContradictionResolutionPersister,
+            question_reweighter: &NoopQuestionReweighter,
+            user_authored_persister,
+        },
         input,
         output,
         0,
@@ -2524,13 +2549,16 @@ pub(crate) fn run_session_with_question_reweighter(
 ) -> Result<()> {
     run_session_from_current(
         config,
-        bank,
-        strategy,
-        &NoopUserSpecificTermPersister,
-        &StoreContradictsEdges::default(),
-        &crate::contradiction::NoopContradictionResolutionPersister,
-        question_reweighter,
-        &NoopUserAuthoredQuestionPersister,
+        SessionWiring {
+            bank,
+            strategy,
+            term_persister: &NoopUserSpecificTermPersister,
+            contradiction_edges: &StoreContradictsEdges::default(),
+            contradiction_resolution_persister:
+                &crate::contradiction::NoopContradictionResolutionPersister,
+            question_reweighter,
+            user_authored_persister: &NoopUserAuthoredQuestionPersister,
+        },
         input,
         output,
         0,
@@ -2574,22 +2602,62 @@ fn build_session_front_end<'a, R: Read + 'a>(
     }
 }
 
-#[allow(clippy::too_many_arguments)]
+// trace:TASK-315 | ai:claude
+// trace:STORY-327 | ai:claude — the seven collaborators the session loop is
+// wired to. They were threaded one-per-parameter through
+// `run_session_from_current` (thirteen arguments) and re-listed at every one of
+// its six call sites, three of which construct the same `Store*` defaults. They
+// are a set, not seven unrelated things: what the loop reads questions from,
+// what picks the next one, and the five persisters it writes through. Bundled,
+// a caller names the wiring once and `dead_end_menu` — which needs three of
+// them — takes the same value rather than a hand-picked subset.
+/// Everything the session loop delegates to: the question source, the strategy
+/// that picks the next question, and the persisters it writes through.
+#[derive(Clone, Copy)]
+struct SessionWiring<'a> {
+    bank: &'a dyn QuestionBank,
+    strategy: &'a dyn NextQuestionStrategy,
+    term_persister: &'a dyn UserSpecificTermPersister,
+    contradiction_edges: &'a dyn ContradictsEdges,
+    contradiction_resolution_persister: &'a dyn ContradictionResolutionPersister,
+    question_reweighter: &'a dyn QuestionReweighter,
+    user_authored_persister: &'a dyn UserAuthoredQuestionPersister,
+}
+
+// trace:STORY-128 | ai:claude
+// trace:TASK-315 | ai:claude
+/// Where a whole-session synopsis is read from: the Observer that reads it,
+/// plus the session log and branch it reads. Those are exactly the three inputs
+/// [`render_session_synopsis`] needs beside its output sink; [`ReviewContext`]
+/// and [`dead_end_menu`] each carry them as one value rather than as a loose
+/// triple.
+#[derive(Clone, Copy)]
+struct SynopsisSource<'a> {
+    observer: &'a ObserverEngine,
+    log_path: &'a Path,
+    branch: &'a str,
+}
+
 fn run_session_from_current(
     config: &CliConfig,
-    bank: &dyn QuestionBank,
-    strategy: &dyn NextQuestionStrategy,
-    term_persister: &dyn UserSpecificTermPersister,
-    contradiction_edges: &dyn ContradictsEdges,
-    contradiction_resolution_persister: &dyn ContradictionResolutionPersister,
-    question_reweighter: &dyn QuestionReweighter,
-    user_authored_persister: &dyn UserAuthoredQuestionPersister,
+    wiring: SessionWiring<'_>,
     input: impl Read,
     output: &mut dyn Write,
     mut turn: u64,
     write_start_event: bool,
     mut recent_path: Vec<AnsweredQuestion>,
 ) -> Result<()> {
+    // Unpacked once so the loop below reads exactly as it did when these were
+    // thirteen parameters — the bundle is about the call sites, not the body.
+    let SessionWiring {
+        bank,
+        strategy,
+        term_persister,
+        contradiction_edges,
+        contradiction_resolution_persister,
+        question_reweighter,
+        user_authored_persister,
+    } = wiring;
     // trace:STORY-168 | ai:claude
     // Build the front-end at the engine boundary and route ALL session I/O through
     // it: the engine below renders via `fe.out()` and requests input/control via
@@ -2800,9 +2868,11 @@ fn run_session_from_current(
                             &recent_path,
                             // trace:STORY-128 | ai:claude
                             &ReviewContext {
-                                observer: &observer,
-                                log_path: &config.log_path,
-                                branch: &config.branch_id,
+                                synopsis: SynopsisSource {
+                                    observer: &observer,
+                                    log_path: &config.log_path,
+                                    branch: &config.branch_id,
+                                },
                                 // trace:STORY-190 | ai:claude
                                 objection_open: objection_state.is_some(),
                                 goal_set: goal.is_some(),
@@ -2905,9 +2975,7 @@ fn run_session_from_current(
                                     &mut goal,
                                     &observer,
                                     &arc,
-                                    config,
-                                    &mut logger,
-                                    answered_turn,
+                                    &mut TurnJournal::new(config, &mut logger, answered_turn),
                                     fe,
                                 )?;
                             }
@@ -2986,9 +3054,7 @@ fn run_session_from_current(
                                 request_goal_on_demand(
                                     &mut goal,
                                     &observer,
-                                    config,
-                                    &mut logger,
-                                    answered_turn,
+                                    &mut TurnJournal::new(config, &mut logger, answered_turn),
                                     fe,
                                 )?;
                             }
@@ -2998,9 +3064,7 @@ fn run_session_from_current(
                             &mut goal,
                             &text,
                             "user",
-                            config,
-                            &mut logger,
-                            answered_turn,
+                            &mut TurnJournal::new(config, &mut logger, answered_turn),
                             fe.out(),
                         )?;
                         continue;
@@ -3015,9 +3079,7 @@ fn run_session_from_current(
                         request_goal_on_demand(
                             &mut goal,
                             &observer,
-                            config,
-                            &mut logger,
-                            answered_turn,
+                            &mut TurnJournal::new(config, &mut logger, answered_turn),
                             fe,
                         )?;
                         continue;
@@ -3036,9 +3098,7 @@ fn run_session_from_current(
                         set_mode_in_session(
                             &mut mode,
                             &token,
-                            config,
-                            &mut logger,
-                            answered_turn,
+                            &mut TurnJournal::new(config, &mut logger, answered_turn),
                             fe.out(),
                         )?;
                         // trace:STORY-194 | ai:claude — keep the /settings panel in
@@ -3077,9 +3137,7 @@ fn run_session_from_current(
                             set_mode_in_session(
                                 &mut mode,
                                 updated.mode.as_str(),
-                                config,
-                                &mut logger,
-                                answered_turn,
+                                &mut TurnJournal::new(config, &mut logger, answered_turn),
                                 fe.out(),
                             )?;
                             fe.sync_mode(mode.as_str());
@@ -3247,9 +3305,7 @@ fn run_session_from_current(
                             &mut objection_state,
                             &text,
                             ObjectionParty::User,
-                            config,
-                            &mut logger,
-                            answered_turn,
+                            &mut TurnJournal::new(config, &mut logger, answered_turn),
                             fe.out(),
                         )?;
                         continue;
@@ -3262,9 +3318,7 @@ fn run_session_from_current(
                         resolve_objection(
                             &mut objection_state,
                             ObjectionParty::User,
-                            config,
-                            &mut logger,
-                            answered_turn,
+                            &mut TurnJournal::new(config, &mut logger, answered_turn),
                             fe.out(),
                         )?;
                         continue;
@@ -3286,9 +3340,7 @@ fn run_session_from_current(
                             &observer,
                             &context,
                             goal.as_deref(),
-                            config,
-                            &mut logger,
-                            answered_turn,
+                            &mut TurnJournal::new(config, &mut logger, answered_turn),
                             fe.out(),
                         )?;
                         if let Some(thread) = outcome.open_thread {
@@ -3375,12 +3427,12 @@ fn run_session_from_current(
                         objection: objection_state.as_ref().map(|o| o.text.clone()),
                     };
                     match dead_end_menu(
-                        bank,
-                        strategy,
-                        user_authored_persister,
-                        &observer,
-                        &config.log_path,
-                        &config.branch_id,
+                        wiring,
+                        SynopsisSource {
+                            observer: &observer,
+                            log_path: &config.log_path,
+                            branch: &config.branch_id,
+                        },
                         &current,
                         &context,
                         &recent_path,
@@ -3427,9 +3479,7 @@ fn run_session_from_current(
             // trace:STORY-58 | ai:codex
             turn += 1;
             if ask_contradiction_follow_up(
-                config,
-                &mut logger,
-                turn,
+                &mut TurnJournal::new(config, &mut logger, turn),
                 &contradiction,
                 contradiction_resolution_persister,
                 fe,
@@ -3510,12 +3560,12 @@ fn run_session_from_current(
                 // menu (generate / punt / add / synopsis / quit). Continue from
                 // the chosen question, or end with the deferred footer on quit.
                 match dead_end_menu(
-                    bank,
-                    strategy,
-                    user_authored_persister,
-                    &observer,
-                    &config.log_path,
-                    &config.branch_id,
+                    wiring,
+                    SynopsisSource {
+                        observer: &observer,
+                        log_path: &config.log_path,
+                        branch: &config.branch_id,
+                    },
                     &current,
                     &context,
                     &recent_path,
@@ -3568,9 +3618,7 @@ fn run_session_from_current(
             &mut goal_offer_made,
             envelope_goal_offer,
             &recent_path,
-            config,
-            &mut logger,
-            turn,
+            &mut TurnJournal::new(config, &mut logger, turn),
             fe,
         )?;
 
@@ -3589,9 +3637,7 @@ fn run_session_from_current(
             &mut interrogator_objection_made,
             envelope_objection,
             &recent_path,
-            config,
-            &mut logger,
-            turn,
+            &mut TurnJournal::new(config, &mut logger, turn),
             fe.out(),
         )?;
     }
@@ -3684,13 +3730,12 @@ fn contradiction_pair_key(contradiction: &Contradiction) -> (String, String) {
 
 // trace:STORY-168 | ai:claude — front-end seam.
 fn ask_contradiction_follow_up(
-    config: &CliConfig,
-    logger: &mut SessionLogger,
-    turn: u64,
+    journal: &mut TurnJournal<'_>,
     contradiction: &Contradiction,
     resolution_persister: &dyn ContradictionResolutionPersister,
     fe: &mut dyn FrontEnd,
 ) -> Result<bool> {
+    let (scope, turn) = (journal.scope(), journal.turn);
     let question = Question {
         id: format!("contradiction-{turn}"),
         title: format!(
@@ -3701,7 +3746,7 @@ fn ask_contradiction_follow_up(
         answer_kind: AnswerKind::FreeText,
         weight: 0,
     };
-    logger.question_presented(config.event_scope(), turn, &question)?;
+    journal.logger.question_presented(scope, turn, &question)?;
     render_question(&question, fe.out())?;
     // trace:STORY-190 | ai:claude — the contradiction follow-up is a frontier-style
     // sub-prompt with no objection / goal / navigation state threaded in, so the
@@ -3714,29 +3759,24 @@ fn ask_contradiction_follow_up(
     )? {
         AnswerInput::Answer(answer) => {
             let resolution = resolution_persister.persist_resolution(contradiction, &answer.raw)?;
-            logger.contradiction_resolved(
-                config.event_scope(),
+            journal.logger.contradiction_resolved(
+                scope,
                 turn,
                 contradiction,
                 &answer,
                 resolution.as_ref(),
             )?;
-            logger.answer_recorded(
-                config.event_scope(),
-                turn,
-                &question,
-                &answer,
-            )?;
+            journal
+                .logger
+                .answer_recorded(scope, turn, &question, &answer)?;
             Ok(false)
         }
         AnswerInput::End => {
             // trace:STORY-80 | ai:claude
-            render_session_end(None, &config.session_id, fe.out())?;
-            logger.session_ended(
-                config.event_scope(),
-                turn,
-                "User ended session.",
-            )?;
+            render_session_end(None, &journal.config.session_id, fe.out())?;
+            journal
+                .logger
+                .session_ended(scope, turn, "User ended session.")?;
             Ok(true)
         }
         // trace:STORY-88 | ai:claude — quick-add is offered only at the plain
@@ -3885,19 +3925,20 @@ pub(crate) fn dead_end_menu_text() -> String {
 /// fresh follow-on; a deterministic/exhausted bank simply reports it has nothing
 /// and the menu stays open (the offline-degrade path).
 // trace:STORY-168 | ai:claude — front-end seam.
-#[allow(clippy::too_many_arguments)]
 fn dead_end_menu(
-    bank: &dyn QuestionBank,
-    strategy: &dyn NextQuestionStrategy,
-    user_authored_persister: &dyn UserAuthoredQuestionPersister,
-    observer: &ObserverEngine,
-    log_path: &Path,
-    branch: &str,
+    wiring: SessionWiring<'_>,
+    synopsis: SynopsisSource<'_>,
     current: &Question,
     context: &StrategyContext,
     recent_path: &[AnsweredQuestion],
     fe: &mut dyn FrontEnd,
 ) -> Result<DeadEndOutcome> {
+    let SessionWiring {
+        bank,
+        strategy,
+        user_authored_persister,
+        ..
+    } = wiring;
     loop {
         // trace:STORY-170 | ai:claude — let a graphical front-end present the menu
         // as a single-key MODAL POPUP. `dead_end_choice` returns `Some(letter)` in
@@ -3942,7 +3983,12 @@ fn dead_end_menu(
                 // synopsis (with its conclude OFFER line when well-rounded) but
                 // stays in the menu; the graceful conclude path lives at the
                 // frontier handler, so the return is intentionally ignored here.
-                render_session_synopsis(observer, log_path, Some(branch), fe.out())?;
+                render_session_synopsis(
+                    synopsis.observer,
+                    synopsis.log_path,
+                    Some(synopsis.branch),
+                    fe.out(),
+                )?;
             }
             Some('q') => return Ok(DeadEndOutcome::Quit),
             _ => writeln!(fe.out(), "Pick one of G, P, A, S, or Q.")?,
@@ -3967,9 +4013,7 @@ enum ReviewOutcome {
 /// (for the whole-session `S` synopsis). Bundled so the review helper keeps a
 /// tidy argument list.
 struct ReviewContext<'a> {
-    observer: &'a ObserverEngine,
-    log_path: &'a Path,
-    branch: &'a str,
+    synopsis: SynopsisSource<'a>,
     // trace:STORY-190 | ai:claude — the frontier session state carried into the
     // review pane so the `/` palette there greys the same state-gated commands
     // (an open objection? a goal set? the gauge on?). Navigation availability
@@ -4057,7 +4101,7 @@ fn browse_answered_path(
                 };
                 let reading = {
                     let _spinner = crate::spinner::Spinner::start("observing");
-                    review.observer.read(&exchange)
+                    review.synopsis.observer.read(&exchange)
                 };
                 // trace:STORY-170 | ai:claude — META popup in the TUI (review pane).
                 fe.begin_meta("observe");
@@ -4072,9 +4116,9 @@ fn browse_answered_path(
                 // trace:STORY-170 | ai:claude — META popup in the TUI (review pane).
                 fe.begin_meta("synopsis");
                 render_session_synopsis(
-                    review.observer,
-                    review.log_path,
-                    Some(review.branch),
+                    review.synopsis.observer,
+                    review.synopsis.log_path,
+                    Some(review.synopsis.branch),
                     fe.out(),
                 )?;
                 fe.end_meta();
@@ -4122,7 +4166,7 @@ fn browse_answered_path(
             AnswerInput::Help(question) => {
                 let answer = {
                     let _spinner = crate::spinner::Spinner::start("helping");
-                    review.observer.help(&question)
+                    review.synopsis.observer.help(&question)
                 };
                 // trace:STORY-170 | ai:claude — META popup in the TUI (review pane).
                 fe.begin_meta("help");
@@ -4147,7 +4191,7 @@ fn browse_answered_path(
                 };
                 let reading = {
                     let _spinner = crate::spinner::Spinner::start("tutoring");
-                    review.observer.tutor(&context)
+                    review.synopsis.observer.tutor(&context)
                 };
                 // trace:STORY-170 | ai:claude — META popup in the TUI (review pane).
                 fe.begin_meta("tutor");
@@ -4244,6 +4288,20 @@ fn resume_session_with_term_persister(
     let question_reweighter = StoreQuestionReweighter::default();
     // trace:STORY-88 | ai:claude — resumed sessions get the same quick-add path.
     let user_authored_persister = StoreUserAuthoredQuestionPersister::default();
+    // trace:TASK-315 | ai:claude — one wiring for both exits below (the normal
+    // resume and the terminal-path continuation), which used to construct the
+    // same `Store*` defaults twice.
+    let contradiction_edges = StoreContradictsEdges::default();
+    let contradiction_resolution_persister = StoreContradictionResolutionPersister::default();
+    let wiring = SessionWiring {
+        bank,
+        strategy,
+        term_persister,
+        contradiction_edges: &contradiction_edges,
+        contradiction_resolution_persister: &contradiction_resolution_persister,
+        question_reweighter: &question_reweighter,
+        user_authored_persister: &user_authored_persister,
+    };
 
     // Normal resume: a saved follow-up question exists, present it.
     if let Some(next_question_ref) = replay.next_question_ref.as_ref() {
@@ -4251,13 +4309,7 @@ fn resume_session_with_term_persister(
         resumed_config.seed = next_question_ref.clone();
         return run_session_from_current(
             &resumed_config,
-            bank,
-            strategy,
-            term_persister,
-            &StoreContradictsEdges::default(),
-            &StoreContradictionResolutionPersister::default(),
-            &question_reweighter,
-            &user_authored_persister,
+            wiring,
             input,
             output,
             replay.next_turn,
@@ -4322,12 +4374,12 @@ fn resume_session_with_term_persister(
             let outcome = {
                 let mut fe = build_session_front_end(config, &mut input, &mut *output)?;
                 dead_end_menu(
-                    bank,
-                    strategy,
-                    &user_authored_persister,
-                    &observer,
-                    &config.log_path,
-                    &config.branch_id,
+                    wiring,
+                    SynopsisSource {
+                        observer: &observer,
+                        log_path: &config.log_path,
+                        branch: &config.branch_id,
+                    },
                     &last_question,
                     &context,
                     &prior_path,
@@ -4363,13 +4415,7 @@ fn resume_session_with_term_persister(
     resumed_config.seed = next.id.clone();
     run_session_from_current(
         &resumed_config,
-        bank,
-        strategy,
-        term_persister,
-        &StoreContradictsEdges::default(),
-        &StoreContradictionResolutionPersister::default(),
-        &question_reweighter,
-        &user_authored_persister,
+        wiring,
         &mut input,
         output,
         replay.next_turn,
@@ -5474,8 +5520,13 @@ mod goal_request_tests {
         let mut goal: Option<String> = None;
         let fe_input = std::io::Cursor::new(input.as_bytes().to_vec());
         let mut fe = crate::frontend::LineFrontEnd::new(fe_input, Vec::new()).expect("front end");
-        request_goal_on_demand(&mut goal, &engine, &config, &mut logger, 0, &mut fe)
-            .expect("request");
+        request_goal_on_demand(
+            &mut goal,
+            &engine,
+            &mut TurnJournal::new(&config, &mut logger, 0),
+            &mut fe,
+        )
+        .expect("request");
         let out = String::from_utf8(fe.into_output()).unwrap();
         let _ = std::fs::remove_file(&path);
         (goal, out)
@@ -5573,9 +5624,7 @@ mod goal_request_tests {
             offer_made,
             goal_offer,
             recent_path,
-            &config,
-            &mut logger,
-            1,
+            &mut TurnJournal::new(&config, &mut logger, 1),
             &mut fe,
         )
         .expect("offer");
@@ -5816,9 +5865,7 @@ mod objection_tests {
             &mut state,
             "you never defined what 'free' means",
             ObjectionParty::User,
-            &config,
-            &mut logger,
-            0,
+            &mut TurnJournal::new(&config, &mut logger, 0),
             &mut out,
         )
         .expect("raise");
@@ -5848,9 +5895,7 @@ mod objection_tests {
             &mut state,
             "a different point",
             ObjectionParty::User,
-            &config,
-            &mut logger,
-            1,
+            &mut TurnJournal::new(&config, &mut logger, 1),
             &mut out,
         )
         .expect("raise");
@@ -5876,9 +5921,7 @@ mod objection_tests {
         let cleared = resolve_objection(
             &mut state,
             ObjectionParty::User, // the objector
-            &config,
-            &mut logger,
-            2,
+            &mut TurnJournal::new(&config, &mut logger, 2),
             &mut out,
         )
         .expect("resolve");
@@ -5905,9 +5948,7 @@ mod objection_tests {
         let cleared = resolve_objection(
             &mut state,
             ObjectionParty::User, // the WRONG caller (not the objector)
-            &config,
-            &mut logger,
-            3,
+            &mut TurnJournal::new(&config, &mut logger, 3),
             &mut out,
         )
         .expect("resolve");
@@ -5941,9 +5982,7 @@ mod objection_tests {
             &observer,
             "Q: Is free will real? A: yes",
             Some("can free will survive causation?"),
-            &config,
-            &mut logger,
-            4,
+            &mut TurnJournal::new(&config, &mut logger, 4),
             &mut out,
         )
         .expect("judge");
@@ -5995,9 +6034,7 @@ mod objection_tests {
             &observer,
             "",
             None,
-            &config,
-            &mut logger,
-            5,
+            &mut TurnJournal::new(&config, &mut logger, 5),
             &mut out,
         )
         .expect("judge");
@@ -6031,9 +6068,7 @@ mod objection_tests {
             &observer,
             "",
             None,
-            &config,
-            &mut logger,
-            6,
+            &mut TurnJournal::new(&config, &mut logger, 6),
             &mut out,
         )
         .expect("judge");
@@ -6067,9 +6102,7 @@ mod objection_tests {
             &observer,
             "",
             None,
-            &config,
-            &mut logger,
-            7,
+            &mut TurnJournal::new(&config, &mut logger, 7),
             &mut out,
         )
         .expect("judge");
@@ -6099,9 +6132,7 @@ mod objection_tests {
             &mut state,
             "a contested point",
             ObjectionParty::User,
-            &config,
-            &mut logger,
-            0,
+            &mut TurnJournal::new(&config, &mut logger, 0),
             &mut out,
         )
         .expect("raise");
@@ -6109,9 +6140,7 @@ mod objection_tests {
         let cleared = resolve_objection(
             &mut state,
             ObjectionParty::User,
-            &config,
-            &mut logger,
-            1,
+            &mut TurnJournal::new(&config, &mut logger, 1),
             &mut out,
         )
         .expect("resolve");
@@ -6147,9 +6176,7 @@ mod objection_tests {
             &mut made,
             objection.clone(),
             &recent_path,
-            &config,
-            &mut logger,
-            1,
+            &mut TurnJournal::new(&config, &mut logger, 1),
             &mut out,
         )
         .expect("offer");
@@ -6168,9 +6195,7 @@ mod objection_tests {
             &mut made,
             objection,
             &recent_path,
-            &config,
-            &mut logger,
-            2,
+            &mut TurnJournal::new(&config, &mut logger, 2),
             &mut out2,
         )
         .expect("offer");
@@ -6198,9 +6223,7 @@ mod objection_tests {
             &mut made,
             objection,
             &thin,
-            &config,
-            &mut logger,
-            1,
+            &mut TurnJournal::new(&config, &mut logger, 1),
             &mut out,
         )
         .expect("offer");
@@ -6221,9 +6244,7 @@ mod objection_tests {
             &mut made2,
             None,
             &recent_path,
-            &config,
-            &mut logger,
-            2,
+            &mut TurnJournal::new(&config, &mut logger, 2),
             &mut out2,
         )
         .expect("offer");

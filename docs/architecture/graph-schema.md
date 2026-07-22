@@ -259,3 +259,35 @@ is the canonical recursive-CTE walk (the `begets` chain from a seed
 question), verified against the hand-inserted fixture in
 `db/fixtures/traversal_fixture.sql`. The Dolt backend (STORY-207) adopts
 this traversal; the cutover story (STORY-208) retires the BFS.
+
+### The absent-node invariant (TASK-318 / STORY-327)
+
+Every `DomainStore` backend owes the trait one contract that is not visible
+in its method signatures:
+
+> **`fetch_node` must report "no such node" as `QuizdomError::NotFound`, and
+> nothing else may use that variant.**
+
+`DomainStore::fetch_nodes_present` — the lenient batch read, for callers that
+would rather show the reachable part of the graph than nothing at all — is
+what depends on it. Its default skips `NotFound` and propagates every other
+error, so that a store which has fallen over reads as a failure rather than
+as an empty graph (STORY-293). A backend that reports a missing row as
+`Dolt(...)` or `Parse(...)` instead has every absence propagate as a hard
+failure: the lenient read silently becomes the strict one, with no compile
+error.
+
+Two things keep the invariant honest, so it is not rediscovered by the
+backend that trips over it:
+
+- **`store::missing_node(id, backend)`** is the shared constructor. A backend
+  that builds its absence error with it gets the right variant by
+  construction and chooses only the operator-facing wording (the Dolt backend
+  passes `"Dolt store"`).
+- **`store::assert_absence_contract(store, absent_id)`** is the conformance
+  check every backend's test module calls. It pins all three halves at once —
+  the per-item read reports `NotFound`, the lenient batch read skips the id,
+  the strict batch read still fails on it — and its non-panicking form,
+  `check_absence_contract`, returns the violation so the check itself is
+  under test. The Dolt backend runs it against scripted rows *and* inside
+  `real_dolt_full_trait_surface`, against a real dolt binary.

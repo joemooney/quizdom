@@ -105,6 +105,24 @@ pub struct NewNode {
     pub weight: u32,
 }
 
+// trace:TASK-318 | ai:claude
+// trace:STORY-327 | ai:claude — the obligation used to live only in
+// `fetch_nodes_present`'s doc-comment, so a second backend could report a
+// missing row as `Dolt(...)` and lose the lenient read's leniency with no
+// compile error and no failing test. Two things fix that: this constructor, so
+// a backend gets the right variant by reaching for a helper rather than by
+// reading prose, and `check_absence_contract`, so a backend that builds the
+// error by hand still fails a test rather than degrading silently.
+/// The one way a [`DomainStore`] backend says "no such node".
+///
+/// `backend` names the store for the operator ("the Dolt store"); the *variant*
+/// is the load-bearing part — [`DomainStore::fetch_nodes_present`] keys its skip
+/// off [`QuizdomError::NotFound`] specifically, so an absence reported as any
+/// other variant makes the lenient read strict.
+pub fn missing_node(id: &str, backend: &str) -> QuizdomError {
+    QuizdomError::NotFound(format!("node {id} not found in the {backend}"))
+}
+
 /// Every domain-graph operation quizdom performs, behind one storage
 /// abstraction. The Dolt backend is the only implementation since the
 /// STORY-208 cutover; the trait remains the app's seam (and the test seam).
@@ -183,6 +201,13 @@ pub trait DomainStore {
     /// Absence is a skip, a store failure is not: an implementation of
     /// [`Self::fetch_node`] that reports "no such row" as
     /// [`QuizdomError::NotFound`] gets the skip; every other error propagates.
+    ///
+    /// That is the **absent-node invariant** every backend owes this trait —
+    /// build the error with [`missing_node`] and it holds by construction.
+    /// A backend that reports absence as [`QuizdomError::Dolt`] or
+    /// [`QuizdomError::Parse`] instead turns this lenient read into the strict
+    /// one, silently; `check_absence_contract` below is the conformance check
+    /// that catches it, and every backend's test module calls it (TASK-318).
     fn fetch_nodes_present(&self, ids: &[String]) -> Result<Vec<NodeRecord>> {
         let mut found = Vec::with_capacity(ids.len());
         for id in ids {
@@ -230,6 +255,74 @@ pub trait DomainStore {
             self.update_weight_and_tags(id, *weight, tags)?;
         }
         Ok(())
+    }
+}
+
+// trace:TASK-318 | ai:claude
+// trace:STORY-327 | ai:claude
+/// Check a backend against the absent-node invariant
+/// [`DomainStore::fetch_nodes_present`] depends on, reporting the first
+/// violation rather than panicking — so a test can assert the check itself
+/// catches a wrong variant, not only that a conforming backend passes it.
+///
+/// `absent_id` must name a node the store does **not** hold. The three
+/// assertions are the whole contract: the per-item read reports the absence as
+/// [`QuizdomError::NotFound`], the lenient batch read skips it, and the strict
+/// batch read still fails on it.
+#[cfg(test)]
+pub(crate) fn check_absence_contract(
+    store: &dyn DomainStore,
+    absent_id: &str,
+) -> std::result::Result<(), String> {
+    match store.fetch_node(absent_id) {
+        Err(QuizdomError::NotFound(_)) => {}
+        Err(other) => {
+            return Err(format!(
+                "fetch_node({absent_id}) reported an absent node as {other:?}, not \
+                 QuizdomError::NotFound — fetch_nodes_present keys its skip off that \
+                 variant, so this backend's lenient read is silently the strict one. \
+                 Build the error with store::missing_node."
+            ))
+        }
+        Ok(record) => {
+            return Err(format!(
+                "fetch_node({absent_id}) returned {record:?} — the id passed to \
+                 check_absence_contract must name a node the store does not hold"
+            ))
+        }
+    }
+
+    let ids = [absent_id.to_string()].to_vec();
+    match store.fetch_nodes_present(&ids) {
+        Ok(records) if records.is_empty() => {}
+        Ok(records) => {
+            return Err(format!(
+                "fetch_nodes_present([{absent_id}]) returned {records:?} for an absent id"
+            ))
+        }
+        Err(error) => {
+            return Err(format!(
+                "fetch_nodes_present([{absent_id}]) failed with {error:?} — an absent id \
+                 is a skip in the lenient read, not an error"
+            ))
+        }
+    }
+
+    match store.fetch_nodes(&ids) {
+        Err(_) => Ok(()),
+        Ok(records) => Err(format!(
+            "fetch_nodes([{absent_id}]) returned {records:?} — the strict read must fail \
+             the batch on an absent id"
+        )),
+    }
+}
+
+/// [`check_absence_contract`] as a test assertion: every backend's test module
+/// calls this so a wrong absence variant fails a test rather than degrading.
+#[cfg(test)]
+pub(crate) fn assert_absence_contract(store: &dyn DomainStore, absent_id: &str) {
+    if let Err(violation) = check_absence_contract(store, absent_id) {
+        panic!("absent-node invariant violated: {violation}");
     }
 }
 
@@ -554,6 +647,49 @@ mod tests {
                 assert!(message.contains("Q-404"), "{message}");
             }
             other => panic!("expected the strict read to fail, got {other:?}"),
+        }
+    }
+
+    // trace:TASK-318 | ai:claude
+    // trace:STORY-327 | ai:claude
+    /// The conformance check passes a backend that reports absence the way the
+    /// lenient read expects — the shape every backend's own test module asserts.
+    #[test]
+    fn a_conforming_backend_satisfies_the_absence_contract() {
+        let store = DefaultsOnlyStore::new(&["Q-1"], not_found);
+
+        assert_absence_contract(&store, "Q-404");
+    }
+
+    // trace:TASK-318 | ai:claude
+    // trace:STORY-327 | ai:claude — TASK-318's whole point: before this, a
+    // backend reporting a missing row as `Dolt(...)` had every absence
+    // propagate as a hard failure, turning the lenient read into the strict one
+    // with no compile error and no test failure. Now the wrong variant is a
+    // failing check, and the report says which variant and why it matters.
+    /// The check earns its keep on the backend it was written for — the one
+    /// that gets the variant wrong.
+    #[test]
+    fn a_backend_reporting_absence_as_the_wrong_variant_fails_the_check() {
+        let store = DefaultsOnlyStore::new(&["Q-1"], store_failure);
+
+        let violation = check_absence_contract(&store, "Q-404")
+            .expect_err("reporting absence as Dolt(...) must not pass the check");
+
+        assert!(violation.contains("NotFound"), "{violation}");
+        assert!(violation.contains("missing_node"), "{violation}");
+    }
+
+    // trace:TASK-318 | ai:claude
+    /// `missing_node` is the constructor that makes the invariant hold by
+    /// construction: the variant is fixed, only the operator-facing text varies.
+    #[test]
+    fn missing_node_builds_the_variant_the_lenient_read_skips() {
+        match missing_node("Q-404", "Dolt store") {
+            QuizdomError::NotFound(message) => {
+                assert_eq!(message, "node Q-404 not found in the Dolt store");
+            }
+            other => panic!("absence is NotFound, got {other:?}"),
         }
     }
 }
