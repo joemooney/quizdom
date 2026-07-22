@@ -7439,5 +7439,39 @@ operations:
     req_type: Task
     status: Draft
     priority: Medium
-clock: 567
+- id: 019f8afb-4324-7892-bf8f-7d509912d690
+  target_id: 019f8afb-4183-7400-8dec-767a2b29d446
+  author: aida
+  node_id: ''
+  lamport: 568
+  timestamp: 2026-07-22T17:59:10.372990807Z
+  kind: !Create
+    title: cargo test -- --ignored drives the alternate-screen capture child in the developer's own terminal
+    description: |
+      `the_seam_under_a_live_alternate_screen`
+      (crates/quizdom/src/diagnostics.rs:472-478) is `#[ignore]`d because it is meant
+      to be driven as a child process by
+      `nothing_reaches_the_terminal_while_the_alternate_screen_is_active`. But
+      `#[ignore]` is not "never run directly" — it is "run only when asked", and an
+      unfiltered `cargo test -- --ignored` asks.
+
+      Effect: the developer's tty flips into the real alternate screen (crossterm
+      EnterAlternateScreen is executed against the inherited stdout), the seam runs,
+      the screen is restored, and `drove the seam` is printed among the test output.
+      Transient and self-restoring, so cosmetic — but surprising, and it interleaves
+      with whatever else libtest is printing.
+
+      CI is unaffected: .github/workflows/ci.yml:63 runs
+      `cargo test --workspace real_dolt -- --ignored`, whose filter excludes it.
+
+      Options if picked up: gate the child on an env var the parent sets (e.g.
+      `QUIZDOM_CAPTURE_CHILD=1`) and return early otherwise, so a direct
+      `--ignored` run is a no-op; or move it to its own `tests/` integration binary
+      so the project's `real_dolt` filter convention keeps covering it.
+
+      Raised in review of PR-103: https://github.com/joemooney/quizdom/pull/103#issuecomment-5049615664
+    req_type: Task
+    status: Draft
+    priority: Medium
+clock: 568
 node_id: ''
