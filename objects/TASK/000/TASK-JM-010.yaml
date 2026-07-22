@@ -8,7 +8,7 @@ priority: Medium
 owner: joe
 feature: Uncategorized
 created_at: 2026-07-19T18:47:37.564208584Z
-modified_at: 2026-07-22T05:46:16.530773225Z
+modified_at: 2026-07-22T14:49:58.960686474Z
 req_type: Task
 tags:
 - upstream:aida
@@ -24,4 +24,10 @@ comments:
   content: 'Recurrence: aida queue work --batch dolt-phase-1 --auto-complete also fails batch membership - reports ''no queued items tagged batch:dolt-phase-1'' although both queued specs carry that exact tag (verified via aida show). Batch association appears broken across queue list and queue work.'
   created_at: 2026-07-19T18:50:03.504363964Z
   modified_at: 2026-07-19T18:50:03.504363964Z
+  session_id: 789bafdb-f673-41c5-affc-d550f95e51e5
+- id: 019f8a4e-0db0-7d63-9596-f58b63011569
+  author: joe
+  content: 'Archived from quizdom 2026-07-22: this is an AIDA engine finding, not quizdom work. Routed upstream for triage via ~/aida-upstream-triage-prompt.md (tagged upstream:aida). Archived Draft deliberately — not rejected, not abandoned; the upstream advisor owns the verdict.'
+  created_at: 2026-07-22T14:49:58.960686474Z
+  modified_at: 2026-07-22T14:49:58.960686474Z
   session_id: 789bafdb-f673-41c5-affc-d550f95e51e5
