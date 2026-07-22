@@ -8,10 +8,17 @@ priority: Medium
 owner: ''
 feature: Uncategorized
 created_at: 2026-07-20T01:46:38.465693379Z
-modified_at: 2026-07-22T07:22:27.238425329Z
+modified_at: 2026-07-22T07:23:04.830630793Z
 req_type: Task
 relationships:
 - rel_type: Child
   target_id: 019f885d-96af-7591-80ec-cb27a5e08351
   created_at: 2026-07-22T05:49:29.591080233Z
   created_by: joe
+comments:
+- id: 019f88b4-e6fe-7b43-9640-b533593ef599
+  author: joe
+  content: 'Implemented via STORY-261 (commit 31dcff3): file-based Dolt remote (no hosted account), `quizdom db-backup` (snapshot working set + push main) and `quizdom db-restore` (clone back, refuses to overwrite an existing repo). Backup dir defaults to ~/.local/share/quizdom/dolt-backup, outside the project tree. Recovery steps documented in OVERVIEW.md § Durability and recovery; verified end to end at 75 nodes / 75 edges. Two traps found: dolt clone enumerates its cwd as databases (now clones from an empty scratch dir), and db-init/db-migrate leave writes uncommitted so a push would upload an empty history (now snapshotted first — see TASK-272).'
+  created_at: 2026-07-22T07:23:04.830630793Z
+  modified_at: 2026-07-22T07:23:04.830630793Z
+  session_id: 019f88a4-92b6-7b73-acb6-ae4da7798722
