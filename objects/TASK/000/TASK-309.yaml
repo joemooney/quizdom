@@ -37,12 +37,12 @@ description: |
 
   Raised by the implementer while working STORY-292.
   Branch: story-292  ·  Commit: aa43e69  (PR link added on merge)
-status: Draft
+status: Rejected
 priority: Medium
 owner: ''
 feature: Uncategorized
 created_at: 2026-07-22T16:08:01.155173664Z
-modified_at: 2026-07-22T19:00:40.949480687Z
+modified_at: 2026-07-22T19:00:42.015536818Z
 req_type: Task
 tags:
 - from-implementer:STORY-292
