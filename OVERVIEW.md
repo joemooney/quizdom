@@ -118,6 +118,28 @@ load *and* destroyed on the next write. The mode's full precedence, highest
 first: `--mode` > the mode a resumed session logged > `settings.toml` > Socratic.
 A resumed debate stays a debate even for a user whose saved default is Socratic.
 
+<!-- trace:STORY-367 | ai:claude -->
+
+Seeding is half the bargain; the other half is that **the file changes only when
+the user asks it to.** A session can be running a mode the file does not name —
+`quizdom start --mode debate` over a saved `mode = "socratic"` — and the
+`/settings` surface has to *show* that live mode without *adopting* it. So each
+front-end keeps two copies: a display copy the engine mirrors its live
+`score`/`mode` into (`FrontEnd::mirror_live`, which never writes), and the
+persisted copy, which is exactly what a save writes. An explicit change
+(`/score`, `/mode debate`, a panel row, `/settings set …`) crosses from one to
+the other **one key at a time** (`Settings::adopt`), so the only value that
+reaches the file is the one the user named. Three routes used to defeat this:
+`/settings` pushing the live mode across as a persisting call, a bare `/mode` —
+which asks what the mode is rather than choosing one — writing the answer back,
+and any explicit change saving the mirrored struct whole, so `/settings set
+editor vim` carried `mode = "debate"` to disk with it. The precedence is also
+resolved **once**, into `config.mode` itself, before anything reads it: the
+resume path that auto-continues a terminal saved path (BUG-136) frames its
+question straight from the config, and while the tier was applied further
+downstream that one question came out Socratic in a session the loop then ran as
+a debate.
+
 Values parse the way TOML would: double **and** single quotes come off, and an
 inline `# comment` ends the value. `dolt_path = "/mnt/data/dolt"  # the big disk`
 means `/mnt/data/dolt`.

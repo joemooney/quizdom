@@ -12,10 +12,13 @@ use crate::honing::{
 // trace:STORY-168 | ai:claude — the engine now talks to the FrontEnd seam; the
 // raw input readers (read_answer_or_end / FreeTextInput) live behind LineFrontEnd.
 use crate::frontend::FrontEnd;
+// trace:STORY-367 | ai:claude — the persisted tier of the mode precedence, and
+// the live values the engine mirrors into the front-end for display.
 use crate::input::{
     render_breadcrumb, render_question, render_question_for, AnswerInput, InputContext,
 };
 use crate::model::{Answer, AnswerKind, Question, TermDefinition};
+use crate::settings::{LiveSettings, Settings};
 // trace:STORY-127 | ai:claude
 use crate::observer::{read_exchange, structural_reading, Exchange, ExchangeReading};
 // trace:STORY-164 | ai:claude
@@ -425,7 +428,11 @@ pub fn run_cli(
 ) -> Result<()> {
     // trace:STORY-76 | ai:claude — gate styled output on a real TTY + NO_COLOR.
     crate::style::init_from_env();
-    let config = CliConfig::parse(args)?;
+    // trace:STORY-367 | ai:claude — resolve the persisted tier of the mode
+    // precedence HERE, so every reader of `config.mode` below (the loop, and a
+    // resume's auto-continue) sees the same answer. `resolve_resume_config` runs
+    // after and still outranks it: a resumed session keeps its own logged mode.
+    let config = CliConfig::parse(args)?.seeded_from(&crate::settings::load_or_seed());
     let bank = StoreQuestionBank::default();
     let deterministic = DeterministicNextQuestionStrategy;
     match config.command {
@@ -1278,26 +1285,47 @@ fn set_goal_in_session(
 }
 
 // trace:TASK-300 | ai:claude
-/// The mode the session loop STARTS in: `config.mode` when this invocation
-/// pinned one (`--mode`, or a resumed session's own log), otherwise the mode
-/// PERSISTED in `settings.toml`.
+/// The mode the session STARTS in: `config.mode` when this invocation pinned one
+/// (`--mode`, or a resumed session's own log), otherwise the mode PERSISTED in
+/// `settings.toml`.
 ///
 /// The full precedence, highest first — flag > resumed log > `settings.toml` >
 /// [`SessionMode::default`] — with the first two folded into `pinned` by
-/// `resolve_session_config`, since both mean "this session's mode is already
+/// [`resolve_resume_config`], since both mean "this session's mode is already
 /// decided".
 ///
 /// **Why the persisted tier exists.** Without it the engine started every fresh
 /// session at the compiled default, and the first `/settings` pushed that
-/// default across the seam ([`crate::frontend::FrontEnd::sync_mode`]) and SAVED
-/// it — so `mode = "debate"` in the config file was ignored on load and then
-/// destroyed on the next write. That is score's TASK-266 defect exactly, on the
-/// key that was left out of the bundle.
+/// default across the seam and SAVED it — so `mode = "debate"` in the config
+/// file was ignored on load and then destroyed on the next write. That is
+/// score's TASK-266 defect exactly, on the key that was left out of the bundle.
 fn starting_mode(config_mode: SessionMode, pinned: bool, persisted: SessionMode) -> SessionMode {
     if pinned {
         config_mode
     } else {
         persisted
+    }
+}
+
+impl CliConfig {
+    // trace:STORY-367 | ai:claude
+    /// Apply the persisted tier to `mode` — ONCE, before anything reads it.
+    ///
+    /// TASK-300 applied it where the loop seeds its live mode, which left
+    /// `config.mode` itself still holding the compiled default. Everything that
+    /// read `config.mode` EARLIER then framed with the wrong one: a resume whose
+    /// saved path is terminal auto-continues into a generated successor
+    /// (BUG-136) built from `config.mode`, so a user with `mode = "debate"`
+    /// saved got exactly one Socratic question before the loop switched under
+    /// them. Resolving the tier here, at the seam every command's config comes
+    /// through, makes `config.mode` mean *the mode this session runs in* for
+    /// every reader — the loop, the auto-continue, and whatever reads it next.
+    ///
+    /// `score` needs no equivalent: it has no CLI flag and nothing reads it
+    /// before the loop seeds it from [`crate::frontend::FrontEnd::persisted_settings`].
+    fn seeded_from(mut self, persisted: &Settings) -> Self {
+        self.mode = starting_mode(self.mode, self.mode_pinned, persisted.mode);
+        self
     }
 }
 
@@ -1338,7 +1366,7 @@ mod starting_mode_tests {
 
     // trace:TASK-300 | ai:claude — a RESUME pins the mode it restored, so the
     // saved default cannot overwrite a session already under way. Without the pin
-    // the restore at `resolve_session_config` would be undone one screen later by
+    // the restore at `resolve_resume_config` would be undone one screen later by
     // the seed.
     #[test]
     fn a_restored_mode_is_pinned_against_the_saved_default() {
@@ -1347,6 +1375,37 @@ mod starting_mode_tests {
             SessionMode::Debate,
             "a resumed debate stays a debate"
         );
+    }
+
+    // trace:STORY-367 | ai:claude — the tier lands on `config.mode` ITSELF, which
+    // is what makes every reader agree. The precedence above is unchanged; where
+    // it is applied is the fix.
+    #[test]
+    fn the_seed_resolves_into_the_config_every_reader_shares() {
+        let saved = Settings {
+            mode: SessionMode::Debate,
+            ..Settings::default()
+        };
+
+        // Nothing pinned: the saved default becomes THE session's mode, visible to
+        // the resume auto-continue that reads `config.mode` before the loop exists.
+        let config = CliConfig::parse(["session".to_string(), "start".to_string()])
+            .unwrap()
+            .seeded_from(&saved);
+        assert_eq!(config.mode, SessionMode::Debate);
+
+        // `--mode socratic` still outranks it, and stays pinned so a later resume
+        // restore does not undo the flag.
+        let config = CliConfig::parse([
+            "session".to_string(),
+            "start".to_string(),
+            "--mode".to_string(),
+            "socratic".to_string(),
+        ])
+        .unwrap()
+        .seeded_from(&saved);
+        assert_eq!(config.mode, SessionMode::Socratic);
+        assert!(config.mode_pinned);
     }
 }
 
@@ -1357,16 +1416,22 @@ mod starting_mode_tests {
 /// changing it. An unrecognized token is reported and leaves the mode unchanged
 /// (the session never silently falls back). Belief-neutral throughout: debate
 /// steelmans the OPPOSING side's CRAFT, never asserting which belief is true.
+///
+// trace:STORY-367 | ai:claude
+/// Returns whether the user CHOSE a mode — true only on a recognized token.
+/// The caller persists on `true` alone: a bare `/mode` asked what the mode is,
+/// and answering that question must not rewrite the saved default with whatever
+/// this session happened to be overriding it with.
 fn set_mode_in_session(
     mode: &mut SessionMode,
     token: &str,
     journal: &mut TurnJournal<'_>,
     output: &mut dyn Write,
-) -> Result<()> {
+) -> Result<bool> {
     let token = token.trim();
     if token.is_empty() {
         writeln!(output, "Current mode: {}", mode.as_str())?;
-        return Ok(());
+        return Ok(false);
     }
     let Some(new_mode) = SessionMode::parse(token) else {
         writeln!(
@@ -1374,7 +1439,7 @@ fn set_mode_in_session(
             "Unknown mode: {token} (expected socratic or debate). Mode unchanged ({}).",
             mode.as_str()
         )?;
-        return Ok(());
+        return Ok(false);
     };
     *mode = new_mode;
     let (scope, turn) = (journal.scope(), journal.turn);
@@ -1384,7 +1449,7 @@ fn set_mode_in_session(
         SessionMode::Socratic => "(The questioner is again a neutral challenger of your OWN position.)",
     };
     writeln!(output, "Mode set: {}\n{note}", new_mode.as_str())?;
-    Ok(())
+    Ok(true)
 }
 
 // trace:STORY-159 | ai:claude
@@ -2806,11 +2871,16 @@ fn run_session_from_current(
     // and resume read the same mode. Belief-neutral: debate argues craft, never
     // which belief is true.
     //
-    // trace:TASK-300 | ai:claude — and from the front-end's PERSISTED `mode` when
-    // neither of those pinned one; see `starting_mode` for the precedence and the
-    // clobber it ends.
+    // trace:TASK-300 | ai:claude — and from the PERSISTED `mode` when neither of
+    // those pinned one; see `starting_mode` for the precedence and the clobber it
+    // ends.
+    // trace:STORY-367 | ai:claude — that persisted tier is now resolved into
+    // `config.mode` itself (`CliConfig::seeded_from`), one seam upstream, so this
+    // reads it straight. Resolving it here left every EARLIER reader of
+    // `config.mode` — a resume's auto-continue — framing with a different mode
+    // than the loop it was about to hand over to.
     let persisted = fe.persisted_settings();
-    let mut mode: SessionMode = starting_mode(config.mode, config.mode_pinned, persisted.mode);
+    let mut mode: SessionMode = config.mode;
     // trace:STORY-174 | ai:claude
     // The persistent SCORE GAUGE state. `score_gauge_on` is the `/score` toggle —
     // DEFAULT OFF (even with a goal set), flipped only by `/score`. `last_gauge`
@@ -3111,8 +3181,9 @@ fn run_session_from_current(
                             render_score_gauge_off(fe.out())?;
                         }
                         // trace:STORY-194 | ai:claude — keep the /settings panel in
-                        // sync with the dedicated /score shortcut + persist it.
-                        fe.sync_score(score_gauge_on);
+                        // sync with the dedicated /score shortcut + persist it: the
+                        // user asked for this gauge state, so it becomes the default.
+                        fe.persist_score(score_gauge_on);
                         continue;
                     }
                     AnswerInput::Goal(text) => {
@@ -3184,7 +3255,7 @@ fn run_session_from_current(
                         // SAME question is re-presented under the new mode.
                         // Belief-neutral: debate argues craft, never which belief is
                         // true.
-                        set_mode_in_session(
+                        let chosen = set_mode_in_session(
                             &mut mode,
                             &token,
                             &mut TurnJournal::new(config, &mut logger, answered_turn),
@@ -3192,7 +3263,19 @@ fn run_session_from_current(
                         )?;
                         // trace:STORY-194 | ai:claude — keep the /settings panel in
                         // sync with the dedicated /mode shortcut + persist it.
-                        fe.sync_mode(mode.as_str());
+                        // trace:STORY-367 | ai:claude — but ONLY when the user
+                        // actually named a mode. A bare `/mode` just prints the
+                        // current one, and under `--mode debate` that live value is
+                        // an override of the saved default, not a new one: writing
+                        // it back is how a flag passed once became permanent.
+                        if chosen {
+                            fe.persist_mode(mode);
+                        } else {
+                            fe.mirror_live(LiveSettings {
+                                score: score_gauge_on,
+                                mode,
+                            });
+                        }
                         continue;
                     }
                     AnswerInput::Editor(token) => {
@@ -3218,8 +3301,13 @@ fn run_session_from_current(
                         // /score / /mode logic so the dedicated shortcuts and the
                         // panel stay in sync. Non-destructive: the SAME question is
                         // re-presented.
-                        fe.sync_score(score_gauge_on);
-                        fe.sync_mode(mode.as_str());
+                        // trace:STORY-367 | ai:claude — the push is a MIRROR, not a
+                        // save. Opening a panel is not changing a setting, and the
+                        // live values pushed here can be this session's overrides.
+                        fe.mirror_live(LiveSettings {
+                            score: score_gauge_on,
+                            mode,
+                        });
                         let updated = fe.settings_surface(&rest);
                         // Reconcile MODE first (cheap, no LLM).
                         if updated.mode != mode {
@@ -3229,7 +3317,12 @@ fn run_session_from_current(
                                 &mut TurnJournal::new(config, &mut logger, answered_turn),
                                 fe.out(),
                             )?;
-                            fe.sync_mode(mode.as_str());
+                            // The surface already persisted the user's choice; this
+                            // only re-aligns the display copy.
+                            fe.mirror_live(LiveSettings {
+                                score: score_gauge_on,
+                                mode,
+                            });
                         }
                         // Reconcile the SCORE gauge through the same toggle logic as
                         // AnswerInput::Score (computing immediately when turned on).
@@ -3250,7 +3343,11 @@ fn run_session_from_current(
                                 last_gauge = None;
                                 render_score_gauge_off(fe.out())?;
                             }
-                            fe.sync_score(score_gauge_on);
+                            // Likewise: persisted by the surface, mirrored here.
+                            fe.mirror_live(LiveSettings {
+                                score: score_gauge_on,
+                                mode,
+                            });
                         }
                         continue;
                     }

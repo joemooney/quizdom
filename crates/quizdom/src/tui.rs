@@ -864,7 +864,14 @@ pub(crate) struct TuiFrontEnd<R: BufRead, B: Backend = CrosstermBackend<Stdout>>
     // / score / mode), loaded/persisted via the config file. The `/settings` panel
     // and the dedicated shortcuts mutate this; `mouse_enabled` mirrors
     // `settings.mouse` for the status bar.
+    // trace:STORY-367 | ai:claude — the DISPLAY copy: the engine mirrors its live
+    // score/mode into it so the panel shows the session's real state. What gets
+    // SAVED is `persisted` below.
     settings: Settings,
+    // trace:STORY-367 | ai:claude — what `settings.toml` says, and the only thing
+    // ever written back. An explicitly changed key crosses over one at a time
+    // (`Settings::adopt`); a `--mode debate` the engine mirrored never does.
+    persisted: Settings,
     // trace:STORY-180 | ai:claude — the open-in-$EDITOR launcher. Boxed + injectable
     // so the Ctrl-X Ctrl-E round-trip can be driven by a mock in tests (CI never
     // spawns a real editor); production wires [`SpawnEditorLauncher`].
@@ -930,6 +937,8 @@ impl<R: BufRead> TuiFrontEnd<R, CrosstermBackend<Stdout>> {
             // editor choice (Auto re-infers from $EDITOR, per STORY-180).
             editor_model,
             settings,
+            // The two copies start equal: nothing has been mirrored yet.
+            persisted: settings,
             launcher: Box::new(SpawnEditorLauncher),
             // trace:STORY-190 | ai:claude
             palette_ctx: PaletteContext::default(),
@@ -983,6 +992,7 @@ impl<R: BufRead> TuiFrontEnd<R, ratatui::backend::TestBackend> {
             // editor, mouse on, score off, socratic) so the model is deterministic
             // and never touches the real config file.
             settings: Settings::default(),
+            persisted: Settings::default(),
             launcher: Box::new(SpawnEditorLauncher),
             // trace:STORY-190 | ai:claude
             palette_ctx: PaletteContext::default(),
@@ -1962,17 +1972,26 @@ impl<R: BufRead, B: Backend> TuiFrontEnd<R, B> {
     fn set_editor_choice_value(&mut self, choice: EditorChoice) {
         self.settings.editor = choice;
         self.editor_model = choice.resolve(&resolved_env_editor());
-        self.persist_settings();
+        self.persist(SettingKey::Editor);
     }
 
     // trace:STORY-194 | ai:claude
-    /// Persist the current settings to the config file (best-effort: a write error
-    /// is non-fatal — the change still applies for the session). SKIPPED under a
-    /// TestBackend (no terminal guard) so unit tests never touch the real config
-    /// file on disk — only the production TUI (with a guard) persists.
-    fn persist_settings(&mut self) {
+    /// Persist ONE explicitly changed setting to the config file (best-effort: a
+    /// write error is non-fatal — the change still applies for the session). The
+    /// SAVE itself is SKIPPED under a TestBackend (no terminal guard) so unit
+    /// tests never touch the real config file on disk — only the production TUI
+    /// (with a guard) writes.
+    ///
+    // trace:STORY-367 | ai:claude
+    /// The key argument is the point: it carries the one value the user named
+    /// from the display copy into the persisted one. Saving the display copy
+    /// whole is what let a mirrored `--mode debate` reach the file behind an
+    /// unrelated `/settings set editor vim`. The `adopt` runs even under the test
+    /// backend, so the model — what WOULD be written — stays testable.
+    fn persist(&mut self, key: SettingKey) {
+        self.persisted.adopt(key, self.settings);
         if self._guard.is_some() {
-            let _ = crate::settings::save(&self.settings);
+            let _ = crate::settings::save(&self.persisted);
         }
     }
 
@@ -1993,15 +2012,15 @@ impl<R: BufRead, B: Backend> TuiFrontEnd<R, B> {
                 // record + persist the new state so the panel and shortcut agree.
                 self.toggle_mouse()?;
                 self.settings.mouse = self.mouse_enabled;
-                self.persist_settings();
+                self.persist(SettingKey::Mouse);
             }
             SettingKey::Score => {
                 self.settings.score = !self.settings.score;
-                self.persist_settings();
+                self.persist(SettingKey::Score);
             }
             SettingKey::Mode => {
                 self.settings.cycle(SettingKey::Mode);
-                self.persist_settings();
+                self.persist(SettingKey::Mode);
             }
         }
         Ok(())
@@ -2029,7 +2048,7 @@ impl<R: BufRead, B: Backend> TuiFrontEnd<R, B> {
                         let _ = self.toggle_mouse();
                     }
                     self.settings.mouse = self.mouse_enabled;
-                    self.persist_settings();
+                    self.persist(SettingKey::Mouse);
                     self.transcript.push_block(&format!(
                         "[settings] Mouse set: {}",
                         self.settings.value_label(SettingKey::Mouse)
@@ -2041,7 +2060,8 @@ impl<R: BufRead, B: Backend> TuiFrontEnd<R, B> {
             },
             (Some(key @ (SettingKey::Score | SettingKey::Mode)), Some(value)) => {
                 if self.settings.set_from_token(key, value) {
-                    self.persist_settings();
+                    // trace:STORY-367 | ai:claude — one key: the user named it.
+                    self.persist(key);
                     self.transcript.push_block(&format!(
                         "[settings] {} set: {}",
                         key.label(),
@@ -2444,26 +2464,27 @@ impl<R: BufRead, B: Backend> FrontEnd for TuiFrontEnd<R, B> {
     }
 
     // trace:TASK-266 | ai:claude — widened by TASK-300.
+    // trace:STORY-367 | ai:claude — the PERSISTED copy, not the mirrored one.
     fn persisted_settings(&self) -> crate::settings::Settings {
-        self.settings
+        self.persisted
+    }
+
+    // trace:STORY-367 | ai:claude
+    fn mirror_live(&mut self, live: crate::settings::LiveSettings) {
+        self.settings.score = live.score;
+        self.settings.mode = live.mode;
     }
 
     // trace:STORY-194 | ai:claude
-    fn sync_score(&mut self, on: bool) {
-        if self.settings.score != on {
-            self.settings.score = on;
-            self.persist_settings();
-        }
+    fn persist_score(&mut self, on: bool) {
+        self.settings.score = on;
+        self.persist(SettingKey::Score);
     }
 
     // trace:STORY-194 | ai:claude
-    fn sync_mode(&mut self, mode_token: &str) {
-        if let Some(mode) = crate::strategy::SessionMode::parse(mode_token) {
-            if self.settings.mode != mode {
-                self.settings.mode = mode;
-                self.persist_settings();
-            }
-        }
+    fn persist_mode(&mut self, mode: crate::strategy::SessionMode) {
+        self.settings.mode = mode;
+        self.persist(SettingKey::Mode);
     }
 
     // trace:STORY-194 | ai:claude — the SETTINGS surface. `set <key> <value>`
@@ -3637,19 +3658,54 @@ mod tests {
     }
 
     // trace:STORY-194 | ai:claude — the dedicated /score + /mode shortcuts keep the
-    // panel in sync: `sync_score` / `sync_mode` record the engine-owned state into
-    // the front-end's settings so a later /settings panel shows the live value.
+    // panel in sync: they record the engine-owned state into the front-end's
+    // settings so a later /settings panel shows the live value.
     #[test]
     fn shortcuts_stay_in_sync_with_the_panel_state() {
         let mut tui = test_tui(60, 24);
         assert!(!tui.settings.score);
-        tui.sync_score(true);
+        tui.persist_score(true);
         assert!(tui.settings.score);
-        tui.sync_mode("debate");
+        tui.persist_mode(crate::strategy::SessionMode::Debate);
         assert_eq!(tui.settings.mode, crate::strategy::SessionMode::Debate);
         // The panel value labels now reflect the synced state.
         assert_eq!(tui.settings.value_label(SettingKey::Score), "On");
         assert_eq!(tui.settings.value_label(SettingKey::Mode), "Debate");
+        // And an explicit choice IS a new default, so it reaches the saved copy.
+        assert_eq!(
+            tui.persisted_settings().mode,
+            crate::strategy::SessionMode::Debate
+        );
+    }
+
+    // trace:STORY-367 | ai:claude — the TUI's twin of the line front-end's rule:
+    // what the panel SHOWS is the session's live state, what gets SAVED is only
+    // what the user changed. Before this, opening `/settings` under `--mode debate`
+    // wrote `mode = "debate"` over a file that said socratic.
+    #[test]
+    fn a_mirrored_session_override_reaches_the_panel_but_not_the_file() {
+        let mut tui = test_tui(60, 24);
+        let saved = tui.persisted_settings();
+
+        tui.mirror_live(crate::settings::LiveSettings {
+            score: true,
+            mode: crate::strategy::SessionMode::Debate,
+        });
+        // The panel rows read the live values...
+        assert_eq!(tui.settings.value_label(SettingKey::Mode), "Debate");
+        assert_eq!(tui.settings.value_label(SettingKey::Score), "On");
+        // ...and nothing has been written.
+        assert_eq!(tui.persisted_settings(), saved);
+
+        // Cycling an unrelated row persists only that row.
+        tui.cycle_setting(SettingKey::Mouse).unwrap();
+        assert_ne!(tui.persisted_settings().mouse, saved.mouse);
+        assert_eq!(
+            tui.persisted_settings().mode,
+            saved.mode,
+            "the session's mode override is not a new saved default"
+        );
+        assert_eq!(tui.persisted_settings().score, saved.score);
     }
 
     // trace:STORY-194 | ai:claude — the `/settings set <key> <value>` line path
