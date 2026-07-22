@@ -7193,5 +7193,28 @@ operations:
     req_type: Story
     status: Approved
     priority: Medium
-clock: 559
+- id: 019f8ae4-f566-78b3-bcf4-f3d5322a1a56
+  target_id: 019f8ae4-f338-71e0-8c67-ae1aede078ed
+  author: aida
+  node_id: ''
+  lamport: 560
+  timestamp: 2026-07-22T17:34:48.678976071Z
+  kind: !Create
+    title: Contract-message accuracy and the last of the too_many_arguments allows
+    description: |-
+      Third-generation follow-ups on STORY-293. store.rs / signals.rs / session.rs.
+
+      TASK-319: batch-contract errors say 'a batch load must return one entry per requested id' even on the reweight_questions WRITE seam, so the message misdescribes what failed. Make the message name the actual seam.
+      TASK-318: DomainStore::fetch_nodes_present's skip-contract is doc-enforced only — a backend that reports absence as Dolt() rather than NotFound silently loses leniency. Make the contract enforced rather than documented, or make the violation detectable.
+      TASK-315: seven pre-STORY-260 clippy::too_many_arguments allows remain on session.rs free functions; STORY-293 only did the ones in its blast radius. Finish the job with payload structs.
+
+      ## Acceptance
+      - A write-seam contract violation produces a message naming the write seam, not a load.
+      - A backend reporting absence as the wrong variant is caught by a test rather than silently degrading.
+      - No clippy::too_many_arguments allow remains in session.rs; clippy is clean under -D warnings without them.
+      - cargo test green; no behavior change beyond the contract fixes.
+    req_type: Story
+    status: Approved
+    priority: Medium
+clock: 560
 node_id: ''
