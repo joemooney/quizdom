@@ -1,0 +1,37 @@
+id: 019f88de-003a-7353-9924-d1336753d9ce
+spec_id: TASK-285
+agreed_id: TASK-285
+title: 'STORY-260 silenced too_many_arguments with #[allow] rather than payload structs'
+description: |
+  TASK-233's two `clippy::too_many_arguments` hits are
+  `SessionLogger::contradiction_resolved` and `::next_question_selected`
+  (crates/quizdom/src/session.rs). Both were resolved with
+  `#[allow(clippy::too_many_arguments)]` plus an explanatory comment, NOT by
+  restructuring the signatures.
+
+  Reasoning: these are two of ten event writers whose parameter lists mirror
+  their JSON event schema field-for-field, and `session_started` — two methods
+  above them in the same impl — already carried the same allow for the same
+  reason. Bundling a subset of two into payload structs would have made those
+  two read differently from the other eight for no gain at the call sites (1
+  call site for contradiction_resolved, 5 for next_question_selected).
+
+  If the advisor would rather see a real refactor, the coherent version is an
+  `EventContext { session_id, user_id, branch_id, turn }` applied to ALL ten
+  writers, not a partial fix — that is a design change, not hygiene, so it was
+  not taken under a story whose acceptance says "behavior unchanged (pure
+  rename/cleanup)".
+
+  Raised by the implementer while working STORY-260.
+  Branch: story-260  ·  Commit: 0430e94  (PR link added on merge)
+status: Draft
+priority: Medium
+owner: ''
+feature: Uncategorized
+created_at: 2026-07-22T08:07:58.266264139Z
+modified_at: 2026-07-22T08:07:58.266264139Z
+req_type: Task
+tags:
+- from-implementer:STORY-260
+- kind:design-choice
+- severity:minor
