@@ -8724,5 +8724,39 @@ operations:
   timestamp: 2026-07-22T19:52:46.045191626Z
   kind: !SetStatus
     status: Completed
-clock: 640
+- id: 019f8b6a-a687-7502-936e-1116bfddf331
+  target_id: 019f8b6a-a0a4-7590-99de-c2c5bac6b5c2
+  author: aida
+  node_id: ''
+  lamport: 641
+  timestamp: 2026-07-22T20:00:50.311709763Z
+  kind: !Create
+    title: quizdom logs now EXITS NON-ZERO on an unreadable log (was always exit 0)
+    description: |
+      TASK-347 offered a range: "carry the io::Error into the message, or at minimum
+      distinguish NotFound from everything else." I took the stronger end and made a
+      non-NotFound read failure a real error — `QuizdomError::Io` out of
+      `render_logs`, so `main` prints `error: …` on stderr and exits 1.
+
+      Why: `logs.rs`'s module docs previously promised "a plain message and an exit
+      code of 0, not an error", and that promise was justified explicitly by the
+      healthy install genuinely having no file. That justification does not extend to
+      a log that is THERE and could not be read — the user asked to read a log and
+      quizdom did not read it, which is a failure, and a zero exit makes it
+      unscriptable. Absence keeps the message and the zero exit unchanged.
+
+      The advisor should know this shipped because it is a user-visible behaviour
+      change to an existing command's exit code, not only a wording change. Nothing in
+      the tree consumes `quizdom logs`' exit status today (main.rs is the only
+      caller), so the blast radius is a human's shell or a future script.
+
+      crates/quizdom/src/logs.rs — `unreadable()` and the `ErrorKind` split in
+      `render_logs`.
+
+      Raised by the implementer while working STORY-352.
+      Branch: story-352  ·  Commit: f813a01  (PR link added on merge)
+    req_type: Task
+    status: Draft
+    priority: Medium
+clock: 641
 node_id: ''
