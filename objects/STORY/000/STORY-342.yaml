@@ -1,0 +1,25 @@
+id: 019f8b17-0950-70d3-85ee-ce323bcf5ece
+spec_id: STORY-342
+agreed_id: STORY-342
+title: 'Close the diagnostics loop: a log reader, safe rotation, the silent reminder, and the last two allows'
+description: |-
+  Final consolidation round. These are the four genuinely substantive items left after the review generations converged; everything else remaining is commentary on implementation choices and has been closed.
+
+  TASK-331: the diagnostic log has no READER. Logging that cannot be read is logging that will not be used — add 'quizdom logs' (with a --tail N) so the breadcrumb STORY-299 added is actually reachable without knowing the resolved path.
+  TASK-333: log rotation is stat-then-rename, so two concurrent quizdom processes can clobber quizdom.log.1. Make rotation safe under concurrency (atomic rename, or accept-and-document a single-writer assumption with a test pinning whichever is chosen).
+  TASK-328: STORY-326 made an Unknown backup probe PUSH when auto_backup is on — correct — but the REMINDER half still stays silent on Unknown, so a user without auto_backup gets nothing when the probe cannot tell. Make both halves honest about not knowing.
+  TASK-336: two clippy::too_many_arguments allows remain outside session.rs (frontend.rs, tui.rs). Finish them so the codebase has none.
+
+  ## Acceptance
+  - 'quizdom logs' prints the diagnostic log; --tail N limits output; a missing log is a clear message, not an error.
+  - Concurrent rotation cannot lose a rotated file — or the single-writer assumption is explicit and tested.
+  - An Unknown probe with auto_backup OFF still tells the user it could not determine backup state (test both probe outcomes against both settings).
+  - No clippy::too_many_arguments allow remains anywhere in the workspace; clippy clean under -D warnings.
+  - cargo test green; real_dolt green.
+status: Approved
+priority: Medium
+owner: ''
+feature: Uncategorized
+created_at: 2026-07-22T18:29:30.576506552Z
+modified_at: 2026-07-22T18:29:30.576506552Z
+req_type: Story
