@@ -24,12 +24,12 @@ description: |
   `rows()` also appears in the footer.
 
   Raised in review of PR-103: https://github.com/joemooney/quizdom/pull/103#issuecomment-5049615664
-status: Draft
+status: Rejected
 priority: Medium
 owner: ''
 feature: Uncategorized
 created_at: 2026-07-22T17:59:26.390733024Z
-modified_at: 2026-07-22T19:00:49.542257275Z
+modified_at: 2026-07-22T19:00:50.421048536Z
 req_type: Task
 tags:
 - from-review:PR-103
