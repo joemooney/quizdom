@@ -1,0 +1,44 @@
+id: 019f8a78-df5b-7c82-8293-d3bcac1f727e
+spec_id: TASK-302
+agreed_id: TASK-302
+title: settings load/save are cfg(test) no-ops — deliberate hermeticity, but it hides the disk path from tests
+description: |
+  STORY-290 made `settings::load_or_seed` and `settings::save` return early under
+  `cfg(test)` (crates/quizdom/src/settings.rs). The advisor should know this
+  shipped, because it is a real trade-off, not a mechanical detail.
+
+  WHY it was necessary. Every front-end calls `load_or_seed()` in its constructor,
+  including the `LineFrontEnd` the ~617 in-crate tests run through. Once TASK-266
+  made a persisted `score = true` SEED the engine's gauge, the developer's own
+  `~/.config/quizdom/settings.toml` became an input to the test suite. The
+  maintainer's real config on this machine carries `score = true` and
+  `mode = "debate"`, so without the guard the suite's output would have differed
+  between machines. Separately, `save` was already unguarded on the headless path
+  (the TUI guards it via `_guard.is_some()`), so a future test exercising
+  `/settings set ...` would have rewritten the developer's real config file.
+
+  WHAT IT COSTS. `load_or_seed` and `save` themselves are now untested — the disk
+  IO, the first-run `$EDITOR` seed on a missing file, and the `create_dir_all` are
+  all outside test coverage. The logic they wrap IS covered (`from_toml`,
+  `to_toml_merged`, `merged_body`, `dolt_path_from` are driven directly), so what
+  is uncovered is the thin IO shell, but it is not nothing.
+
+  The cleaner long-term shape is injection rather than a `cfg!` branch: give
+  `LineFrontEnd` a `with_settings` constructor and thread a settings source through
+  `build_session_front_end`, so tests pass `Settings::default()` explicitly and the
+  production path keeps its disk read. That is a wider refactor than STORY-290's
+  scope (it touches the front-end construction seam), hence the guard for now.
+
+  Raised by the implementer while working STORY-290.
+  Branch: story-290  ·  Commit: cf4c24c  (PR link added on merge)
+status: Draft
+priority: Medium
+owner: ''
+feature: Uncategorized
+created_at: 2026-07-22T15:36:45.147736467Z
+modified_at: 2026-07-22T15:36:45.147736467Z
+req_type: Task
+tags:
+- from-implementer:STORY-290
+- kind:design-choice
+- severity:minor
