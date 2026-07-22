@@ -31,9 +31,16 @@ priority: Medium
 owner: ''
 feature: Uncategorized
 created_at: 2026-07-22T16:49:15.800323870Z
-modified_at: 2026-07-22T16:49:15.800323870Z
+modified_at: 2026-07-22T17:34:24.313344029Z
 req_type: Task
 tags:
 - from-implementer:STORY-293
 - kind:design-choice
 - severity:minor
+comments:
+- id: 019f8ae4-9639-7ef1-82f7-bc39c7dab160
+  author: joe
+  content: 'Record of a deliberate design choice from STORY-293: QuizdomError::NotFound exists so the trait default can distinguish absence from failure. Only the Dolt store emits it because it is the only backend; that is the point. TASK-318 tracks the actionable half.'
+  created_at: 2026-07-22T17:34:24.313344029Z
+  modified_at: 2026-07-22T17:34:24.313344029Z
+  session_id: 789bafdb-f673-41c5-affc-d550f95e51e5
