@@ -1,0 +1,26 @@
+id: 019f8b5b-9d5c-7d41-af0b-c0943380c0e7
+spec_id: STORY-358
+agreed_id: STORY-358
+title: 'Review PR-107: [AI:claude] fix(dolt): verify before committing, stage only our own writes, diagnose a missing path honestly (STORY-351)'
+description: |
+  Auto-filed by `aida session end` (backup trigger) (session `019f8b4a`) for branch `story-351`.
+
+  - PR: <https://github.com/joemooney/quizdom/pull/107>
+  - Branch: `story-351` → `main`
+
+  ## Covers
+
+  - STORY-351
+
+  ## Acceptance
+
+  - Generate a structured review prompt with `aida review prompt --pr 107` and verify each spec's acceptance criteria.
+  - Approve and merge, or request changes by spec id.
+  - Mark this story `completed` once the PR is merged.
+status: Approved
+priority: Medium
+owner: ''
+feature: Uncategorized
+created_at: 2026-07-22T19:44:24.924552796Z
+modified_at: 2026-07-22T19:44:24.924552796Z
+req_type: Story
