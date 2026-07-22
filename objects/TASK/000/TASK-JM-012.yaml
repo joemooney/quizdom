@@ -1,5 +1,6 @@
 id: 019f8b35-0082-79d0-9934-482a8d50649f
 spec_id: TASK-JM-012
+agreed_id: TASK-12
 title: Solo/burndown guidance says to fan ONE worktree-isolated implementer per ready …
 description: 'Solo/burndown guidance says to fan ONE worktree-isolated implementer per ready spec, but ''aida queue work <SPEC> --auto-complete'' takes a GLOBAL drain lock: the second concurrent invocation dies with ''a drain is already running (pid N, cmd queue work --auto-complete STORY-350)''. So the documented fan-out is not achievable through the drain entrypoint — it needs ''aida agent new --spec'' instead, or the lock needs to be per-spec/per-worktree. Observed 2026-07-22 attempting file-disjoint STORY-350 + STORY-351 in parallel.'
 status: Draft
