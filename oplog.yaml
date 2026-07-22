@@ -9380,5 +9380,38 @@ operations:
     req_type: Task
     status: Draft
     priority: Medium
-clock: 673
+- id: 019f8bb5-2b5e-7a93-925e-7e58630ea7fc
+  target_id: 019f8bb5-27d0-77b0-b3d1-2c2d5ce5fb10
+  author: aida
+  node_id: ''
+  lamport: 674
+  timestamp: 2026-07-22T21:22:13.982341588Z
+  kind: !Create
+    title: A CI job cancelled with zero steps reads as 'failure' and would stall an orchestrated merge
+    description: |
+      PR-110's first CI run (29957288836) sat from 20:57:41 to 21:12:43 and was then
+      cancelled having recorded ZERO steps — no runner ever picked it up. The surfaces
+      disagree about what that means:
+
+        gh run list      -> conclusion: failure
+        statusCheckRollup-> conclusion: CANCELLED
+        gh pr view       -> mergeStateStatus: UNSTABLE
+        gh run view --log-failed -> empty (no steps, so no logs to show)
+
+      A reviewer gating on "CI green" sees a red PR with nothing to diagnose. `gh run
+      rerun` produced a clean pass (fmt, clippy, test, dolt acceptance) on the very
+      same SHA, confirming the code was never the cause.
+
+      Why it matters beyond this PR: under an `--auto-complete` orchestrator the
+      reviewer writes a verdict and phase 4 merges. A phantom-cancelled run turns an
+      Approved PR into either a stalled drain or an escalation, for an infra reason
+      with no failing log to point at. Worth deciding the policy explicitly — e.g. the
+      reviewer's step-6 CI gate re-runs once on a `cancelled`-with-no-steps
+      conclusion before treating it as red, rather than each reviewer improvising it.
+
+      Raised in review of PR-110: https://github.com/joemooney/quizdom/pull/110#issuecomment-5051624056
+    req_type: Task
+    status: Draft
+    priority: Medium
+clock: 674
 node_id: ''
