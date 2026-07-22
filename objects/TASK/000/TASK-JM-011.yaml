@@ -8,8 +8,7 @@ priority: Medium
 owner: joe
 feature: Uncategorized
 created_at: 2026-07-19T19:11:31.069479767Z
-modified_at: 2026-07-19T19:11:31.069479767Z
+modified_at: 2026-07-22T05:46:23.194473454Z
 req_type: Task
 tags:
-- from-advisor:general
-- kind:observation
+- upstream:aida
