@@ -29,12 +29,12 @@ description: |
   the db commands do not persist, which argues for the former.
 
   Raised in review of PR-106: https://github.com/joemooney/quizdom/pull/106#issuecomment-5050483733
-status: Draft
+status: Completed
 priority: Medium
 owner: ''
 feature: Uncategorized
 created_at: 2026-07-22T19:23:35.337130346Z
-modified_at: 2026-07-22T19:23:35.337130346Z
+modified_at: 2026-07-22T21:23:17.644581530Z
 req_type: Task
 tags:
 - from-review:PR-106
