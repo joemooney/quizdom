@@ -1,0 +1,38 @@
+id: 019f8bb4-9b79-7260-8141-3a2e74c751a4
+spec_id: TASK-375
+agreed_id: TASK-375
+title: persist_score/persist_mode lost the no-change guard, so a no-op /mode rewrites settings.toml
+description: |
+  STORY-367 replaced `FrontEnd::sync_score` / `sync_mode` with `persist_score` /
+  `persist_mode`. The old pair guarded on change:
+
+      if self.settings.score != on { self.settings.score = on; save(...) }
+
+  The new pair does not — `crates/quizdom/src/frontend.rs:377-386` and
+  `crates/quizdom/src/tui.rs:2479-2488` assign and then call `persist(key)`
+  unconditionally. So `/mode debate` while the session is already in debate, or
+  `/score` toggled back to a value that matches the file, now performs a full
+  read-merge-write of `settings.toml` where it used to be a no-op.
+
+  Functionally harmless: `Settings::adopt` copies the same value, `to_toml_merged`
+  preserves every foreign key, and the IO error is swallowed by `let _ =`. The
+  cost is a redundant disk write per no-op shortcut, and a slightly wider window
+  for the TASK-268 "file exists but is unreadable, so refuse rather than drop
+  keys" path to fire on a command that was not changing anything.
+
+  Worth restoring the guard inside `persist(key)` (compare the adopted key's value
+  before saving) rather than in each caller — that keeps the STORY-367 one-key
+  seam intact.
+
+  Raised in review of PR-110: https://github.com/joemooney/quizdom/pull/110#issuecomment-5051624056
+status: Draft
+priority: Medium
+owner: ''
+feature: Uncategorized
+created_at: 2026-07-22T21:21:37.145925333Z
+modified_at: 2026-07-22T21:21:37.145925333Z
+req_type: Task
+tags:
+- from-review:PR-110
+- settings
+- severity:cosmetic
