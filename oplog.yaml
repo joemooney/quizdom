@@ -6243,5 +6243,47 @@ operations:
     req_type: Task
     status: Draft
     priority: Medium
-clock: 509
+- id: 019f8a81-5f85-7f23-b189-6e025da2279e
+  target_id: 019f8a81-5e07-7520-8d37-96db2b11fcb1
+  author: aida
+  node_id: ''
+  lamport: 510
+  timestamp: 2026-07-22T15:46:02.245625227Z
+  kind: !Create
+    title: parse_value does not process TOML backslash escapes, nor expand a leading ~
+    description: |
+      Two gaps in `parse_value` (crates/quizdom/src/settings.rs:392), both NON-
+      REGRESSIONS — byte-identical to pre-PR-99 behaviour — and both outside
+      STORY-290's acceptance. Filed so the gap is recorded rather than rediscovered.
+
+      1. BACKSLASH ESCAPES. TOML basic (double-quoted) strings process escapes;
+         `parse_value` does not.
+
+           dolt_path = "a\"b"     ->  a\"b        (TOML: a"b)
+           dolt_path = "C:\\x"    ->  C:\\x       (TOML: C:\x)
+
+         The escaped-quote case additionally falls out of the TOML-legal branch
+         (the `find(quote)` lands on the escaped quote, so `rest` is non-empty and
+         not a comment) and degrades to `strip_matched_double_quotes`. The degrade is
+         tolerant, not fatal, which is the documented contract — but the doc comment
+         says the value is parsed "the way TOML would read it", which slightly
+         oversells it. TOML LITERAL strings (single-quoted) do NOT process escapes,
+         so the single-quote handling is already spec-correct.
+
+      2. LEADING TILDE. `dolt_path = "~/graphs"` is `is_relative()`, so
+         `anchor_to_config_dir` joins it onto the config dir and yields a path with a
+         literal `~` component (`~/.config/quizdom/~/graphs`). No tier expands `~`
+         today, so this was broken before too — just differently. It surfaces via
+         TASK-304's misdiagnosing spawn error.
+
+      Suggested scope if picked up: either handle the two escape sequences that
+      actually matter (`\"` and `\\`) and expand a leading `~/`, or narrow the doc
+      comment to say plainly which subset of TOML the flat schema accepts. The second
+      is cheap and may be the honest fix given the file is a small hand-edited table.
+
+      Raised in review of PR-99: https://github.com/joemooney/quizdom/pull/99#issuecomment-5048283389
+    req_type: Task
+    status: Draft
+    priority: Medium
+clock: 510
 node_id: ''
