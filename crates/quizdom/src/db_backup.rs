@@ -82,6 +82,10 @@ use crate::error::{QuizdomError, Result};
 use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::process::Output;
+use std::sync::atomic::{AtomicU64, Ordering};
+
+/// Distinguishes concurrent restores that share a parent directory.
+static RESTORE_SCRATCH_SEQ: AtomicU64 = AtomicU64::new(0);
 
 /// The remote name `db-backup` manages inside the domain-graph repo. Named
 /// (not `origin`) so it cannot collide with the `origin` that `dolt clone`
@@ -402,7 +406,17 @@ fn db_restore(
     // before doing anything, so a parent holding unrelated subdirectories can
     // fail the clone outright ("failed to load database names") — and does,
     // whenever a sibling directory disappears mid-scan.
-    let scratch = parent.join(format!(".quizdom-restore-{}", std::process::id()));
+    //
+    // The name must be unique per CALL, not per process: two restores sharing
+    // a parent (every `#[test]` under /tmp) would otherwise agree on one
+    // scratch path, and the first to finish deletes it out from under the
+    // other's running clone — which then dies on `getwd: no such file or
+    // directory`.
+    let scratch = parent.join(format!(
+        ".quizdom-restore-{}-{}",
+        std::process::id(),
+        RESTORE_SCRATCH_SEQ.fetch_add(1, Ordering::Relaxed)
+    ));
     std::fs::create_dir_all(&scratch)?;
     let cloned = run_dolt(
         runner,
