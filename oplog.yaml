@@ -4323,5 +4323,53 @@ operations:
     req_type: Task
     status: Draft
     priority: Medium
-clock: 416
+- id: 019f8878-99cd-7262-8079-78ee1c65b068
+  target_id: 019f8878-985b-7171-bef2-428ea9aa81d8
+  author: aida
+  node_id: ''
+  lamport: 417
+  timestamp: 2026-07-22T06:17:12.909013241Z
+  kind: !Create
+    title: No logging seam under the alternate screen — load_probed_terms' unwrap_or_default() still hides a store failure as 'this question defines nothing'
+    description: |
+      crates/quizdom/src/honing.rs:152-160 (TASK-247, PR-92).
+
+      The second half of TASK-247's finding, deliberately deferred by PR-92 with a
+      sound rationale — recording it so it is not lost.
+
+      TASK-247 fixed the blast radius: an absent `probes` target now costs one
+      definition instead of all of them. It did not fix the silence. Both
+      `unwrap_or_default()`s in `load_probed_terms` still turn a genuine store
+      failure into an empty Vec, and nothing distinguishes "this question probes
+      no terms" from "the probes read failed" or "the batch node read failed".
+      Post-TASK-247 the swallowed case is narrower but no louder.
+
+      Why PR-92 deferred it: the session loop runs inside a crossterm alternate
+      screen (tui.rs), so an `eprintln!` from `honing.rs` would be invisible at
+      best and would corrupt the display at worst. Surfacing store failures to the
+      reader needs a logging seam first — a file/stderr sink the TUI does not
+      own, or a diagnostics channel the session drains outside the alternate
+      screen.
+
+      Scope is wider than `honing.rs`: every `unwrap_or_default()` /
+      `filter_map(.ok())` on a store read has the same problem, and the
+      best-effort reads TASK-247 just introduced (`fetch_nodes_present`) make
+      silent degradation a first-class, sanctioned path rather than an accident.
+      That raises the value of having somewhere for the swallowed errors to go.
+
+      Suggested shape: a minimal `log` seam writing to a file under the config dir
+      (or `tracing` with a file subscriber), initialized before the alternate
+      screen is entered, so a swallowed store error leaves a trace without
+      touching the TUI.
+
+      Related: TASK-250 (curate hard-errors on a short batch load instead of
+      silently degrading) — the same silent-degradation family, opposite
+      resolution.
+
+      Raised in review of PR-92:
+      https://github.com/joemooney/quizdom/pull/92#issuecomment-5042549338
+    req_type: Task
+    status: Draft
+    priority: Medium
+clock: 417
 node_id: ''
