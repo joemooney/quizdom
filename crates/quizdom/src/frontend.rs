@@ -24,8 +24,8 @@ use crate::palette::PaletteContext;
 // trace:STORY-194 | ai:claude — the settings surface crosses the seam: the engine
 // owns score/mode authoritatively, the front-end owns editor/mouse + persistence.
 use crate::settings::{LiveSettings, Settings};
-use crate::strategy::SessionMode;
 use std::io::{BufRead, BufReader, Read, Write};
+use std::path::PathBuf;
 
 /// The interface the session ENGINE talks to instead of stdin/stdout.
 ///
@@ -162,16 +162,19 @@ pub(crate) trait FrontEnd {
     /// from the saved one for the whole session; when this was also the
     /// persisting call, the first `/settings` of such a session rewrote the
     /// user's saved default with the flag they had passed once.
+    ///
+    // trace:TASK-372 | ai:claude
+    /// **This is the ONLY route the `/score` and `/mode` shortcuts take**
+    /// (BUG-378). STORY-367 demoted a bare `/mode` to mirroring and left
+    /// `/mode debate` and `/score` persisting, on STORY-194's reading that
+    /// naming a value is choosing a new default. That reading does not survive
+    /// the session log: the live mode is a `mode_set` EVENT, restored from the
+    /// log on resume, so `settings.toml`'s `mode` is the default for NEW
+    /// sessions and a mid-session change to it is the same category error
+    /// STORY-367 closed — just one the user initiated. `/settings set mode …`
+    /// and the panel's Mode row are the surfaces that choose a default; the
+    /// shortcuts change this session.
     fn mirror_live(&mut self, live: LiveSettings);
-
-    // trace:STORY-194 | ai:claude
-    /// PERSIST an explicit user change to the score gauge (the `/score`
-    /// shortcut), mirroring it too so the panel and the shortcut agree.
-    fn persist_score(&mut self, on: bool);
-    /// Twin of [`persist_score`](FrontEnd::persist_score) for an explicit
-    /// `/mode <socratic|debate>`. A bare `/mode` changes nothing and so must not
-    /// reach here — showing a value is not choosing one.
-    fn persist_mode(&mut self, mode: SessionMode);
 
     // trace:STORY-194 | ai:claude
     /// Open the SETTINGS surface (`/settings`). `rest` is the text after
@@ -249,6 +252,10 @@ pub(crate) struct LineFrontEnd<R: Read, W: Write> {
     // ever written back. Explicit changes reach it one key at a time
     // (`Settings::adopt`); a mirrored `--mode debate` never does.
     persisted: Settings,
+    // trace:TASK-373 | ai:claude — WHICH file `persisted` was loaded from and is
+    // written back to, resolved once. `None` = nowhere to persist to, which is
+    // what every test gets unless it injects a temp path of its own.
+    config: Option<PathBuf>,
 }
 
 impl<R: Read, W: Write> LineFrontEnd<R, W> {
@@ -257,12 +264,22 @@ impl<R: Read, W: Write> LineFrontEnd<R, W> {
     /// `run_session_from_current`: wrap the reader in a `BufReader` and select
     /// the free-text input mode from the real stdin's TTY-ness.
     pub(crate) fn new(input: R, output: W) -> Result<Self> {
+        Self::with_config(input, output, crate::settings::process_config_path())
+    }
+
+    // trace:TASK-373 | ai:claude
+    /// [`LineFrontEnd::new`] over an EXPLICIT config path, so a test can point
+    /// the whole persistence path at a temp file and assert what lands on disk
+    /// (the end-to-end half STORY-367's acceptance asked for and could not have).
+    /// `None` — what [`crate::settings::process_config_path`] resolves under
+    /// `cfg(test)` — means nothing is loaded and nothing is written.
+    pub(crate) fn with_config(input: R, output: W, config: Option<PathBuf>) -> Result<Self> {
         let free_text_input = FreeTextInput::from_stdin()?;
         // trace:STORY-194 | ai:claude — load the persisted settings (seed from
         // $EDITOR on a first run). Affects only the new /settings + /editor
         // commands, so the byte-exact behavior the piped tests assert is
         // untouched.
-        let settings = crate::settings::load_or_seed();
+        let settings = crate::settings::load_or_seed_at(config.as_deref());
         Ok(Self {
             input: BufReader::new(input),
             free_text_input,
@@ -270,16 +287,37 @@ impl<R: Read, W: Write> LineFrontEnd<R, W> {
             settings,
             // The two copies start equal: nothing has been mirrored yet.
             persisted: settings,
+            config,
         })
     }
 
     // trace:STORY-367 | ai:claude
     /// Carry ONE explicitly changed key from the display copy into the persisted
-    /// one and write the file (best-effort). The single write path — so a value
-    /// the user never asked to change cannot ride along with one they did.
+    /// one and write the file. The single write path — so a value the user never
+    /// asked to change cannot ride along with one they did.
+    ///
+    // trace:TASK-375 | ai:claude
+    /// A key whose adopted value MATCHES what is already persisted writes
+    /// nothing. STORY-367 replaced a guarded `sync_*` pair with an unguarded
+    /// `persist_*` one, so a `/settings set mode socratic` while already Socratic
+    /// performed a full read-merge-write of a file it was not changing — and put
+    /// the TASK-268 "file exists but is unreadable, so refuse" path in the way of
+    /// a command that was a no-op. Guarding HERE rather than in each caller keeps
+    /// the one-key seam intact.
+    ///
+    // trace:BUG-378 | ai:claude
+    /// A failed write is SURFACED, not swallowed: the user asked for a new
+    /// default and did not get one.
     fn persist(&mut self, key: crate::settings::SettingKey) {
+        let before = self.persisted;
         self.persisted.adopt(key, self.settings);
-        let _ = crate::settings::save(&self.persisted);
+        if self.persisted == before {
+            return;
+        }
+        if let Err(error) = crate::settings::save_at(self.config.as_deref(), &self.persisted) {
+            let note = crate::settings::save_failure_note(self.config.as_deref(), &error);
+            let _ = writeln!(self.output, "{note}");
+        }
     }
 
     /// Consume the front-end and hand back the output sink. Standalone commands
@@ -373,18 +411,6 @@ impl<R: Read, W: Write> FrontEnd for LineFrontEnd<R, W> {
         self.settings.mode = live.mode;
     }
 
-    // trace:STORY-194 | ai:claude
-    fn persist_score(&mut self, on: bool) {
-        self.settings.score = on;
-        self.persist(crate::settings::SettingKey::Score);
-    }
-
-    // trace:STORY-194 | ai:claude
-    fn persist_mode(&mut self, mode: SessionMode) {
-        self.settings.mode = mode;
-        self.persist(crate::settings::SettingKey::Mode);
-    }
-
     // trace:STORY-194 | ai:claude — the HEADLESS settings surface: a bare
     // `/settings` prints the current value list; `/settings set <key> <value>`
     // mutates one setting. The engine reconciles score/mode from the returned set.
@@ -432,6 +458,7 @@ impl<R: Read, W: Write> FrontEnd for LineFrontEnd<R, W> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::strategy::SessionMode;
     use std::io::Cursor;
 
     // trace:STORY-168 | ai:claude
@@ -492,10 +519,11 @@ mod tests {
             crate::strategy::SessionMode::Socratic
         );
 
-        // An EXPLICIT change (`/score on`, `/mode debate`) is the user choosing a
-        // new default, so it reaches the persisted copy and the surface alike.
-        fe.persist_score(true);
-        fe.persist_mode(SessionMode::Debate);
+        // An EXPLICIT change through the surface whose subject IS defaults
+        // (`/settings set …`) is the user choosing a new one, so it reaches the
+        // persisted copy and the display copy alike.
+        let _ = fe.settings_surface("set score on");
+        let _ = fe.settings_surface("set mode debate");
         assert!(fe.persisted_settings().score);
         assert_eq!(fe.persisted_settings().mode, SessionMode::Debate);
         let surfaced = fe.settings_surface("");
@@ -545,6 +573,161 @@ mod tests {
             "and the mode they overrode for this session only stays overridden"
         );
         assert!(!fe.persisted_settings().score);
+    }
+
+    // trace:TASK-373 | ai:claude
+    // The END-TO-END version of the test above, against a REAL FILE. STORY-367's
+    // first acceptance criterion was "the persisted value survives a session that
+    // overrode it", and with `save`'s IO compiled out under `cfg(test)` nothing
+    // in-crate could assert it literally — only the model one level in
+    // (`persisted_settings`), which is what a save *would* write. A bug in the
+    // save path itself would have passed. Injecting the config path (rather than
+    // compiling the IO out) makes the file itself assertable, and the hermeticity
+    // guard becomes a temp-directory convention.
+    #[test]
+    fn a_session_override_never_reaches_the_file() {
+        let dir = std::env::temp_dir().join(format!(
+            "quizdom-settings-{}-{:?}",
+            std::process::id(),
+            std::thread::current().id()
+        ));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("settings.toml");
+        // What the user wrote, including a foreign key nobody here models.
+        std::fs::write(
+            &path,
+            "mode = \"socratic\"\nscore = false\ndolt_path = \"/graphs/mine\"\n",
+        )
+        .unwrap();
+
+        {
+            let mut fe =
+                LineFrontEnd::with_config(Cursor::new(Vec::new()), Vec::new(), Some(path.clone()))
+                    .unwrap();
+            // The file seeded the session, so the engine's seed is the saved value.
+            assert_eq!(fe.persisted_settings().mode, SessionMode::Socratic);
+
+            // `--mode debate` for this session only, plus a `/score` toggle: both
+            // are mirrored, and then an UNRELATED explicit change is saved.
+            fe.mirror_live(LiveSettings {
+                score: true,
+                mode: SessionMode::Debate,
+            });
+            let _ = fe.settings_surface("set editor vim");
+        }
+
+        let on_disk = std::fs::read_to_string(&path).unwrap();
+        assert!(
+            on_disk.contains("mode = \"socratic\""),
+            "the overridden mode is still what the user wrote:\n{on_disk}"
+        );
+        assert!(
+            on_disk.contains("score = false"),
+            "and so is the gauge:\n{on_disk}"
+        );
+        assert!(
+            on_disk.contains("editor = \"vim\""),
+            "the key they DID name landed:\n{on_disk}"
+        );
+        assert!(
+            on_disk.contains("dolt_path = \"/graphs/mine\""),
+            "and the foreign key survived the merge (TASK-218):\n{on_disk}"
+        );
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    // trace:TASK-375 | ai:claude
+    // A no-op change writes NOTHING. STORY-367's unguarded `persist(key)` did a
+    // full read-merge-write for a `/settings set` that named the value already in
+    // force — a read-only outcome performing a disk write, and putting TASK-268's
+    // "refuse when the file is unreadable" path in the way of a command that was
+    // changing nothing. Asserted on the FILE's bytes, which is the only place the
+    // difference is visible.
+    #[test]
+    fn a_no_op_settings_change_leaves_the_file_byte_identical() {
+        let dir = std::env::temp_dir().join(format!(
+            "quizdom-settings-noop-{}-{:?}",
+            std::process::id(),
+            std::thread::current().id()
+        ));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("settings.toml");
+        // Deliberately NOT what a fresh save would emit: no header, an unmodelled
+        // key first, and `mouse` omitted entirely. A rewrite would normalise all
+        // three, so "byte-identical" is a real assertion here rather than a
+        // tautology about a canonical form.
+        let original = "dolt_path = '/graphs/mine'\nmode = \"socratic\"\nscore = false\n";
+        std::fs::write(&path, original).unwrap();
+
+        let mut fe =
+            LineFrontEnd::with_config(Cursor::new(Vec::new()), Vec::new(), Some(path.clone()))
+                .unwrap();
+        // Every one of these names the value already in force.
+        let _ = fe.settings_surface("set mode socratic");
+        let _ = fe.settings_surface("set score off");
+
+        assert_eq!(
+            std::fs::read_to_string(&path).unwrap(),
+            original,
+            "a no-op /settings set must not rewrite the file"
+        );
+
+        // trace:TASK-372 | ai:claude — and the `/mode` / `/score` SHORTCUTS take
+        // the mirroring road, so they leave the file alone whether or not they
+        // change anything. Here they change the live values to the opposite of
+        // what the file says, which is the case that used to rewrite it.
+        fe.mirror_live(LiveSettings {
+            score: true,
+            mode: SessionMode::Debate,
+        });
+        assert_eq!(
+            std::fs::read_to_string(&path).unwrap(),
+            original,
+            "/mode debate and /score change the session, not the saved default"
+        );
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    // trace:BUG-378 | ai:claude
+    // A save that FAILS says so. STORY-367's seam swallowed the error
+    // (`let _ = save(…)`), which is the one outcome the user needs told: the
+    // change applied for the session, the file did not move, and the next run
+    // will disagree with what they were just shown. Silence there is
+    // indistinguishable from success.
+    #[test]
+    fn a_failed_save_is_reported_rather_than_swallowed() {
+        let dir = std::env::temp_dir().join(format!(
+            "quizdom-settings-unwritable-{}-{:?}",
+            std::process::id(),
+            std::thread::current().id()
+        ));
+        std::fs::create_dir_all(&dir).unwrap();
+        // A parent that is a FILE: `create_dir_all` cannot descend through it,
+        // so the save fails for a reason that is portable and does not depend on
+        // the suite's uid (a read-only directory does not stop root).
+        let blocker = dir.join("not-a-dir");
+        std::fs::write(&blocker, b"").unwrap();
+        let doomed = blocker.join("settings.toml");
+
+        let mut fe =
+            LineFrontEnd::with_config(Cursor::new(Vec::new()), Vec::new(), Some(doomed.clone()))
+                .unwrap();
+        let _ = fe.settings_surface("set editor vim");
+
+        let out = String::from_utf8(fe.into_output()).unwrap();
+        assert!(
+            out.contains("Could not save settings"),
+            "the failure reaches the user: {out}"
+        );
+        assert!(
+            out.contains(&doomed.display().to_string()),
+            "and names the file it could not write: {out}"
+        );
+        assert!(
+            out.contains("this session only"),
+            "and what that means for the change they just made: {out}"
+        );
+        std::fs::remove_dir_all(&dir).ok();
     }
 
     // trace:STORY-194 | ai:claude — a bare `/editor` SHOWS the current model

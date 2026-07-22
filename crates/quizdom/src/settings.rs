@@ -949,6 +949,33 @@ fn config_dir() -> Option<PathBuf> {
     config_path().and_then(|path| path.parent().map(PathBuf::from))
 }
 
+// trace:TASK-373 | ai:claude
+/// The config file THIS PROCESS persists to — [`config_path`] in a real build,
+/// and `None` under `cfg(test)`.
+///
+/// **The single hermeticity guard.** TASK-266 put it inside `load_or_seed` /
+/// `save` as a `cfg(test)` early return, which kept the developer's real
+/// `~/.config/quizdom/settings.toml` out of the ~720 in-crate tests — and made
+/// the disk path unreachable *from a test at all*. STORY-367's first acceptance
+/// criterion was "the persisted value survives a session that overrode it", and
+/// no test could assert it literally: the only thing in-crate that could be
+/// checked was the model one level in (`persisted_settings`), a faithful proxy
+/// but still a proxy. A bug in [`save`] itself would have passed.
+///
+/// Moving the guard here makes it a question about WHICH PATH rather than about
+/// whether IO happens: the front-ends resolve their config path through this
+/// once at construction, and [`load_or_seed_at`] / [`save_at`] below do real IO
+/// against whatever path they are handed. Tests hand them a temp directory and
+/// round-trip a real file (see `a_session_override_never_reaches_the_file`);
+/// production hands them the user's config; nothing hands them the user's
+/// config *during a test*.
+pub(crate) fn process_config_path() -> Option<PathBuf> {
+    if cfg!(test) {
+        return None;
+    }
+    config_path()
+}
+
 /// LOAD the persisted settings, or SEED a first run from `$EDITOR`/`$VISUAL`.
 ///
 /// * If the config file EXISTS, parse it (saved value wins, unknown keys ignored).
@@ -959,32 +986,36 @@ fn config_dir() -> Option<PathBuf> {
 ///
 /// Never fails: an unreadable / missing path degrades to a seeded default.
 ///
-/// **Under `cfg(test)` this returns [`Settings::default`] without touching the
-/// disk** (TASK-266). Every front-end loads through here at construction, so
-/// once a persisted `score = true` began SEEDING the engine's gauge, the
-/// developer's own `~/.config/quizdom/settings.toml` would have leaked into the
-/// ~617 in-crate tests and changed their output on one machine but not another.
-/// The persistence logic itself stays fully covered — the tests below drive
-/// [`Settings::from_toml`], [`Settings::to_toml_merged`] and [`merged_body`]
-/// directly, which is where the behaviour actually lives.
+/// Reads whatever [`process_config_path`] resolves — which is nothing at all
+/// under `cfg(test)`, so the developer's own file cannot leak in.
 pub(crate) fn load_or_seed() -> Settings {
-    if cfg!(test) {
+    load_or_seed_at(process_config_path().as_deref())
+}
+
+// trace:TASK-373 | ai:claude
+/// [`load_or_seed`] against an EXPLICIT path — the injectable half.
+///
+/// `None` means there is nowhere to load from (no `$HOME`, or a test that
+/// injected no file), and the answer is the plain [`Settings::default`]. The
+/// `$EDITOR` seed applies only when a config path EXISTS and holds no file yet,
+/// which is what "a first run" actually means; with no config path nothing will
+/// ever be persisted, and [`EditorChoice::Auto`] — the default — already
+/// re-infers from `$EDITOR` every time the editor is built.
+pub(crate) fn load_or_seed_at(path: Option<&Path>) -> Settings {
+    let Some(path) = path else {
         return Settings::default();
-    }
-    match config_path().filter(|p| p.exists()) {
-        Some(path) => match std::fs::read_to_string(&path) {
-            Ok(text) => Settings::from_toml(&text),
-            Err(_) => seed_from_env(),
-        },
-        None => seed_from_env(),
+    };
+    match std::fs::read_to_string(path) {
+        Ok(text) => Settings::from_toml(&text),
+        Err(_) => seed_from_env(),
     }
 }
 
 // trace:TASK-218 | ai:claude
-/// SAVE the settings to the config file (best-effort, creating the parent dir).
-/// Returns `Ok(())` even when there is no config path (nothing to persist to);
-/// an IO error is returned so an interactive caller could surface it, but callers
-/// generally treat persistence as best-effort.
+/// SAVE the settings to `path` (best-effort, creating the parent dir).
+/// Returns `Ok(())` when `path` is `None` — there is nowhere to persist to, so
+/// nothing failed. An IO error is returned so the caller can SURFACE it
+/// (BUG-378); both front-ends do, rather than dropping it on the floor.
 ///
 /// The write MERGES over whatever is already on disk
 /// ([`Settings::to_toml_merged`]) rather than round-tripping the file through
@@ -992,21 +1023,47 @@ pub(crate) fn load_or_seed() -> Settings {
 /// would silently delete a hand-added `dolt_path` line and repoint the app at
 /// `data/dolt`.
 ///
-/// **Under `cfg(test)` this is a no-op** — the mirror of [`load_or_seed`]'s
-/// guard. A test that exercised `/settings set …` through the line front-end
-/// would otherwise rewrite the DEVELOPER's real config file.
-pub(crate) fn save(settings: &Settings) -> std::io::Result<()> {
-    if cfg!(test) {
-        return Ok(());
-    }
-    let Some(path) = config_path() else {
+// trace:TASK-373 | ai:claude
+/// Taking the path as a PARAMETER is what makes the disk half testable: a
+/// front-end resolves it once through [`process_config_path`] (which is `None`
+/// under `cfg(test)`, so no test can reach the developer's file by accident),
+/// and a test that wants to prove what lands on disk injects a temp path
+/// instead of having the IO compiled out from under it.
+pub(crate) fn save_at(path: Option<&Path>, settings: &Settings) -> std::io::Result<()> {
+    let Some(path) = path else {
         return Ok(());
     };
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent)?;
     }
-    let body = merged_body(settings, std::fs::read_to_string(&path))?;
+    let body = merged_body(settings, std::fs::read_to_string(path))?;
     std::fs::write(path, body)
+}
+
+// trace:BUG-378 | ai:claude
+/// What to say — and record — when a settings save FAILED.
+///
+/// STORY-367's persist seam swallowed the error (`let _ = save(…)`), which is
+/// the one outcome the user needs told: they asked for a new default, the
+/// session applied it, and the file did not change. Silence there is
+/// indistinguishable from success, and the next run quietly disagrees with what
+/// they were shown.
+///
+/// The note goes to the diagnostic log here — the one seam for a survivable
+/// failure — and is RETURNED so the caller can also put it on whichever surface
+/// it owns (the line front-end writes it out; the TUI pushes it into the
+/// transcript, since it owns the alternate screen).
+pub(crate) fn save_failure_note(path: Option<&Path>, error: &std::io::Error) -> String {
+    let where_to = match path {
+        Some(path) => path.display().to_string(),
+        None => "the settings file".to_string(),
+    };
+    let note = format!(
+        "Could not save settings to {where_to}: {error}. \
+         The change applies for this session only."
+    );
+    crate::diagnostics::record(&note);
+    note
 }
 
 // trace:TASK-268 | ai:claude
@@ -2049,16 +2106,27 @@ mod tests {
         ));
 
         // Save an explicit choice, then load it back: the saved value wins.
+        // trace:TASK-373 | ai:claude — through `save_at` / `load_or_seed_at`
+        // themselves, not a hand-rolled write-then-parse standing in for them.
+        // The IO is only compiled out when there is no path, so a test that
+        // supplies one is exercising the real save, parent-directory creation
+        // and merge included.
         let saved = Settings {
             editor: EditorChoice::Auto,
             mouse: false,
             score: true,
             mode: SessionMode::Debate,
         };
-        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
-        std::fs::write(&path, saved.to_toml()).unwrap();
-        let loaded = Settings::from_toml(&std::fs::read_to_string(&path).unwrap());
-        assert_eq!(loaded, saved);
+        assert!(
+            !path.exists(),
+            "and the parent directory does not exist yet"
+        );
+        save_at(Some(&path), &saved).expect("the save creates its own parent");
+        assert_eq!(load_or_seed_at(Some(&path)), saved);
+
+        // No path at all: nothing to load from, nothing to write to, no failure.
+        assert_eq!(load_or_seed_at(None), Settings::default());
+        save_at(None, &saved).expect("nowhere to persist is not an error");
 
         let _ = std::fs::remove_dir_all(&dir);
     }

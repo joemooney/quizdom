@@ -222,11 +222,10 @@ fn db_init(path: &Path, runner: &dyn DoltRunner, output: &mut impl Write) -> Res
 
     // trace:BUG-366 | ai:claude — the DDL stages itself, so the tables it
     // creates are recognisably quizdom's before the commit is attempted.
-    run_dolt(
-        runner,
-        path,
-        &["sql", "-q", &staging_write(DOLT_SCHEMA_SQL)],
-    )?;
+    // trace:TASK-368 | ai:claude — and records the fingerprint of what it staged,
+    // so "recognisably quizdom's" is a claim about the CONTENT rather than about
+    // whoever last ran `dolt add`.
+    run_staging_write(runner, path, DOLT_SCHEMA_SQL)?;
     writeln!(
         output,
         "Applied domain-graph schema (nodes, edges) — DDL is idempotent."
@@ -308,8 +307,25 @@ fn probe_json(runner: &dyn DoltRunner, repo: &Path, sql: &str) -> Result<serde_j
         )));
     }
     let stdout = String::from_utf8_lossy(&output.stdout).to_string();
-    serde_json::from_str(stdout.trim())
-        .map_err(|error| QuizdomError::Parse(format!("dolt_status probe was not JSON: {error}")))
+    last_json_document(&stdout)
+        .ok_or_else(|| QuizdomError::Parse(format!("dolt_status probe was not JSON: {stdout}")))
+}
+
+// trace:TASK-368 | ai:claude
+/// The LAST JSON document in a `dolt sql -r json` stream.
+///
+/// `dolt sql -r json -q "<a>; <b>; <c>"` emits ONE document per
+/// result-producing statement, whitespace-separated — so a multi-statement
+/// write is not a single JSON value and `serde_json::from_str` over the whole
+/// stream fails on the trailing bytes. Every caller here wants the last
+/// statement's rows ([`staging_write`] deliberately makes that the fingerprint
+/// SELECT), and a single-statement query is just the one-document case of the
+/// same rule.
+pub(crate) fn last_json_document(stdout: &str) -> Option<serde_json::Value> {
+    serde_json::Deserializer::from_str(stdout.trim())
+        .into_iter::<serde_json::Value>()
+        .filter_map(std::result::Result::ok)
+        .last()
 }
 
 // trace:TASK-276 | ai:claude
@@ -446,6 +462,31 @@ impl WriteClaim {
 /// *mine* after the user had discarded those rows with `dolt reset --hard` and
 /// hand-edited the table — which is the very recovery the refusal below
 /// recommends, so the memory would be wrong exactly when it mattered.
+///
+// trace:TASK-368 | ai:claude
+/// ## Why the flag is not enough on its own
+///
+/// `staged` answers "did someone run `dolt add`", not "was that someone
+/// quizdom". A user who runs `dolt sql -q 'UPDATE nodes …'` AND THEN `dolt add
+/// nodes` produces exactly the state this reads as quizdom's leftovers, and the
+/// next quizdom-labelled commit carries their edit — the TASK-297 failure the
+/// guard exists to prevent, arriving through the guard.
+///
+/// So the flag names a CANDIDATE and [`staged_marker`] decides. Every staging
+/// write records the fingerprint of the staged content it left behind
+/// ([`staging_write`]'s trailing `DOLT_HASHOF_DB('STAGED')`, which costs no
+/// extra spawn), and a resume is claimed only when the repository's CURRENT
+/// staged fingerprint is still that one. TASK-368 rejected a bare breadcrumb
+/// ("quizdom was writing here") because the documented recovery — `dolt reset
+/// --hard`, then a hand edit — would leave a stale marker waving the hand edit
+/// through. Fingerprinting the CONTENT is what answers that: the reset changes
+/// what is staged, so the recorded fingerprint stops matching and the hand edit
+/// is refused like any other.
+///
+/// A missing or unreadable marker means "cannot verify", and cannot-verify is
+/// a REFUSAL — the same direction [`is_staged`] takes for an unreadable flag. A
+/// hard-killed quizdom that never got to record one costs the user a `db-backup`
+/// they can act on, never a silently absorbed edit.
 pub(crate) fn begin_write(
     runner: &dyn DoltRunner,
     repo: &Path,
@@ -457,10 +498,113 @@ pub(crate) fn begin_write(
             repo, command, &unstaged,
         )));
     }
+    // trace:TASK-368 | ai:claude — the fingerprint probe is asked ONLY when
+    // something is staged, which is the rare resumed case; the ordinary write
+    // still pre-flights in a single spawn.
+    if !staged.is_empty() && !staged_is_ours(runner, repo) {
+        return Err(QuizdomError::Dolt(unrecognised_staged_refusal(
+            repo, command, &staged,
+        )));
+    }
     Ok(WriteClaim {
         repo: repo.to_path_buf(),
         resumed: staged,
     })
+}
+
+// trace:TASK-368 | ai:claude
+/// The file recording the staged-content fingerprint quizdom's last write left
+/// behind. It lives beside `.dolt/` rather than in a table: it describes the
+/// working set, so it must not BE part of the working set.
+const STAGED_MARKER: &str = ".quizdom-staged";
+
+/// The column [`staging_write`] returns the fingerprint in.
+const STAGED_HASH_COLUMN: &str = "staged_hash";
+
+fn staged_marker(repo: &Path) -> PathBuf {
+    repo.join(STAGED_MARKER)
+}
+
+// trace:TASK-368 | ai:claude
+/// Whether the content staged in `repo` RIGHT NOW is the content quizdom
+/// recorded staging. Any doubt — no marker, an unreadable one, a fingerprint
+/// the repo will not report — answers `false`, because the cost of a wrong
+/// `true` is a stranger's work committed under quizdom's message.
+fn staged_is_ours(runner: &dyn DoltRunner, repo: &Path) -> bool {
+    let Ok(recorded) = std::fs::read_to_string(staged_marker(repo)) else {
+        return false;
+    };
+    let recorded = recorded.trim();
+    if recorded.is_empty() {
+        return false;
+    }
+    match probe_json(
+        runner,
+        repo,
+        &format!("SELECT DOLT_HASHOF_DB('STAGED') AS {STAGED_HASH_COLUMN};"),
+    ) {
+        Ok(value) => staged_hash(&value).is_some_and(|current| current == recorded),
+        Err(_) => false,
+    }
+}
+
+// trace:TASK-368 | ai:claude
+/// The fingerprint out of a `dolt sql -r json` result document, if it carries
+/// one.
+fn staged_hash(value: &serde_json::Value) -> Option<&str> {
+    value
+        .get("rows")?
+        .as_array()?
+        .first()?
+        .get(STAGED_HASH_COLUMN)?
+        .as_str()
+}
+
+// trace:TASK-368 | ai:claude
+/// RECORD what a staging write left staged, from that write's own JSON output.
+///
+/// Best-effort by design: a repo quizdom cannot write a marker into is one
+/// whose next run will decline to resume, which is the safe direction. The
+/// alternative — failing the write because the bookkeeping failed — would turn
+/// a read-only-directory annoyance into a lost answer.
+pub(crate) fn record_staged(repo: &Path, stdout: &str) {
+    let document = last_json_document(stdout);
+    let Some(hash) = document.as_ref().and_then(staged_hash) else {
+        // No fingerprint came back (an old dolt, a changed rendering): leave no
+        // marker rather than a wrong one. The next run refuses a resume, which
+        // is recoverable; a stale marker is not.
+        let _ = std::fs::remove_file(staged_marker(repo));
+        return;
+    };
+    let _ = std::fs::write(staged_marker(repo), hash);
+}
+
+// trace:TASK-368 | ai:claude
+/// Drop the marker once the staged rows have been committed — there is nothing
+/// staged for it to describe any more, and a marker outliving its content is
+/// exactly the stale-breadcrumb failure this design exists to avoid.
+fn clear_staged(repo: &Path) {
+    let _ = std::fs::remove_file(staged_marker(repo));
+}
+
+// trace:TASK-368 | ai:claude
+/// What the refusal says when the staged content is not what quizdom recorded
+/// staging. Distinct wording from [`foreign_change_refusal`] because the
+/// OBSERVATION is different — these rows ARE staged — and a refusal that
+/// mis-describes what it saw sends the reader to the wrong recovery.
+fn unrecognised_staged_refusal(repo: &Path, command: &str, staged: &[String]) -> String {
+    format!(
+        "{repo} has STAGED uncommitted changes to {tables} that do not match what any \
+         quizdom run recorded staging.\n\
+         quizdom fingerprints the content it stages, so staged rows it cannot recognise \
+         are someone else's `dolt add` — and `{command}` would commit them under a \
+         message describing only quizdom's work.\n\
+         Settle them first: `quizdom db-backup` commits them under its own snapshot \
+         message, or `cd {repo} && dolt commit -m '…'` records them in your words \
+         (`dolt reset --hard` discards them).",
+        repo = repo.display(),
+        tables = staged.join(", ")
+    )
 }
 
 // trace:BUG-366 | ai:claude
@@ -499,12 +643,49 @@ fn foreign_change_refusal(repo: &Path, command: &str, unstaged: &[String]) -> St
 ///
 /// It stages the tables BY NAME for the same reason [`commit_tables`] does: a
 /// `CALL DOLT_ADD('-A')` here would sweep in a table quizdom has never heard of.
+///
+// trace:TASK-368 | ai:claude
+/// It also asks, as its LAST statement, for the fingerprint of the staged
+/// content it has just produced, so [`record_staged`] can write the marker
+/// [`begin_write`] checks. Last, because `dolt sql -r json` emits one document
+/// per result-producing statement and [`last_json_document`] reads the final
+/// one. In the same call, because a separate probe would cost every write an
+/// extra spawn — the TASK-369 regression — and would leave a window in which
+/// quizdom's own rows carry no fingerprint at all.
+///
+// trace:TASK-369 | ai:claude
+/// Staging here is also why [`commit_tables`] no longer runs `dolt add`: the
+/// rows are staged the moment they land, so the commit tail's restage was one
+/// spawn spent re-asserting something already true.
 pub(crate) fn staging_write(statement: &str) -> String {
     let tables: Vec<String> = QUIZDOM_TABLES
         .iter()
         .map(|name| format!("'{name}'"))
         .collect();
-    format!("{statement}\nCALL DOLT_ADD({});", tables.join(", "))
+    format!(
+        "{statement}\nCALL DOLT_ADD({});\nSELECT DOLT_HASHOF_DB('STAGED') AS {STAGED_HASH_COLUMN};",
+        tables.join(", ")
+    )
+}
+
+// trace:TASK-368 | ai:claude
+/// Run a self-staging write and record the fingerprint it leaves staged — the
+/// form `db-init` and `db-migrate` use.
+///
+/// It spawns `dolt sql -r json` rather than plain `dolt sql` so the trailing
+/// fingerprint SELECT comes back readable. The store has its own JSON path
+/// ([`crate::dolt_store::DoltDomainStore`]) and calls [`record_staged`]
+/// directly; this is the same two steps for the callers that do not.
+pub(crate) fn run_staging_write(
+    runner: &dyn DoltRunner,
+    repo: &Path,
+    statement: &str,
+) -> Result<String> {
+    let sql = staging_write(statement);
+    let output = run_dolt(runner, repo, &["sql", "-r", "json", "-q", &sql])?;
+    let stdout = String::from_utf8_lossy(&output.stdout).to_string();
+    record_staged(repo, &stdout);
+    Ok(stdout)
 }
 
 // trace:TASK-297 | ai:claude
@@ -646,12 +827,23 @@ pub(crate) fn guard_test_path(_flag: &str, _path: &Path) {}
 /// bootstrapped-and-migrated repo had one commit and a working set holding the
 /// entire graph, and the first `db-backup` pushed an empty history.
 ///
-/// It stages `tables` BY NAME rather than `-A` (TASK-297): a message that says
+/// It commits `tables` BY NAME rather than `-A` (TASK-297): a message that says
 /// "quizdom db-migrate: import N nodes" must not carry a table quizdom has never
 /// heard of. The narrower half of that promise — a hand edit to `nodes` itself —
 /// belongs to [`begin_write`], because by the time this runs the two are one
 /// diff. Taking the [`WriteClaim`] rather than a path is how that ordering stops
 /// being a convention (BUG-366).
+///
+// trace:TASK-369 | ai:claude
+/// **No `dolt add` here.** BUG-366 made every write stage itself in the
+/// statement that makes it ([`staging_write`]), which left this tail restaging
+/// rows that were already staged — one spawn per write, spent asserting
+/// something the write had already made true. Dropping it is what keeps the
+/// pre-flight from costing anything: a session write is back to the three
+/// spawns it took before BUG-366 (probe, self-staging write, commit), and a
+/// `curate` batch back to the three STORY-244 cut it to. It is also strictly
+/// safer, since a restage is the one place a change that appeared AFTER the
+/// pre-flight could still have been swept in.
 pub(crate) fn commit_tables(
     runner: &dyn DoltRunner,
     claim: &WriteClaim,
@@ -659,10 +851,11 @@ pub(crate) fn commit_tables(
     message: &str,
 ) -> Result<bool> {
     let repo = claim.repo();
-    let mut args = vec!["add"];
-    args.extend_from_slice(tables);
-    run_dolt(runner, repo, &args)?;
-    commit_staged(runner, repo, tables, message)
+    let committed = commit_staged(runner, repo, tables, message)?;
+    // trace:TASK-368 | ai:claude — either outcome leaves nothing staged for the
+    // marker to describe: committed, or there was nothing to commit.
+    clear_staged(repo);
+    Ok(committed)
 }
 
 // trace:STORY-291 | ai:claude
@@ -822,17 +1015,18 @@ mod tests {
         db_init(&dir, &runner, &mut output).expect("bootstrap should succeed");
 
         let calls = runner.calls.borrow();
-        assert_eq!(
-            calls.len(),
-            5,
-            "init, pre-flight, sql, then the commit tail"
-        );
+        // trace:TASK-369 | ai:claude — init, pre-flight, the self-staging DDL,
+        // and the commit. No separate `dolt add`: the DDL staged itself.
+        assert_eq!(calls.len(), 4, "init, pre-flight, sql, commit");
         assert_eq!(calls[0].0, dir);
         assert_eq!(calls[0].1, vec!["init".to_string()]);
-        assert_eq!(calls[2].1[0..2], ["sql".to_string(), "-q".to_string()]);
+        assert_eq!(
+            calls[2].1[0..4],
+            ["sql", "-r", "json", "-q"].map(String::from)
+        );
         // trace:BUG-366 | ai:claude — the DDL, plus the tail that stages it.
-        assert!(calls[2].1[2].starts_with(DOLT_SCHEMA_SQL));
-        assert!(calls[2].1[2].contains("CALL DOLT_ADD('nodes', 'edges');"));
+        assert!(calls[2].1[4].starts_with(DOLT_SCHEMA_SQL));
+        assert!(calls[2].1[4].contains("CALL DOLT_ADD('nodes', 'edges');"));
         let rendered = String::from_utf8(output).unwrap();
         assert!(rendered.contains("Initialised Dolt repo"));
         assert!(rendered.contains("Applied domain-graph schema"));
@@ -913,8 +1107,8 @@ mod tests {
         let calls = runner.calls.borrow();
         assert_eq!(
             calls.len(),
-            4,
-            "the pre-flight probe, the schema, then its commit — no re-init"
+            3,
+            "the pre-flight probe, the self-staging schema, then its commit — no re-init"
         );
         assert_eq!(calls[1].1[0], "sql");
         let rendered = String::from_utf8(output).unwrap();
@@ -933,14 +1127,16 @@ mod tests {
         db_init(&dir, &runner, &mut output).expect("bootstrap should succeed");
 
         let calls = runner.calls.borrow();
-        // trace:TASK-297 | ai:claude — by name, never `-A`.
-        assert_eq!(
-            calls[3].1,
-            ["add", "nodes", "edges"].map(String::from),
-            "a quizdom-labelled commit stages only the tables quizdom owns"
+        // trace:TASK-297 | ai:claude — by name, never `-A`. Staged by the DDL's
+        // own `CALL DOLT_ADD`, so the commit tail needs no second spawn to do it
+        // again (TASK-369).
+        assert!(calls[2].1[4].contains("CALL DOLT_ADD('nodes', 'edges');"));
+        assert!(
+            !calls.iter().any(|(_, args)| args[0] == "add"),
+            "no restage spawn: {calls:?}"
         );
         assert_eq!(
-            calls[4].1,
+            calls[3].1,
             [
                 "commit".to_string(),
                 "-m".to_string(),
@@ -961,8 +1157,7 @@ mod tests {
         let dir = existing_repo("idempotent");
         let runner = RecordingDoltRunner::new(vec![
             NO_FOREIGN_CHANGES,                         // pre-flight
-            (0, "", ""),                                // schema DDL
-            (0, "", ""),                                // add nodes edges
+            (0, "", ""),                                // self-staging schema DDL
             (1 << 8, "no changes added to commit", ""), // commit refuses
         ]);
         let mut output = Vec::new();
@@ -982,7 +1177,6 @@ mod tests {
         let dir = existing_repo("commit-fails");
         let runner = RecordingDoltRunner::new(vec![
             NO_FOREIGN_CHANGES,
-            (0, "", ""),
             (0, "", ""),
             (1 << 8, "", "author identity unknown"),
         ]);
@@ -1009,8 +1203,7 @@ mod tests {
         let dir = existing_repo("reworded");
         let runner = RecordingDoltRunner::new(vec![
             NO_FOREIGN_CHANGES, // pre-flight
-            (0, "", ""),        // schema DDL
-            (0, "", ""),        // add nodes edges
+            (0, "", ""),        // self-staging schema DDL
             (1 << 8, "", "commit aborted: the working set is up to date"),
             (0, r#"{"rows":[{"pending":0}]}"#, ""), // dolt_status: clean
         ]);
@@ -1020,7 +1213,7 @@ mod tests {
 
         let calls = runner.calls.borrow();
         assert_eq!(
-            calls[4].1,
+            calls[3].1,
             [
                 "sql",
                 "-r",
@@ -1047,7 +1240,6 @@ mod tests {
         let runner = RecordingDoltRunner::new(vec![
             NO_FOREIGN_CHANGES,
             (0, "", ""),
-            (0, "", ""),
             (1 << 8, "", "author identity unknown"),
             (0, r#"{"rows":[{"pending":3}]}"#, ""),
         ]);
@@ -1070,7 +1262,6 @@ mod tests {
         let dir = existing_repo("no-probe");
         let runner = RecordingDoltRunner::new(vec![
             NO_FOREIGN_CHANGES,
-            (0, "", ""),
             (0, "", ""),
             (1 << 8, "no changes added to commit", ""),
             (1 << 8, "", "unknown system table dolt_status"),
@@ -1112,18 +1303,37 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
     }
 
+    // trace:TASK-368 | ai:claude
+    /// The fingerprint an earlier quizdom run is pretending to have recorded,
+    /// and the probe response that says the repo still holds exactly it.
+    const RECORDED_FINGERPRINT: &str = "qs451oll9qcms75498hipo54jhsbsme2";
+    const FINGERPRINT_MATCHES: (i32, &str, &str) = (
+        0,
+        r#"{"rows":[{"staged_hash":"qs451oll9qcms75498hipo54jhsbsme2"}]}"#,
+        "",
+    );
+
+    /// Leave behind the marker a quizdom run that died mid-write would have.
+    fn with_recorded_fingerprint(dir: &Path) {
+        std::fs::write(dir.join(STAGED_MARKER), RECORDED_FINGERPRINT).unwrap();
+    }
+
     // trace:BUG-366 | ai:claude
     /// The regression TASK-297 shipped: a run whose own uncommitted rows are
     /// still in the working set must be able to carry on. Staged rows are
     /// quizdom's — every quizdom write stages itself — so the pre-flight resumes
     /// rather than accusing the user of an edit they did not make.
+    // trace:TASK-368 | ai:claude — "quizdom's" now means the staged CONTENT is
+    // what quizdom recorded staging, not merely that something is staged.
     #[test]
     fn our_own_uncommitted_leftovers_are_resumed_not_refused() {
         let dir = existing_repo("leftovers");
+        std::fs::create_dir_all(&dir).unwrap();
+        with_recorded_fingerprint(&dir);
         let runner = RecordingDoltRunner::new(vec![
-            (0, OUR_STAGED_LEFTOVERS, ""), // pre-flight: staged, so ours
-            (0, "", ""),                   // schema DDL
-            (0, "", ""),                   // add nodes edges
+            (0, OUR_STAGED_LEFTOVERS, ""), // pre-flight: staged, so a candidate
+            FINGERPRINT_MATCHES,           // ...and the content is the one we left
+            (0, "", ""),                   // self-staging schema DDL
             (0, "", ""),                   // commit
         ]);
         let mut output = Vec::new();
@@ -1134,6 +1344,99 @@ mod tests {
         assert!(
             rendered.contains("Resuming an earlier quizdom run") && rendered.contains("nodes"),
             "and it says so rather than committing two runs' work silently: {rendered}"
+        );
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    // trace:TASK-368 | ai:claude
+    /// The hole BUG-366 left, closed. A user who runs `dolt sql -q 'UPDATE
+    /// nodes …'` and then `dolt add nodes` produces a working set that is
+    /// staged — the exact signal BUG-366 read as "quizdom's leftovers" — so the
+    /// guard waved through precisely the edit it exists to catch, and the next
+    /// quizdom commit filed their work under quizdom's message.
+    ///
+    /// The flag now only nominates a candidate: the staged CONTENT has to be
+    /// what quizdom recorded staging. Here it is not, so it refuses.
+    #[test]
+    fn a_users_own_dolt_add_is_still_detected_as_foreign() {
+        let dir = existing_repo("staged-by-hand");
+        std::fs::create_dir_all(&dir).unwrap();
+        // No marker at all: quizdom never wrote here, the user staged this.
+        let runner = RecordingDoltRunner::new(vec![(0, OUR_STAGED_LEFTOVERS, "")]);
+
+        match db_init(&dir, &runner, &mut Vec::new()) {
+            Err(QuizdomError::Dolt(message)) => {
+                assert!(
+                    message.contains("do not match what any quizdom run recorded staging"),
+                    "it says what it actually observed: {message}"
+                );
+                assert!(message.contains("nodes"), "it names the table: {message}");
+                assert!(
+                    message.contains("quizdom db-backup"),
+                    "and a way out: {message}"
+                );
+            }
+            other => panic!("a staged hand edit is still a hand edit, got {other:?}"),
+        }
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    // trace:TASK-368 | ai:claude
+    /// The case a bare breadcrumb could not have handled, and the reason the
+    /// marker records CONTENT. The documented recovery from a refusal is `dolt
+    /// reset --hard` followed by a hand edit; a marker that only said "quizdom
+    /// was writing here" would survive the reset and wave the hand edit through.
+    /// A fingerprint does not: the reset changed what is staged.
+    #[test]
+    fn a_stale_marker_does_not_vouch_for_content_that_replaced_ours() {
+        let dir = existing_repo("stale-marker");
+        std::fs::create_dir_all(&dir).unwrap();
+        with_recorded_fingerprint(&dir);
+        let runner = RecordingDoltRunner::new(vec![
+            (0, OUR_STAGED_LEFTOVERS, ""),
+            // The repo reports DIFFERENT staged content from the marker's.
+            (
+                0,
+                r#"{"rows":[{"staged_hash":"someone-elses-content"}]}"#,
+                "",
+            ),
+        ]);
+
+        match db_init(&dir, &runner, &mut Vec::new()) {
+            Err(QuizdomError::Dolt(message)) => assert!(
+                message.contains("do not match what any quizdom run recorded staging"),
+                "{message}"
+            ),
+            other => panic!("a stale marker must not vouch for new content, got {other:?}"),
+        }
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    // trace:TASK-368 | ai:claude
+    /// And the marker does not outlive the rows it describes: once they are
+    /// committed there is nothing staged for it to vouch for, so the commit tail
+    /// drops it. A marker left behind is the stale breadcrumb this design exists
+    /// to avoid.
+    #[test]
+    fn the_marker_is_dropped_once_the_staged_rows_are_committed() {
+        let dir = existing_repo("marker-cleared");
+        std::fs::create_dir_all(&dir).unwrap();
+        with_recorded_fingerprint(&dir);
+        let runner = RecordingDoltRunner::new(vec![
+            (0, OUR_STAGED_LEFTOVERS, ""),
+            FINGERPRINT_MATCHES,
+            (0, "", ""), // self-staging schema DDL (no fingerprint scripted)
+            (0, "", ""), // commit succeeds
+        ]);
+
+        db_init(&dir, &runner, &mut Vec::new()).expect("the resumed run commits");
+
+        assert!(
+            !dir.join(STAGED_MARKER).exists(),
+            "nothing is staged any more, so nothing vouches for it"
         );
 
         let _ = std::fs::remove_dir_all(&dir);
@@ -1173,8 +1476,14 @@ mod tests {
 
         assert!(staged.starts_with("UPDATE nodes SET weight = 3 WHERE id = 'Q-1';"));
         assert!(
-            staged.ends_with("CALL DOLT_ADD('nodes', 'edges');"),
+            staged.contains("CALL DOLT_ADD('nodes', 'edges');"),
             "by name, never -A — same promise the commit tail makes: {staged}"
+        );
+        // trace:TASK-368 | ai:claude — and the fingerprint of what it staged
+        // comes back LAST, which is the document `record_staged` reads.
+        assert!(
+            staged.ends_with("SELECT DOLT_HASHOF_DB('STAGED') AS staged_hash;"),
+            "the fingerprint is the last statement: {staged}"
         );
     }
 
@@ -1201,8 +1510,7 @@ mod tests {
         let dir = existing_repo("foreign-other");
         let runner = RecordingDoltRunner::new(vec![
             (0, "{}", ""), // scoped to nodes/edges: nothing pending
-            (0, "", ""),   // schema DDL
-            (0, "", ""),   // add nodes edges
+            (0, "", ""),   // self-staging schema DDL
             (0, "", ""),   // commit
         ]);
 

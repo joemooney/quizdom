@@ -55,7 +55,21 @@ data substrate.
   DOLT_ADD('nodes','edges')`), so staged-but-uncommitted rows are an unfinished
   quizdom run — **resumed**, with a line saying so — and unstaged rows are
   refused. Before this, a `db-migrate` that failed parity was blocked on its own
-  leftovers by a message blaming a hand edit that never happened. The three
+  leftovers by a message blaming a hand edit that never happened. The flag alone
+  only **nominates** a candidate, though (`BUG-378`): it says someone ran `dolt
+  add`, not that the someone was quizdom, so a hand edit the user staged read as
+  quizdom's leftovers and rode into the next quizdom-labelled commit. Every
+  staging write therefore also records the **fingerprint of what it staged**
+  (`DOLT_HASHOF_DB('STAGED')`, asked as the last statement of the same `dolt sql`
+  call — no extra spawn) into a `.quizdom-staged` marker, and a resume is claimed
+  only when the repo's current staged fingerprint is still that one; a missing or
+  unreadable marker refuses, because cannot-verify must cost a `db-backup` rather
+  than an absorbed edit. Fingerprinting the *content* is what a bare breadcrumb
+  could not do: `dolt reset --hard` changes what is staged, so a stale marker
+  stops matching. And because writes stage themselves, `commit_tables` no longer
+  runs `dolt add` at all — a session write is back to the three spawns it took
+  before the pre-flight and `curate` to its post-STORY-244 count, both asserted
+  in tests. The three
   writers share one seam: `begin_write` hands back a `WriteClaim` and
   `commit_tables` takes that claim rather than a path, so a writer cannot reach
   the commit tail without passing the pre-flight — the gap that let the store,
@@ -144,7 +158,17 @@ not name (`--mode debate` over a saved `mode = "socratic"`), so each front-end
 keeps a *display* copy the engine mirrors its live `score`/`mode` into
 (`FrontEnd::mirror_live`, never writes) beside the *persisted* copy that a save
 writes, and an explicit change crosses between them one key at a time
-(`Settings::adopt`). Before this, `/settings` pushed the live mode across as a
+(`Settings::adopt`). `BUG-378` drew that line by **surface** rather than by
+whether an argument was given: `/mode`, `/mode debate` and `/score` all mirror,
+and `/settings set …` plus the panel rows are the only surfaces that persist —
+the live mode is a `mode_set` event the session log restores on resume, so
+`settings.toml`'s `mode` is the default for *new* sessions. A change matching
+what is already persisted writes nothing, a failed save is reported (to the user
+and to the diagnostic log) rather than swallowed, and the hermeticity guard moved
+from compiled-out IO to the resolved **path** (`settings::process_config_path`,
+`None` under `cfg(test)`) so a test can inject a temp file and assert the bytes
+that actually land — which STORY-367's own acceptance asked for and no test could
+then express. Before this, `/settings` pushed the live mode across as a
 persisting call, a bare `/mode` wrote back the answer to its own question, and
 any explicit change saved the mirrored struct whole — three roads to the same
 clobber `TASK-266`/`TASK-300` fixed at the seed. The mode precedence (`--mode` >
