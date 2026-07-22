@@ -1,0 +1,43 @@
+id: 019f888c-0542-74f1-985e-871aa1846126
+spec_id: TASK-266
+agreed_id: TASK-266
+title: A persisted score setting is ignored on load and clobbered by the engine default on the next save
+description: |
+  `frontend.rs:305 sync_score` saves whenever the engine-owned score-gauge state
+  differs from the loaded setting, but nothing feeds the LOADED setting back into
+  the engine. The engine therefore starts from its own default and immediately
+  persists it over whatever the file said. A read-only session is enough:
+
+      $ printf 'score = on\ndolt_path = "..."\n' > $XDG_CONFIG_HOME/quizdom/settings.toml
+      $ printf '/settings\n/quit\n' | quizdom
+          Score gauge:  Off              <- the file said on
+      $ cat $XDG_CONFIG_HOME/quizdom/settings.toml
+      score = false                      <- silently rewritten
+
+  PRE-EXISTING, not a regression from PR-93: `frontend.rs` and `session.rs` are
+  untouched by that PR, and the pre-fix `save` rewrote all four modelled keys
+  unconditionally too.
+
+  It matters more now than it did: TASK-218 makes settings.toml safe to
+  hand-edit (foreign keys survive a save), which invites users to hand-edit the
+  modelled keys as well — and `score` is the one that silently does not stick.
+
+  Worth checking whether `mode` has the same shape via `sync_mode`
+  (frontend.rs:313); it is guarded by a `SessionMode::parse` so it may only
+  clobber when the engine has an explicit mode to push.
+
+  Fix shape: seed the engine's score-gauge state from `settings.score` at session
+  start, so the first `sync_score` is a no-op rather than an overwrite.
+
+  Raised in review of PR-93: https://github.com/joemooney/quizdom/pull/93#issuecomment-5042707911
+status: Draft
+priority: Medium
+owner: ''
+feature: Uncategorized
+created_at: 2026-07-22T06:38:25.602275197Z
+modified_at: 2026-07-22T06:38:25.602275197Z
+req_type: Task
+tags:
+- config
+- from-review:PR-93
+- severity:minor
