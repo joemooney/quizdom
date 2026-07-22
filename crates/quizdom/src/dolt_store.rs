@@ -16,7 +16,7 @@
 //! not domain data: ADR-201 keeps decision/intent objects in the AIDA store,
 //! written through [`crate::store::AidaIntentStore`].
 
-use crate::db_init::{DoltRunner, SystemDoltRunner, DEFAULT_DOLT_DB_PATH};
+use crate::db_init::{DoltRunner, SystemDoltRunner};
 use crate::db_migrate::sql_quote;
 use crate::error::{QuizdomError, Result};
 use crate::store::{DomainStore, EdgeKind, NewNode, NodeKind, NodeRecord};
@@ -437,37 +437,16 @@ where
 }
 
 // trace:STORY-208 | ai:claude
+// trace:TASK-228 | ai:claude — one shared chain with db-init / db-migrate.
 /// Resolve the domain store from the environment and the STORY-194 settings
 /// file. Since the cutover there is one backend — Dolt — and only its repo
-/// path is configurable: `QUIZDOM_DOLT_PATH` (env, wins) or `dolt_path`
-/// (settings.toml), defaulting to [`DEFAULT_DOLT_DB_PATH`].
+/// path is configurable, through [`crate::settings::resolve_dolt_path`]:
+/// `QUIZDOM_DOLT_PATH` (env, wins) or `dolt_path` (settings.toml), defaulting
+/// to [`crate::DEFAULT_DOLT_DB_PATH`]. `db-init` / `db-migrate` call the same helper
+/// (with `--path` layered on top), so the bootstrap and the runtime can no
+/// longer disagree about which repo is "the" domain graph.
 pub fn domain_store_from_config() -> DoltDomainStore {
-    let config = crate::settings::config_path()
-        .and_then(|path| std::fs::read_to_string(path).ok())
-        .unwrap_or_default();
-    DoltDomainStore::new(dolt_path_from(
-        std::env::var("QUIZDOM_DOLT_PATH").ok().as_deref(),
-        &config,
-    ))
-}
-
-/// The pure path-selection logic, split from the env/file reads so it is
-/// testable without touching the process environment (the settings.rs
-/// pattern).
-fn dolt_path_from(env_path: Option<&str>, config: &str) -> String {
-    env_path
-        .map(|value| value.trim().to_string())
-        .or_else(|| config_value(config, "dolt_path"))
-        .unwrap_or_else(|| DEFAULT_DOLT_DB_PATH.to_string())
-}
-
-/// Read one `key = value` line from the flat settings schema (unknown keys
-/// are ignored on load per STORY-194, so these keys are forward-compatible).
-fn config_value(config: &str, key: &str) -> Option<String> {
-    config.lines().find_map(|line| {
-        let (name, value) = line.split_once('=')?;
-        (name.trim() == key).then(|| value.trim().trim_matches('"').to_string())
-    })
+    DoltDomainStore::new(crate::settings::resolve_dolt_path())
 }
 
 // trace:STORY-208 | ai:claude
@@ -968,13 +947,8 @@ mod tests {
         assert!(!update.contains("THEN 10"), "{update}");
     }
 
-    #[test]
-    fn dolt_path_defaults_and_env_wins_over_config() {
-        assert_eq!(dolt_path_from(None, ""), DEFAULT_DOLT_DB_PATH);
-        let config = "editor = \"vim\"\ndolt_path = \"/tmp/graph\"\n";
-        assert_eq!(dolt_path_from(None, config), "/tmp/graph");
-        assert_eq!(dolt_path_from(Some("/env/path"), config), "/env/path");
-    }
+    // The path-resolution chain moved to settings.rs with TASK-228 (one helper
+    // shared with db-init / db-migrate); its tests live there now.
 
     /// The STORY-207/208 acceptance check against a real dolt binary:
     /// bootstrap a fixture repo and run the full trait surface against it,

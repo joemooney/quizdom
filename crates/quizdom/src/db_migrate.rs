@@ -82,8 +82,14 @@ struct DbMigrateConfig {
 }
 
 impl DbMigrateConfig {
-    fn parse(args: impl IntoIterator<Item = String>) -> Result<Self> {
-        let mut path = PathBuf::from(DEFAULT_DOLT_DB_PATH);
+    // trace:TASK-228 | ai:claude
+    /// Parse the argv tail over a `default_path` the caller resolved through
+    /// [`crate::settings::resolve_dolt_path`] (env > settings > compiled
+    /// default) — `--path` still wins, but an unflagged run migrates INTO the
+    /// repo the runtime store reads. See `DbInitConfig::parse` for why the
+    /// default arrives as a parameter.
+    fn parse(args: impl IntoIterator<Item = String>, default_path: PathBuf) -> Result<Self> {
+        let mut path = default_path;
         let mut dolt_command = "dolt".to_string();
         let mut aida_command = "aida".to_string();
         let mut spot_check_root = Some(DEFAULT_SPOT_CHECK_ROOT.to_string());
@@ -129,8 +135,10 @@ fn next_arg(args: &mut impl Iterator<Item = String>, name: &str) -> Result<Strin
 
 fn usage() -> String {
     format!(
-        "usage: quizdom db-migrate [--path {DEFAULT_DOLT_DB_PATH}] [--dolt dolt] \
-         [--aida aida] [--spot-check {DEFAULT_SPOT_CHECK_ROOT}|none]"
+        "usage: quizdom db-migrate [--path <dir>] [--dolt dolt] \
+         [--aida aida] [--spot-check {DEFAULT_SPOT_CHECK_ROOT}|none]\n\
+         (--path defaults to $QUIZDOM_DOLT_PATH, else dolt_path in settings.toml, \
+         else {DEFAULT_DOLT_DB_PATH})"
     )
 }
 
@@ -139,7 +147,7 @@ pub fn run_db_migrate(
     args: impl IntoIterator<Item = String>,
     output: &mut impl Write,
 ) -> Result<()> {
-    let config = DbMigrateConfig::parse(args)?;
+    let config = DbMigrateConfig::parse(args, crate::settings::resolve_dolt_path())?;
     let dolt_runner = SystemDoltRunner::new(config.dolt_command.clone());
     db_migrate(&config, &SystemCommandRunner, &dolt_runner, output)
 }
@@ -1268,6 +1276,8 @@ mod tests {
         assert_eq!(counts.len(), 3);
     }
 
+    // trace:TASK-228 | ai:claude — `--path` overrides the resolved default; an
+    // unflagged run migrates into whatever the env/settings chain resolved.
     #[test]
     fn config_parse_reads_overrides_and_spot_check_none() {
         let parsed = DbMigrateConfig::parse(
@@ -1283,15 +1293,17 @@ mod tests {
                 "none",
             ]
             .map(String::from),
+            PathBuf::from("/from/env"),
         )
         .unwrap();
-        assert_eq!(parsed.path, PathBuf::from("/tmp/x"));
+        assert_eq!(parsed.path, PathBuf::from("/tmp/x"), "--path wins over env");
         assert_eq!(parsed.dolt_command, "dolt2");
         assert_eq!(parsed.aida_command, "aida2");
         assert_eq!(parsed.spot_check_root, None);
 
-        let default = DbMigrateConfig::parse(["db-migrate".to_string()]).unwrap();
-        assert_eq!(default.path, PathBuf::from(DEFAULT_DOLT_DB_PATH));
+        let default =
+            DbMigrateConfig::parse(["db-migrate".to_string()], PathBuf::from("/from/env")).unwrap();
+        assert_eq!(default.path, PathBuf::from("/from/env"));
         assert_eq!(
             default.spot_check_root,
             Some(DEFAULT_SPOT_CHECK_ROOT.to_string())
@@ -1300,7 +1312,10 @@ mod tests {
 
     #[test]
     fn unknown_argument_is_a_usage_error() {
-        let result = DbMigrateConfig::parse(["db-migrate".to_string(), "--bogus".to_string()]);
+        let result = DbMigrateConfig::parse(
+            ["db-migrate".to_string(), "--bogus".to_string()],
+            PathBuf::from(DEFAULT_DOLT_DB_PATH),
+        );
         assert!(matches!(result, Err(QuizdomError::Usage(_))));
     }
 
