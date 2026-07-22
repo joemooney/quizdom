@@ -1,0 +1,29 @@
+id: 019f8a68-aa13-7282-9e0d-48335c372ebf
+spec_id: TASK-298
+agreed_id: TASK-298
+title: db-migrate's no-op commit message overloads the empty-import case
+description: |
+  crates/quizdom/src/db_migrate.rs:234-238 prints
+
+      "Import matched what Dolt already held — nothing new to commit."
+
+  whenever `commit_all` returns false. That is accurate for the idempotent
+  re-run STORY-291 targeted, but it also fires when the AIDA store held zero
+  domain objects and nothing was imported at all — where the honest line is
+  "nothing to import", not "matched what Dolt already held".
+
+  Purely a wording issue on a rare path. Distinguishing the two would mean
+  branching on `nodes.is_empty() && kept.is_empty()` before the message.
+
+  Raised in review of PR-98: https://github.com/joemooney/quizdom/pull/98
+status: Draft
+priority: Medium
+owner: ''
+feature: Uncategorized
+created_at: 2026-07-22T15:19:02.931791983Z
+modified_at: 2026-07-22T15:19:02.931791983Z
+req_type: Task
+tags:
+- dolt
+- from-review:PR-98
+- severity:cosmetic
