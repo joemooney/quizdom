@@ -6393,5 +6393,51 @@ operations:
     req_type: Task
     status: Draft
     priority: Medium
-clock: 519
+- id: 019f8a95-8254-71e3-864a-90d288c393e8
+  target_id: 019f8a95-7f83-7fe3-baf9-5414a75d8742
+  author: aida
+  node_id: ''
+  lamport: 520
+  timestamp: 2026-07-22T16:08:01.876133009Z
+  kind: !Create
+    title: 'TASK-280''s premise was wrong: ~40 session tests were aiming dolt sql at the config-resolved graph path'
+    description: |
+      TASK-280 stated "Today every test in those modules does pin its own temp dir, so
+      nothing is broken — this is about making that structural rather than
+      conventional." That was true of the db_init / db_migrate / db_backup tests it
+      surveyed. It was NOT true of the crate as a whole.
+
+      `DoltDomainStore` is built eagerly by Default impls in persist.rs and
+      contradiction.rs (StoreContradictsEdges::default(), StoreQuestionReweighter,
+      StoreGeneratedQuestionPersister, StoreUserSpecificTermPersister, ...), which
+      resolve `settings::resolve_dolt_path()`. That constructor is the ONE with no
+      `--path` escape hatch, so roughly 40 session tests were spawning real `dolt sql`
+      against whatever the settings chain returned. Adding the tripwire made this
+      visible immediately: 43 tests panicked on
+      `.../crates/quizdom/data/dolt`.
+
+      Why it never fired as a real incident: `cargo test` runs with cwd = the crate
+      directory, so the relative default `data/dolt` resolved to
+      `crates/quizdom/data/dolt` rather than the project-root `data/dolt` that holds
+      the real graph. That directory does not exist, dolt fails to spawn, and the
+      session code degrades offline. A near miss, and only by accident of the working
+      directory — set QUIZDOM_DOLT_PATH to an absolute path (which is exactly what
+      CLAUDE.md documents for pointing one config line at one graph from every
+      worktree) and `cargo test` would have run the session suite's writes against the
+      real domain graph.
+
+      Fixed in STORY-292 by redirecting `domain_store_from_config()` to a temp path
+      under cfg(test) (dolt_store.rs, `test_only_domain_graph_path`) rather than
+      pinning 40 tests by hand, plus the tripwire at the store's dolt spawn.
+
+      Filing it because the "nothing is broken today" assessment in TASK-280 is worth
+      correcting in the record, and because the shape — a settings-resolved default
+      reachable from tests with no flag to override it — is one to look for elsewhere.
+
+      Raised by the implementer while working STORY-292.
+      Branch: story-292  ·  Commit: aa43e69  (PR link added on merge)
+    req_type: Task
+    status: Draft
+    priority: Medium
+clock: 520
 node_id: ''
