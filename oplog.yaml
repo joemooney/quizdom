@@ -7166,5 +7166,32 @@ operations:
   timestamp: 2026-07-22T17:34:25.500334856Z
   kind: !SetStatus
     status: Rejected
-clock: 558
+- id: 019f8ae4-e959-7763-9851-da16d5ac4259
+  target_id: 019f8ae4-e557-7cd3-981b-a1350a540868
+  author: aida
+  node_id: ''
+  lamport: 559
+  timestamp: 2026-07-22T17:34:45.593991731Z
+  kind: !Create
+    title: 'Finish the durability + logging surface: honest probe failures, bounded log, real terminal-safety test'
+    description: |-
+      Third-generation follow-ups on STORY-299's shipped surface. All in db_backup.rs / the logging seam / settings.rs.
+
+      TASK-325: an Unknown backup probe silently CANCELS the opt-in auto_backup push. A probe that cannot determine state should not be read as 'nothing to do' — that turns an enabled auto_backup into a silent no-op, which is the exact failure mode auto_backup exists to prevent. Decide explicitly: attempt the push, or skip and SAY SO.
+      TASK-324: the session-end backup probe hardcodes the default remote name, so a user who configured a different remote gets a wrong or missing reminder.
+      TASK-321: the diagnostic log has no rotation or size bound — an unbounded file in the user data dir. Cap it (size or line count with truncation/rotation); a diagnostic breadcrumb must not become a disk problem.
+      TASK-322: the terminal-safety invariant (nothing reaches stdout/stderr while the alternate screen is active) is currently pinned by a SOURCE SCAN rather than a captured fd. That is the one invariant most worth testing for real — capture the descriptors and assert emptiness across a logging call.
+      TASK-320: surface auto_backup and the diagnostic log path as read-only /settings rows so both are discoverable.
+
+      ## Acceptance
+      - An Unknown probe never silently cancels an enabled auto_backup: it either pushes or reports why it did not (test both branches).
+      - The reminder and probe use the configured remote name, not a hardcoded default (test with a non-default remote).
+      - The diagnostic log is bounded; exceeding the bound truncates or rotates rather than growing (test).
+      - Terminal safety is proven by capturing stdout/stderr around a logging call while the alternate screen is active, not by scanning source.
+      - /settings shows auto_backup and the log path.
+      - cargo test green; real_dolt green; clippy clean under -D warnings.
+    req_type: Story
+    status: Approved
+    priority: Medium
+clock: 559
 node_id: ''
