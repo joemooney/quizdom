@@ -42,9 +42,16 @@ priority: Medium
 owner: ''
 feature: Uncategorized
 created_at: 2026-07-22T16:08:01.155173664Z
-modified_at: 2026-07-22T16:08:01.155173664Z
+modified_at: 2026-07-22T19:00:40.949480687Z
 req_type: Task
 tags:
 - from-implementer:STORY-292
 - kind:bug-spotted
 - severity:minor
+comments:
+- id: 019f8b33-9375-7802-afff-972d20b58d68
+  author: joe
+  content: 'Record of a hazard the TASK-280 tripwire successfully caught and the same PR fixed: 43 session tests were resolving DoltDomainStore via settings and spawning real dolt against the config path. The tripwire made it fail loudly and the tests were pinned. Valuable history; no remaining action.'
+  created_at: 2026-07-22T19:00:40.949480687Z
+  modified_at: 2026-07-22T19:00:40.949480687Z
+  session_id: 789bafdb-f673-41c5-affc-d550f95e51e5
