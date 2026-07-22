@@ -18,12 +18,12 @@ description: |-
   - No test reads the real user config; render_list is hermetic (test proves it).
   - config_value's doc matches its implementation.
   - cargo test green; clippy clean under -D warnings.
-status: InProgress
+status: Completed
 priority: Medium
 owner: ''
 feature: Uncategorized
 created_at: 2026-07-22T19:01:14.795857680Z
-modified_at: 2026-07-22T19:17:06.680684155Z
+modified_at: 2026-07-22T19:24:51.475765794Z
 req_type: Story
 relationships:
 - rel_type: !Custom implemented-by
