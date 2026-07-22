@@ -32,9 +32,16 @@ priority: Medium
 owner: ''
 feature: Uncategorized
 created_at: 2026-07-22T15:36:30.452419415Z
-modified_at: 2026-07-22T19:40:37.567330541Z
+modified_at: 2026-07-22T19:40:50.050076160Z
 req_type: Task
 tags:
 - from-implementer:STORY-290
 - kind:bug-spotted
 - severity:minor
+comments:
+- id: 019f8b58-5602-79a2-b5bc-4020b2826123
+  author: joe
+  content: 'Half of this was already fixed on main: db_init already called create_dir_all, and the exact repro from the description (dolt_path = "graphs/main" under a fresh XDG_CONFIG_HOME) now bootstraps end to end. The repro only still failed against a stale binary in the worktree''s shadowed target/ dir — CARGO_TARGET_DIR points at /home/joe/ai/quizdom/target. Pinned the working behaviour with db_init_creates_the_missing_parents_of_a_nested_path rather than claiming a fix. The second half WAS live and is fixed: create_dir_all''s failure now names the path it could not create instead of a bare ''No such file or directory (os error 2)''.'
+  created_at: 2026-07-22T19:40:50.050076160Z
+  modified_at: 2026-07-22T19:40:50.050076160Z
+  session_id: 019f8b4a-315a-7943-a9bb-673f22445199
