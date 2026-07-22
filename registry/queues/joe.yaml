@@ -176,3 +176,11 @@
   added_at: 2026-07-22T20:10:34.916118642Z
   for_role: implementer
   added_by_machine: imac
+- user_id: joe
+  requirement_id: 019f8b8a-0292-7993-9b3f-67015b6096a4
+  position: 42000
+  added_by: joe
+  note: auto-queued by `session end` (019f8b73); covers 1 spec
+  added_at: 2026-07-22T20:35:09.801440174Z
+  for_role: reviewer
+  added_by_machine: imac
