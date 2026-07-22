@@ -22,12 +22,12 @@ description: |-
   - Printed paths are shell-quoted; a path containing a space round-trips through the printed command.
   - No control characters reach user-facing messages from any dolt surface.
   - cargo test green; real_dolt green; clippy clean.
-status: Approved
+status: InProgress
 priority: Medium
 owner: ''
 feature: Uncategorized
 created_at: 2026-07-22T14:53:52.335563751Z
-modified_at: 2026-07-22T14:53:52.335563751Z
+modified_at: 2026-07-22T15:47:23.829230245Z
 req_type: Story
 relationships:
 - rel_type: Child
