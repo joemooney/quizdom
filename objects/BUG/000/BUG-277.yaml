@@ -1,0 +1,28 @@
+id: 019f88bf-a7ae-7453-b8d1-10800e6ea3f9
+spec_id: BUG-277
+agreed_id: BUG-277
+title: db-backup acceptance runs wrote to the REAL default backup path, poisoning it with a foreign lineage; push then fails with a raw 'no common ancestor'
+description: |-
+  Found during advisor verification of STORY-261 on main (2026-07-22).
+
+  Symptom: 'quizdom db-backup' against the real data/dolt failed with: error: dolt push backup main failed: unknown push error; no common ancestor.
+
+  Root cause (verified, not inferred): ~/.local/share/quizdom/dolt-backup already contained a DIFFERENT repo lineage — cloning it showed 75 nodes but only two commits ('Initialize data repository' -> 'quizdom db-backup: snapshot working set'), whereas the live data/dolt has 195 commits including the whole reweight history. A headless acceptance/test run during the STORY-261 drive executed db-backup against the DEFAULT backup path instead of a temp dir, so the user's real backup location was claimed by a throwaway repo. Two unrelated histories -> dolt correctly refuses the push. Proof: pushing the live repo to a pristine directory succeeds ('[new branch] main -> main'); pushing to the polluted one fails every time.
+
+  Two defects:
+  1. Acceptance/test paths must never default to the real backup location. Tests must force QUIZDOM_DOLT_BACKUP_PATH (or --to) into a temp dir; the round-trip test currently passing in CI did not catch this precisely because it uses its own fixture and never observes a pre-existing foreign remote.
+  2. db-backup surfaces dolt's raw 'unknown push error; no common ancestor'. It should detect an unrelated-history remote and say so: name the backup path, explain the remote holds an unrelated repo, and offer the choices (point --to at a fresh dir, or explicitly overwrite). A durability command whose failure mode is an opaque engine string is a durability command people will ignore.
+
+  Interim state (already applied by the advisor, no data lost): the foreign backup was PRESERVED as ~/.local/share/quizdom/dolt-backup.foreign-lineage-20260722 (not deleted), a fresh db-backup of the live repo now succeeds, and the full recovery path was verified for real — deleted data/dolt, ran db-restore, got back identical 75 nodes / 75 edges / weight-sum 7073 with all 195 commits, and curate reads it.
+
+  ## Acceptance
+  - No test or acceptance path can write to the resolved real backup directory; the round-trip test pins its own temp path explicitly.
+  - db-backup detects an unrelated-history remote and fails with an actionable quizdom-level message naming the path and the options — never a raw dolt string.
+  - A regression test covers exactly this: a backup dir pre-populated with an unrelated repo produces the actionable error, not 'unknown push error'.
+status: Approved
+priority: Medium
+owner: ''
+feature: Uncategorized
+created_at: 2026-07-22T07:34:49.518934323Z
+modified_at: 2026-07-22T07:34:49.518934323Z
+req_type: Bug
