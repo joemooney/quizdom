@@ -12,12 +12,12 @@ description: |
 
   Raised by the implementer while working BUG-231.
   Branch: epic-202-2  ·  Commit: c68d412  (PR link added on merge)
-status: Draft
+status: Approved
 priority: Medium
 owner: ''
 feature: Uncategorized
 created_at: 2026-07-19T21:02:28.349062227Z
-modified_at: 2026-07-19T21:02:28.349062227Z
+modified_at: 2026-07-22T05:45:09.239975055Z
 req_type: Task
 tags:
 - from-implementer:BUG-231
