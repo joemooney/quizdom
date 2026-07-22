@@ -24,6 +24,14 @@
 //! Dolt and compares the reached set against an app-side BFS. Any mismatch is
 //! an error.
 //!
+//! Verification runs BEFORE the commit (TASK-296). The commit message asserts
+//! the counts the import carried, so it must not be written until parity, the
+//! BUG-231 edge cross-check and the spot-check have all agreed those counts are
+//! real — otherwise a failed run leaves permanent history claiming exactly what
+//! the same run disproved. `dolt sql` reads the working set, so every check sees
+//! the imported rows whether or not they are committed yet; a run that fails
+//! leaves them uncommitted, where `dolt reset --hard` can still discard them.
+//!
 //! The aida-side edge truth in that report is NOT the exporter's own read
 //! (BUG-231: a blind spot shared by both sides self-passes). It is a second,
 //! independent read — per-node `aida rel list <id> --type <kind>`, a
@@ -31,7 +39,10 @@
 //! that is cross-checked edge-by-edge against what the exporter loaded, and
 //! that also feeds the spot-check BFS.
 
-use crate::db_init::{commit_all, DoltRunner, SystemDoltRunner, DEFAULT_DOLT_DB_PATH};
+use crate::db_init::{
+    commit_tables, refuse_on_foreign_changes, DoltRunner, SystemDoltRunner, DEFAULT_DOLT_DB_PATH,
+    QUIZDOM_TABLES,
+};
 use crate::error::{QuizdomError, Result};
 use crate::store::{parse_node_show, CommandRunner, SystemCommandRunner};
 use std::collections::{BTreeMap, BTreeSet};
@@ -175,6 +186,9 @@ fn db_migrate(
             config.path.display()
         )));
     }
+    // trace:TASK-297 | ai:claude — asked before the first read, so a run that
+    // cannot honestly commit costs nothing rather than a full store scan.
+    refuse_on_foreign_changes(dolt, &config.path, "quizdom db-migrate")?;
 
     // Read side: inventory, one show per node, then one global edge scan
     // (show output cannot see custom edge kinds — BUG-231).
@@ -223,23 +237,6 @@ fn db_migrate(
         kept.len(),
         config.path.display()
     )?;
-
-    // trace:STORY-291 | ai:claude — the import is a write, so it commits. A
-    // re-run upserts the same rows, leaves the working set clean, and so adds
-    // no empty commit.
-    let message = format!(
-        "quizdom db-migrate: import {} nodes / {} edges",
-        nodes.len(),
-        kept.len()
-    );
-    if commit_all(dolt, &config.path, &message)? {
-        writeln!(output, "Committed the import to Dolt history.")?;
-    } else {
-        writeln!(
-            output,
-            "Import matched what Dolt already held — nothing new to commit."
-        )?;
-    }
 
     // Independent aida-side edge read (BUG-231): per-node `rel list --type`
     // queries are a different query path than the exporter's unfiltered
@@ -309,14 +306,51 @@ fn db_migrate(
         }
     }
 
+    // trace:TASK-296 | ai:claude — the commit is the LAST thing the run does.
+    // Its message asserts the counts above; writing it before they were checked
+    // is how a failed migration left history claiming what the same run had just
+    // refuted, permanently and with quizdom's name on it.
     if !mismatches.is_empty() {
         return Err(QuizdomError::Dolt(format!(
-            "parity mismatch:\n  {}",
-            mismatches.join("\n  ")
+            "parity mismatch:\n  {}\n\
+             The import was NOT committed — the rows sit in {}'s working set, \
+             where `dolt reset --hard` discards them.",
+            mismatches.join("\n  "),
+            config.path.display()
         )));
     }
     writeln!(output, "Parity OK.")?;
+
+    // trace:STORY-291 | ai:claude — the import is a write, so it commits. A
+    // re-run upserts the same rows, leaves the working set clean, and so adds
+    // no empty commit.
+    let message = format!(
+        "quizdom db-migrate: import {} nodes / {} edges",
+        nodes.len(),
+        kept.len()
+    );
+    if commit_tables(dolt, &config.path, QUIZDOM_TABLES, &message)? {
+        writeln!(output, "Committed the import to Dolt history.")?;
+    } else {
+        // trace:TASK-298 | ai:claude — two different nothings. One message for
+        // both left "nothing new to commit" claiming Dolt already held the graph
+        // when in fact the AIDA store had handed over nothing at all — the exact
+        // reading under which an empty migration looks like a successful one.
+        writeln!(output, "{}", nothing_committed(nodes.len(), kept.len()))?;
+    }
     Ok(())
+}
+
+// trace:TASK-298 | ai:claude
+/// Why the commit tail created nothing: an import that carried no rows, or one
+/// whose rows Dolt already had.
+fn nothing_committed(nodes: usize, edges: usize) -> &'static str {
+    if nodes == 0 && edges == 0 {
+        "The AIDA store held no domain objects — nothing was imported, so \
+         nothing was committed."
+    } else {
+        "Import matched what Dolt already held — nothing new to commit."
+    }
 }
 
 /// The id inventory: `Q-*` and `BELIEF-*` are both aida `functional` objects
@@ -957,6 +991,11 @@ mod tests {
             .with_rel_lists(SCRIPTED_NODES, SCRIPTED_EDGES)
     }
 
+    // trace:TASK-297 | ai:claude
+    /// What the pre-flight probe sees in a repo carrying no foreign edits:
+    /// `dolt sql -r json` omits the `rows` key entirely for an empty result.
+    const NO_FOREIGN_CHANGES: &str = "{}";
+
     fn dolt_repo_dir(label: &str) -> PathBuf {
         let dir =
             std::env::temp_dir().join(format!("quizdom-db-migrate-{label}-{}", std::process::id()));
@@ -987,7 +1026,18 @@ mod tests {
     #[test]
     fn migrates_nodes_then_edges_and_reports_parity() {
         let dir = dolt_repo_dir("happy");
-        let dolt = RecordingDolt::new(&["", "", "", "", NODES_PARITY, EDGES_PARITY, SPOT_CHECK]);
+        // trace:TASK-296 | ai:claude — pre-flight, the two writes, the three
+        // verification queries, and only THEN the commit tail.
+        let dolt = RecordingDolt::new(&[
+            NO_FOREIGN_CHANGES,
+            "",
+            "",
+            NODES_PARITY,
+            EDGES_PARITY,
+            SPOT_CHECK,
+            "",
+            "",
+        ]);
         let mut output = Vec::new();
 
         db_migrate(
@@ -1001,13 +1051,13 @@ mod tests {
         let calls = dolt.calls.borrow();
         assert_eq!(
             calls.len(),
-            7,
-            "nodes, edges, the commit tail, two parity queries, spot-check"
+            8,
+            "pre-flight, nodes, edges, two parity queries, spot-check, commit tail"
         );
         drop(calls);
 
         // Nodes land first (edges carry foreign keys into them), as upserts.
-        let nodes_sql = dolt.sql(0);
+        let nodes_sql = dolt.sql(1);
         assert!(nodes_sql.contains("INSERT INTO nodes"));
         assert!(nodes_sql.contains("ON DUPLICATE KEY UPDATE"));
         assert!(nodes_sql.contains("'Q-1', 'question', 'Title of Q-1'"));
@@ -1020,7 +1070,7 @@ mod tests {
         assert!(nodes_sql.contains("It''s \"quoted\"."));
 
         // Edges: insert-ignore, only custom kinds with both endpoints known.
-        let edges_sql = dolt.sql(1);
+        let edges_sql = dolt.sql(2);
         assert!(edges_sql.contains("INSERT IGNORE INTO edges"));
         assert!(edges_sql.contains("('Q-1', 'Q-2', 'begets')"));
         assert!(edges_sql.contains("('Q-1', 'TERM-5', 'probes')"));
@@ -1033,10 +1083,13 @@ mod tests {
 
         // trace:STORY-291 | ai:claude — the import lands in Dolt history, with
         // a message that says what it carried.
+        // trace:TASK-296 | ai:claude — and it lands LAST, after the three
+        // queries whose answers that message depends on.
+        // trace:TASK-297 | ai:claude — staging `nodes` / `edges` by name.
         let calls = dolt.calls.borrow();
-        assert_eq!(calls[2], ["add".to_string(), "-A".to_string()]);
+        assert_eq!(calls[6], ["add", "nodes", "edges"].map(String::from));
         assert_eq!(
-            calls[3],
+            calls[7],
             [
                 "commit".to_string(),
                 "-m".to_string(),
@@ -1067,9 +1120,9 @@ mod tests {
     #[test]
     fn blind_exporter_edge_read_fails_parity_instead_of_self_passing() {
         let dir = dolt_repo_dir("blind");
-        // Nodes write, the commit tail, then the two parity queries — no edges
+        // Pre-flight, the nodes write, then the two parity queries — no edges
         // were read, so no edge batch fires and Dolt reports an empty table.
-        let dolt = RecordingDolt::new(&["", "", "", NODES_PARITY, ""]);
+        let dolt = RecordingDolt::new(&[NO_FOREIGN_CHANGES, "", NODES_PARITY, ""]);
         let mut output = Vec::new();
 
         let result = db_migrate(
@@ -1182,6 +1235,130 @@ mod tests {
         }
     }
 
+    // trace:TASK-296 | ai:claude
+    /// The acceptance, against the real engine and read out of the real
+    /// `dolt_log`: force a parity failure and prove the history gained nothing.
+    ///
+    /// The mock test above pins the call sequence; this pins the CONSEQUENCE,
+    /// which is what the task was about — a commit is permanent, and one whose
+    /// message asserts "import 4 nodes / 3 edges" over a run that just proved
+    /// the edges were missing is a lie that outlives the terminal it scrolled
+    /// past.
+    ///
+    /// `#[ignore]`d so a plain `cargo test` never needs a dolt binary; CI
+    /// installs dolt and runs the `real_dolt` family explicitly (TASK-219):
+    /// cargo test real_dolt -- --ignored
+    #[test]
+    #[ignore = "requires the dolt binary on PATH"]
+    fn real_dolt_failed_parity_leaves_the_history_untouched() {
+        let repo = real_temp_dir("real-failed-parity");
+        let dolt = SystemDoltRunner::new("dolt".to_string());
+        crate::db_init::run_db_init(
+            [
+                "db-init".to_string(),
+                "--path".to_string(),
+                repo.display().to_string(),
+            ],
+            &mut Vec::new(),
+        )
+        .expect("bootstrap should succeed");
+        let before = scalar(&dolt, &repo, "SELECT COUNT(*) FROM dolt_log;");
+
+        // The BUG-231 shape: the exporter reads no edges, the independent
+        // per-node read sees them, so parity cannot pass.
+        let result = db_migrate(
+            &config(&repo, None),
+            &blind_exporter_store(),
+            &dolt,
+            &mut Vec::new(),
+        );
+        assert!(result.is_err(), "the blind read must fail parity");
+
+        assert_eq!(
+            scalar(&dolt, &repo, "SELECT COUNT(*) FROM dolt_log;"),
+            before,
+            "a run that failed parity must add no commit to dolt_log"
+        );
+        assert!(
+            scalar(&dolt, &repo, "SELECT COUNT(*) FROM dolt_status;") > 0,
+            "the imported rows are still in the working set, discardable"
+        );
+        assert_eq!(
+            scalar(
+                &dolt,
+                &repo,
+                "SELECT COUNT(*) FROM dolt_log WHERE message LIKE '%db-migrate%';"
+            ),
+            0,
+            "and no db-migrate message asserts counts anywhere in the history"
+        );
+
+        let _ = std::fs::remove_dir_all(&repo);
+    }
+
+    // trace:TASK-297 | ai:claude
+    /// The acceptance for the staging half, against the real engine: a hand-run
+    /// `INSERT` sitting in the working set is not swept into a quizdom commit.
+    ///
+    /// `data/dolt` is a database `db-backup`'s own documentation invites the
+    /// user to write to directly, so this state is supported rather than
+    /// broken — which is exactly why absorbing it silently would be the wrong
+    /// answer. The edit survives the refusal untouched.
+    #[test]
+    #[ignore = "requires the dolt binary on PATH"]
+    fn real_dolt_migrate_refuses_to_absorb_a_hand_run_write() {
+        let repo = real_temp_dir("real-foreign");
+        let dolt = SystemDoltRunner::new("dolt".to_string());
+        crate::db_init::run_db_init(
+            [
+                "db-init".to_string(),
+                "--path".to_string(),
+                repo.display().to_string(),
+            ],
+            &mut Vec::new(),
+        )
+        .expect("bootstrap should succeed");
+        let before = scalar(&dolt, &repo, "SELECT COUNT(*) FROM dolt_log;");
+
+        run_dolt_sql(
+            &dolt,
+            &repo,
+            "INSERT INTO nodes (id, kind, title, body, tags, weight) \
+             VALUES ('Q-900', 'question', 'written by hand', '', '', 0);",
+        )
+        .expect("a hand-run write is a supported thing to do");
+
+        match db_migrate(
+            &config(&repo, None),
+            &scripted_store(),
+            &dolt,
+            &mut Vec::new(),
+        ) {
+            Err(QuizdomError::Dolt(message)) => {
+                assert!(message.contains("quizdom did not make"), "{message}");
+                assert!(message.contains("nodes"), "{message}");
+            }
+            other => panic!("expected a refusal, got {other:?}"),
+        }
+
+        assert_eq!(
+            scalar(&dolt, &repo, "SELECT COUNT(*) FROM dolt_log;"),
+            before,
+            "nothing was committed, so nothing carries someone else's work"
+        );
+        assert_eq!(
+            scalar(
+                &dolt,
+                &repo,
+                "SELECT COUNT(*) FROM nodes WHERE id = 'Q-900';"
+            ),
+            1,
+            "and the hand-run row is still there — refusing is not discarding"
+        );
+
+        let _ = std::fs::remove_dir_all(&repo);
+    }
+
     /// A temp path for the tests that drive a REAL dolt repo — cleared, not
     /// pre-seeded with a fake `.dolt` the way [`dolt_repo_dir`] is.
     fn real_temp_dir(label: &str) -> PathBuf {
@@ -1238,7 +1415,8 @@ mod tests {
         let dir = dolt_repo_dir("mismatch");
         // Dolt reports one question too few.
         let short = NODES_PARITY.replace("| question | 2        |", "| question | 1        |");
-        let dolt = RecordingDolt::new(&["", "", "", "", &short, EDGES_PARITY, SPOT_CHECK]);
+        let dolt =
+            RecordingDolt::new(&[NO_FOREIGN_CHANGES, "", "", &short, EDGES_PARITY, SPOT_CHECK]);
         let mut output = Vec::new();
 
         let result = db_migrate(&config(&dir, None), &scripted_store(), &dolt, &mut output);
@@ -1255,12 +1433,117 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
     }
 
+    // trace:TASK-296 | ai:claude
+    /// The ordering bug itself: a run that fails parity must leave NO commit
+    /// asserting the counts parity just refuted. The commit tail is the last
+    /// two dolt calls of a successful run; here the run stops before them, so
+    /// the history says nothing rather than saying something false.
+    #[test]
+    fn a_failed_parity_run_writes_no_commit_at_all() {
+        let dir = dolt_repo_dir("no-commit-on-failure");
+        let short = NODES_PARITY.replace("| question | 2        |", "| question | 1        |");
+        let dolt =
+            RecordingDolt::new(&[NO_FOREIGN_CHANGES, "", "", &short, EDGES_PARITY, SPOT_CHECK]);
+        let mut output = Vec::new();
+
+        let result = db_migrate(
+            &config(&dir, Some("Q-1")),
+            &scripted_store(),
+            &dolt,
+            &mut output,
+        );
+        assert!(result.is_err(), "parity disagreed, so the run failed");
+
+        let calls = dolt.calls.borrow();
+        let verbs: Vec<&str> = calls.iter().map(|args| args[0].as_str()).collect();
+        assert!(
+            !verbs.contains(&"commit"),
+            "no commit may assert counts the same run refuted: {verbs:?}"
+        );
+        assert!(
+            !verbs.contains(&"add"),
+            "and nothing was staged either: {verbs:?}"
+        );
+        drop(calls);
+
+        // The rows are still in the working set, and the error says so — a user
+        // who is told the run failed needs to know what it left behind.
+        let message = result.unwrap_err().to_string();
+        assert!(message.contains("was NOT committed"), "{message}");
+        assert!(message.contains("dolt reset --hard"), "{message}");
+        assert!(
+            !String::from_utf8(output).unwrap().contains("Committed"),
+            "and it never claimed otherwise on the way past"
+        );
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    // trace:TASK-297 | ai:claude
+    /// The refusal, on `db-migrate` — asked before the first aida read, so a
+    /// run that could not honestly commit costs a single probe rather than a
+    /// full store scan.
+    #[test]
+    fn db_migrate_refuses_rather_than_absorbing_a_foreign_working_set_edit() {
+        let dir = dolt_repo_dir("foreign");
+        let dolt = RecordingDolt::new(&[r#"{"rows":[{"table_name":"nodes"}]}"#]);
+
+        let result = db_migrate(
+            &config(&dir, None),
+            &scripted_store(),
+            &dolt,
+            &mut Vec::new(),
+        );
+        match result {
+            Err(QuizdomError::Dolt(message)) => {
+                assert!(message.contains("quizdom did not make"), "{message}");
+                assert!(message.contains("nodes"), "it names the table: {message}");
+                assert!(
+                    message.contains("quizdom db-backup"),
+                    "and a way out: {message}"
+                );
+            }
+            other => panic!("expected a refusal, got {other:?}"),
+        }
+        assert_eq!(
+            dolt.calls.borrow().len(),
+            1,
+            "the probe is the only thing that ran"
+        );
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    // trace:TASK-298 | ai:claude
+    /// Two different nothings. "Import matched what Dolt already held" asserts
+    /// Dolt HAS the graph; said over an empty store it turns "aida handed us
+    /// nothing" into a report of a successful, idempotent re-run — the one
+    /// reading under which a broken migration looks fine.
+    #[test]
+    fn an_empty_import_and_an_unchanged_re_run_say_different_things() {
+        assert_eq!(
+            nothing_committed(0, 0),
+            "The AIDA store held no domain objects — nothing was imported, so \
+             nothing was committed."
+        );
+        assert!(nothing_committed(4, 3).contains("Dolt already held"));
+        // One node and no edges is still an import that carried something.
+        assert!(nothing_committed(1, 0).contains("Dolt already held"));
+    }
+
     #[test]
     fn spot_check_set_difference_is_a_parity_error() {
         let dir = dolt_repo_dir("spot");
         // The CTE reaches Q-1 only — the aida-side walk expects Q-1 and Q-2.
         let short_chain = "+------+\n| id   |\n+------+\n| Q-1  |\n+------+\n";
-        let dolt = RecordingDolt::new(&["", "", "", "", NODES_PARITY, EDGES_PARITY, short_chain]);
+        let dolt = RecordingDolt::new(&[
+            NO_FOREIGN_CHANGES,
+            "",
+            "",
+            NODES_PARITY,
+            EDGES_PARITY,
+            short_chain,
+        ]);
         let mut output = Vec::new();
 
         let result = db_migrate(
@@ -1282,7 +1565,7 @@ mod tests {
     #[test]
     fn unknown_spot_check_root_is_a_parity_error() {
         let dir = dolt_repo_dir("badroot");
-        let dolt = RecordingDolt::new(&["", "", "", "", NODES_PARITY, EDGES_PARITY]);
+        let dolt = RecordingDolt::new(&[NO_FOREIGN_CHANGES, "", "", NODES_PARITY, EDGES_PARITY]);
         let mut output = Vec::new();
 
         let result = db_migrate(
@@ -1297,7 +1580,7 @@ mod tests {
             }
             other => panic!("expected root error, got {other:?}"),
         }
-        assert_eq!(dolt.calls.borrow().len(), 6, "no spot-check query fired");
+        assert_eq!(dolt.calls.borrow().len(), 5, "no spot-check query fired");
 
         let _ = std::fs::remove_dir_all(&dir);
     }

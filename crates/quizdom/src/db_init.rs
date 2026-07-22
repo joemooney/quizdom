@@ -15,11 +15,12 @@
 //!
 //! This module also hosts the pieces every dolt caller needs, because it
 //! already owns the [`DoltRunner`] seam they all spawn through: the commit tail
-//! ([`commit_all`]), the structured clean-tree probe behind it
-//! ([`working_set_is_clean`], TASK-276), the control-character scrub every error
-//! surface applies ([`clean_dolt_message`], TASK-279), and the `#[cfg(test)]`
-//! real-path tripwire ([`guard_test_path`], TASK-280). Keeping one copy of each
-//! is the point — four hand-copied variants is how they drift.
+//! ([`commit_tables`] / [`commit_working_set`]), the structured clean-tree probe
+//! behind it ([`working_set_is_clean`], TASK-276), the foreign-change pre-flight
+//! ([`refuse_on_foreign_changes`], TASK-297), the control-character scrub every
+//! error surface applies ([`clean_dolt_message`], TASK-279), and the
+//! `#[cfg(test)]` real-path tripwire ([`guard_test_path`], TASK-280). Keeping
+//! one copy of each is the point — four hand-copied variants is how they drift.
 
 use crate::error::{QuizdomError, Result};
 use std::io::Write;
@@ -59,13 +60,35 @@ impl DoltRunner for SystemDoltRunner {
             .current_dir(cwd)
             .args(args)
             .output()
-            .map_err(|error| {
-                QuizdomError::Dolt(format!(
-                    "failed to spawn `{}`: {error}; is dolt installed and on PATH?",
-                    self.command
-                ))
-            })
+            // trace:TASK-304 | ai:claude
+            .map_err(|error| QuizdomError::Dolt(spawn_failure(&self.command, cwd, &error)))
     }
+}
+
+// trace:TASK-304 | ai:claude
+/// Why a `dolt` spawn failed, named after whichever thing was actually missing.
+///
+/// `Command::output` reports one `NotFound` for two unrelated causes: no `dolt`
+/// on `PATH`, and a `current_dir` that does not exist. The message this replaces
+/// asserted the first unconditionally, so a `dolt_path` pointing at a directory
+/// nobody had created yet sent the user to audit a dolt installation that was
+/// fine. A confident wrong diagnosis costs more than no diagnosis: it decides
+/// where someone looks next.
+fn spawn_failure(command: &str, cwd: &Path, error: &std::io::Error) -> String {
+    if !cwd.exists() {
+        return format!(
+            "cannot run `{command}` in {cwd}: no such directory \
+             (create the repo with `quizdom db-init --path {cwd}`)",
+            cwd = cwd.display()
+        );
+    }
+    if !cwd.is_dir() {
+        return format!(
+            "cannot run `{command}` in {}: that path is not a directory",
+            cwd.display()
+        );
+    }
+    format!("failed to spawn `{command}`: {error}; is dolt installed and on PATH?")
 }
 
 struct DbInitConfig {
@@ -143,17 +166,32 @@ fn db_init(path: &Path, runner: &dyn DoltRunner, output: &mut impl Write) -> Res
     // trace:TASK-280 | ai:claude — `db-init` resolves the same settings chain
     // `db-backup` does, so it needs the same tripwire.
     guard_test_path("--path", path);
-    std::fs::create_dir_all(path)?;
+    // trace:TASK-301 | ai:claude — `create_dir_all`, not `create_dir`: a
+    // configured `dolt_path` naming a nested directory (`~/graphs/quizdom/dolt`)
+    // must bootstrap in one command, not fail on the parent nobody made. And
+    // when it does fail, it names the path — a bare `No such file or directory
+    // (os error 2)` is what cost the most time diagnosing this, because the one
+    // fact the user needs is which path the process could not create.
+    std::fs::create_dir_all(path).map_err(|error| {
+        QuizdomError::Dolt(format!(
+            "cannot create the domain-graph directory {}: {error}",
+            path.display()
+        ))
+    })?;
 
-    if path.join(".dolt").exists() {
+    let fresh = !path.join(".dolt").exists();
+    if fresh {
+        run_dolt(runner, path, &["init"])?;
+        writeln!(output, "Initialised Dolt repo at {}.", path.display())?;
+    } else {
         writeln!(
             output,
             "Dolt repo already initialised at {} — skipping `dolt init`.",
             path.display()
         )?;
-    } else {
-        run_dolt(runner, path, &["init"])?;
-        writeln!(output, "Initialised Dolt repo at {}.", path.display())?;
+        // trace:TASK-297 | ai:claude — only meaningful on a re-run: a repo
+        // `dolt init` just created has no working set to be foreign to.
+        refuse_on_foreign_changes(runner, path, "quizdom db-init")?;
     }
 
     run_dolt(runner, path, &["sql", "-q", DOLT_SCHEMA_SQL])?;
@@ -162,7 +200,7 @@ fn db_init(path: &Path, runner: &dyn DoltRunner, output: &mut impl Write) -> Res
         "Applied domain-graph schema (nodes, edges) — DDL is idempotent."
     )?;
     // trace:STORY-291 | ai:claude
-    if commit_all(runner, path, SCHEMA_COMMIT_MESSAGE)? {
+    if commit_tables(runner, path, QUIZDOM_TABLES, SCHEMA_COMMIT_MESSAGE)? {
         writeln!(output, "Committed the schema to Dolt history.")?;
     } else {
         writeln!(output, "Schema already committed — nothing new to record.")?;
@@ -188,32 +226,68 @@ pub(crate) fn is_nothing_to_commit(reported: &str) -> bool {
 }
 
 // trace:TASK-276 | ai:claude
+// trace:TASK-297 | ai:claude — `scope` narrows the question to the tables the
+// caller actually staged, so a foreign table sitting in the working set cannot
+// make an ordinary clean-tree refusal look like a failure.
 /// The SQL behind [`working_set_is_clean`]. `dolt_status` is Dolt's system
 /// table of pending changes (staged and unstaged both); an empty one is a clean
-/// tree, by definition rather than by wording.
-pub(crate) const PENDING_CHANGES_SQL: &str = "SELECT COUNT(*) AS pending FROM dolt_status";
+/// tree, by definition rather than by wording. An empty `scope` asks about the
+/// whole working set.
+pub(crate) fn pending_changes_sql(scope: &[&str]) -> String {
+    match table_name_filter(scope) {
+        Some(filter) => format!("SELECT COUNT(*) AS pending FROM dolt_status WHERE {filter}"),
+        None => "SELECT COUNT(*) AS pending FROM dolt_status".to_string(),
+    }
+}
+
+// trace:TASK-297 | ai:claude
+/// The names in `scope` that currently carry uncommitted changes.
+fn pending_tables_sql(scope: &[&str]) -> String {
+    match table_name_filter(scope) {
+        Some(filter) => format!("SELECT DISTINCT table_name FROM dolt_status WHERE {filter}"),
+        None => "SELECT DISTINCT table_name FROM dolt_status".to_string(),
+    }
+}
+
+/// A `table_name IN (...)` predicate over `scope`, or `None` for "every table".
+/// The names are quizdom's own compile-time constants, so the literals here are
+/// not a quoting surface.
+fn table_name_filter(scope: &[&str]) -> Option<String> {
+    if scope.is_empty() {
+        return None;
+    }
+    let names: Vec<String> = scope.iter().map(|name| format!("'{name}'")).collect();
+    Some(format!("table_name IN ({})", names.join(", ")))
+}
+
+/// Run `sql` through `runner` in `repo` and hand back the parsed JSON result.
+fn probe_json(runner: &dyn DoltRunner, repo: &Path, sql: &str) -> Result<serde_json::Value> {
+    let args = ["sql", "-r", "json", "-q", sql].map(String::from);
+    let output = runner.run(repo, &args)?;
+    if !output.status.success() {
+        return Err(QuizdomError::Dolt(format!(
+            "dolt sql {sql} failed: {}",
+            clean_dolt_message(&String::from_utf8_lossy(&output.stderr))
+        )));
+    }
+    let stdout = String::from_utf8_lossy(&output.stdout).to_string();
+    serde_json::from_str(stdout.trim())
+        .map_err(|error| QuizdomError::Parse(format!("dolt_status probe was not JSON: {error}")))
+}
 
 // trace:TASK-276 | ai:claude
-/// Whether `repo`'s working set holds nothing to commit, answered from Dolt's
-/// `dolt_status` SYSTEM TABLE.
+/// Whether `repo`'s working set holds nothing to commit **in `scope`**, answered
+/// from Dolt's `dolt_status` SYSTEM TABLE. An empty `scope` asks about the whole
+/// working set.
 ///
 /// The predicate this replaces read dolt's prose ("no changes added to
 /// commit"). CI pins dolt 2.2.1 so the pipeline was stable, but a developer on
 /// a dolt whose wording had moved would have seen an ordinary clean-tree
 /// `db-backup` fail hard instead of pushing. A system table is an interface;
 /// a diagnostic sentence is not.
-fn working_set_is_clean(runner: &dyn DoltRunner, repo: &Path) -> Result<bool> {
-    let args = ["sql", "-r", "json", "-q", PENDING_CHANGES_SQL].map(String::from);
-    let output = runner.run(repo, &args)?;
-    if !output.status.success() {
-        return Err(QuizdomError::Dolt(format!(
-            "dolt sql {PENDING_CHANGES_SQL} failed: {}",
-            clean_dolt_message(&String::from_utf8_lossy(&output.stderr))
-        )));
-    }
-    let stdout = String::from_utf8_lossy(&output.stdout).to_string();
-    let value: serde_json::Value = serde_json::from_str(stdout.trim())
-        .map_err(|error| QuizdomError::Parse(format!("dolt_status probe was not JSON: {error}")))?;
+fn working_set_is_clean(runner: &dyn DoltRunner, repo: &Path, scope: &[&str]) -> Result<bool> {
+    let sql = pending_changes_sql(scope);
+    let value = probe_json(runner, repo, &sql)?;
     value
         .get("rows")
         .and_then(serde_json::Value::as_array)
@@ -225,22 +299,89 @@ fn working_set_is_clean(runner: &dyn DoltRunner, repo: &Path) -> Result<bool> {
                 .or_else(|| pending.as_str().and_then(|text| text.parse().ok()))
         })
         .map(|pending| pending == 0)
-        .ok_or_else(|| QuizdomError::Parse(format!("dolt_status probe had no count: {stdout}")))
+        .ok_or_else(|| QuizdomError::Parse(format!("dolt_status probe had no count: {value}")))
 }
 
 // trace:TASK-276 | ai:claude
-/// Whether a failed `dolt commit` was the ordinary clean-tree refusal.
+/// Whether a failed `dolt commit` was the ordinary clean-tree refusal, asked
+/// only of the tables the caller staged.
 ///
-/// Structured first: after `add -A` a genuinely empty working set leaves
-/// `dolt_status` empty, while a commit that failed for a real reason (an
-/// unknown author identity, say) leaves the staged rows sitting there. The
-/// prose match survives only for the case where the probe itself cannot run —
-/// then the old behaviour is strictly better than declaring a real failure.
-fn is_clean_tree_refusal(runner: &dyn DoltRunner, repo: &Path, reported: &str) -> bool {
-    match working_set_is_clean(runner, repo) {
+/// Structured first: after staging, a genuinely empty working set leaves
+/// `dolt_status` empty for those tables, while a commit that failed for a real
+/// reason (an unknown author identity, say) leaves the staged rows sitting
+/// there. The prose match survives only for the case where the probe itself
+/// cannot run — then the old behaviour is strictly better than declaring a real
+/// failure.
+fn is_clean_tree_refusal(
+    runner: &dyn DoltRunner,
+    repo: &Path,
+    scope: &[&str],
+    reported: &str,
+) -> bool {
+    match working_set_is_clean(runner, repo, scope) {
         Ok(clean) => clean,
         Err(_) => is_nothing_to_commit(reported),
     }
+}
+
+// trace:TASK-297 | ai:claude
+/// The tables quizdom owns, and therefore the only ones a quizdom-labelled
+/// commit may stage. Everything `db-init` creates and everything `db-migrate`,
+/// the store, and `question add` write lives in these two.
+pub(crate) const QUIZDOM_TABLES: &[&str] = &["nodes", "edges"];
+
+// trace:TASK-297 | ai:claude
+/// Refuse to proceed when a table quizdom is about to stage ALREADY carries
+/// changes quizdom did not make.
+///
+/// `db-backup`'s own documentation invites the user to run `dolt sql` against
+/// `data/dolt` by hand, so a pending `UPDATE nodes …` is a supported state, not
+/// a corrupt one. But staging is table-granular — `dolt add nodes` takes every
+/// pending row in `nodes`, not just ours — so once quizdom writes on top of that
+/// edit the two are indistinguishable, and the commit tail would file the user's
+/// work in Dolt history under a message describing only quizdom's.
+///
+/// Hence a PRE-FLIGHT: asked before quizdom writes anything, while the two are
+/// still separable. Refusing is the honest option — the alternatives are to
+/// mislabel their commit or to silently drop their edit, and quizdom cannot
+/// author a message for a change it did not make.
+pub(crate) fn refuse_on_foreign_changes(
+    runner: &dyn DoltRunner,
+    repo: &Path,
+    command: &str,
+) -> Result<()> {
+    let pending = pending_tables(runner, repo, QUIZDOM_TABLES)?;
+    if pending.is_empty() {
+        return Ok(());
+    }
+    Err(QuizdomError::Dolt(format!(
+        "{repo} has uncommitted changes to {tables} that quizdom did not make.\n\
+         `{command}` commits what it writes to those tables, and staging is \
+         table-granular — so those edits would land in Dolt history under a \
+         quizdom message that does not describe them.\n\
+         Settle them first: `quizdom db-backup` commits them under their own \
+         snapshot message, or `cd {repo} && dolt add -A && dolt commit -m '…'` \
+         records them in your words (`dolt reset --hard` discards them).",
+        repo = repo.display(),
+        tables = pending.join(", ")
+    )))
+}
+
+// trace:TASK-297 | ai:claude
+/// The tables of `scope` with uncommitted changes, from `dolt_status`. A repo
+/// whose working set is clean answers with no `rows` key at all, which is an
+/// empty list rather than a parse failure.
+fn pending_tables(runner: &dyn DoltRunner, repo: &Path, scope: &[&str]) -> Result<Vec<String>> {
+    let value = probe_json(runner, repo, &pending_tables_sql(scope))?;
+    Ok(value
+        .get("rows")
+        .and_then(serde_json::Value::as_array)
+        .map(|rows| {
+            rows.iter()
+                .filter_map(|row| row.get("table_name")?.as_str().map(str::to_string))
+                .collect()
+        })
+        .unwrap_or_default())
 }
 
 // trace:TASK-279 | ai:claude
@@ -322,16 +463,58 @@ pub(crate) fn guard_test_path(flag: &str, path: &Path) {
 pub(crate) fn guard_test_path(_flag: &str, _path: &Path) {}
 
 // trace:STORY-291 | ai:claude
-/// Stage and commit everything in `repo`'s working set, returning whether a
-/// commit was actually created (`false` = the tree was already clean).
+// trace:TASK-297 | ai:claude
+/// Stage the tables quizdom owns and commit them, returning whether a commit
+/// was actually created (`false` = those tables were already clean).
 ///
-/// The one commit tail every writer shares. `DoltDomainStore` commits each
+/// The commit tail every quizdom WRITER shares. `DoltDomainStore` commits each
 /// write (STORY-208), and since STORY-291 `db-init` and `db-migrate` commit
 /// theirs too — before that their writes sat untracked, so a freshly
 /// bootstrapped-and-migrated repo had one commit and a working set holding the
 /// entire graph, and the first `db-backup` pushed an empty history.
-pub(crate) fn commit_all(runner: &dyn DoltRunner, repo: &Path, message: &str) -> Result<bool> {
+///
+/// It stages `tables` BY NAME rather than `-A` (TASK-297): a message that says
+/// "quizdom db-migrate: import N nodes" must not carry a table quizdom has never
+/// heard of. The narrower half of that promise — a hand edit to `nodes` itself —
+/// is [`refuse_on_foreign_changes`]'s job, because by the time this runs the two
+/// are one diff.
+pub(crate) fn commit_tables(
+    runner: &dyn DoltRunner,
+    repo: &Path,
+    tables: &[&str],
+    message: &str,
+) -> Result<bool> {
+    let mut args = vec!["add"];
+    args.extend_from_slice(tables);
+    run_dolt(runner, repo, &args)?;
+    commit_staged(runner, repo, tables, message)
+}
+
+// trace:STORY-291 | ai:claude
+/// Stage and commit EVERYTHING in `repo`'s working set.
+///
+/// The one caller is `db-backup`'s pre-push snapshot, and breadth is the whole
+/// point there: what it exists to rescue is precisely the change quizdom did not
+/// make, under a message ("snapshot working set") that claims nothing about
+/// authorship. Every other writer uses [`commit_tables`].
+pub(crate) fn commit_working_set(
+    runner: &dyn DoltRunner,
+    repo: &Path,
+    message: &str,
+) -> Result<bool> {
     run_dolt(runner, repo, &["add", "-A"])?;
+    commit_staged(runner, repo, &[], message)
+}
+
+/// The shared half: commit what is staged, treating dolt's clean-tree refusal
+/// as success. `scope` is the set of tables just staged — an empty slice means
+/// the whole working set.
+fn commit_staged(
+    runner: &dyn DoltRunner,
+    repo: &Path,
+    scope: &[&str],
+    message: &str,
+) -> Result<bool> {
     let args = ["commit", "-m", message].map(String::from);
     let output = runner.run(repo, &args)?;
     if output.status.success() {
@@ -345,7 +528,7 @@ pub(crate) fn commit_all(runner: &dyn DoltRunner, repo: &Path, message: &str) ->
         String::from_utf8_lossy(&output.stderr)
     );
     // trace:TASK-276 | ai:claude — the system table decides, not dolt's prose.
-    if is_clean_tree_refusal(runner, repo, &reported) {
+    if is_clean_tree_refusal(runner, repo, scope, &reported) {
         return Ok(false);
     }
     Err(QuizdomError::Dolt(format!(
@@ -418,6 +601,19 @@ mod tests {
         }
     }
 
+    // trace:TASK-297 | ai:claude
+    /// What the pre-flight probe sees in a repo whose working set is clean:
+    /// `dolt sql -r json` omits the `rows` key entirely for an empty result.
+    const NO_FOREIGN_CHANGES: (i32, &str, &str) = (0, "{}", "");
+
+    /// A repo that already exists, so `db_init` runs its pre-flight — every
+    /// such test scripts that probe first.
+    fn existing_repo(label: &str) -> PathBuf {
+        let dir = temp_dir(label);
+        std::fs::create_dir_all(dir.join(".dolt")).unwrap();
+        dir
+    }
+
     fn temp_dir(label: &str) -> PathBuf {
         let dir =
             std::env::temp_dir().join(format!("quizdom-db-init-{label}-{}", std::process::id()));
@@ -446,18 +642,83 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
     }
 
+    // trace:TASK-301 | ai:claude
+    /// A nested `dolt_path` bootstraps in one command. Someone who configures
+    /// `dolt_path = "~/graphs/quizdom/dolt"` has named a directory whose parents
+    /// do not exist yet, and `db-init` is the command whose entire job is to
+    /// bring that path into being — stopping at the first missing parent would
+    /// hand them a `mkdir -p` to run before the bootstrap command works.
+    #[test]
+    fn db_init_creates_the_missing_parents_of_a_nested_path() {
+        let root = temp_dir("nested");
+        let nested = root.join("graphs").join("quizdom").join("dolt");
+        assert!(!nested.exists(), "the whole chain starts missing");
+        let runner = RecordingDoltRunner::new(vec![(0, "", ""), (0, "", "")]);
+
+        db_init(&nested, &runner, &mut Vec::new()).expect("a nested path should bootstrap");
+
+        assert!(nested.is_dir(), "db-init created {}", nested.display());
+        assert_eq!(
+            runner.calls.borrow()[0].0,
+            nested,
+            "and dolt ran IN the directory it created"
+        );
+
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    // trace:TASK-301 | ai:claude
+    /// The other half of the same task: when the directory genuinely cannot be
+    /// created, the error names it. A bare `No such file or directory (os error
+    /// 2)` withholds the single fact the user needs — WHICH path — and the path
+    /// came from a resolution chain (env > settings.toml > compiled default)
+    /// they cannot see from the message either.
+    #[test]
+    fn a_directory_that_cannot_be_created_is_named_in_the_error() {
+        let root = temp_dir("blocked");
+        std::fs::create_dir_all(&root).unwrap();
+        // A parent that is a FILE: `create_dir_all` cannot descend through it.
+        let blocker = root.join("not-a-dir");
+        std::fs::write(&blocker, b"").unwrap();
+        let doomed = blocker.join("dolt");
+        let runner = RecordingDoltRunner::new(vec![]);
+
+        match db_init(&doomed, &runner, &mut Vec::new()) {
+            Err(QuizdomError::Dolt(message)) => {
+                assert!(
+                    message.contains(&doomed.display().to_string()),
+                    "the error names the path it could not create: {message}"
+                );
+                assert!(
+                    message.contains("domain-graph directory"),
+                    "and what that path was for: {message}"
+                );
+            }
+            other => panic!("expected a named IO failure, got {other:?}"),
+        }
+        assert!(
+            runner.calls.borrow().is_empty(),
+            "no dolt ran against a directory that does not exist"
+        );
+
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
     #[test]
     fn existing_repo_skips_init_but_still_applies_schema() {
-        let dir = temp_dir("existing");
-        std::fs::create_dir_all(dir.join(".dolt")).unwrap();
-        let runner = RecordingDoltRunner::new(vec![(0, "", "")]);
+        let dir = existing_repo("existing");
+        let runner = RecordingDoltRunner::new(vec![NO_FOREIGN_CHANGES, (0, "", "")]);
         let mut output = Vec::new();
 
         db_init(&dir, &runner, &mut output).expect("re-run should succeed");
 
         let calls = runner.calls.borrow();
-        assert_eq!(calls.len(), 3, "schema plus its commit — no re-init");
-        assert_eq!(calls[0].1[0], "sql");
+        assert_eq!(
+            calls.len(),
+            4,
+            "the pre-flight probe, the schema, then its commit — no re-init"
+        );
+        assert_eq!(calls[1].1[0], "sql");
         let rendered = String::from_utf8(output).unwrap();
         assert!(rendered.contains("already initialised"));
 
@@ -474,7 +735,12 @@ mod tests {
         db_init(&dir, &runner, &mut output).expect("bootstrap should succeed");
 
         let calls = runner.calls.borrow();
-        assert_eq!(calls[2].1, ["add".to_string(), "-A".to_string()]);
+        // trace:TASK-297 | ai:claude — by name, never `-A`.
+        assert_eq!(
+            calls[2].1,
+            ["add", "nodes", "edges"].map(String::from),
+            "a quizdom-labelled commit stages only the tables quizdom owns"
+        );
         assert_eq!(
             calls[3].1,
             [
@@ -494,11 +760,11 @@ mod tests {
     // and it must not leave an empty commit behind either.
     #[test]
     fn a_re_run_with_nothing_to_commit_is_not_a_failure() {
-        let dir = temp_dir("idempotent");
-        std::fs::create_dir_all(dir.join(".dolt")).unwrap();
+        let dir = existing_repo("idempotent");
         let runner = RecordingDoltRunner::new(vec![
+            NO_FOREIGN_CHANGES,                         // pre-flight
             (0, "", ""),                                // schema DDL
-            (0, "", ""),                                // add -A
+            (0, "", ""),                                // add nodes edges
             (1 << 8, "no changes added to commit", ""), // commit refuses
         ]);
         let mut output = Vec::new();
@@ -515,9 +781,9 @@ mod tests {
     // surfaces, so the clean-tree tolerance cannot swallow a broken repo.
     #[test]
     fn a_genuine_commit_failure_still_surfaces() {
-        let dir = temp_dir("commit-fails");
-        std::fs::create_dir_all(dir.join(".dolt")).unwrap();
+        let dir = existing_repo("commit-fails");
         let runner = RecordingDoltRunner::new(vec![
+            NO_FOREIGN_CHANGES,
             (0, "", ""),
             (0, "", ""),
             (1 << 8, "", "author identity unknown"),
@@ -542,11 +808,11 @@ mod tests {
     /// have seen an ordinary no-op re-run fail hard.
     #[test]
     fn a_reworded_clean_tree_refusal_is_still_not_a_failure() {
-        let dir = temp_dir("reworded");
-        std::fs::create_dir_all(dir.join(".dolt")).unwrap();
+        let dir = existing_repo("reworded");
         let runner = RecordingDoltRunner::new(vec![
-            (0, "", ""), // schema DDL
-            (0, "", ""), // add -A
+            NO_FOREIGN_CHANGES, // pre-flight
+            (0, "", ""),        // schema DDL
+            (0, "", ""),        // add nodes edges
             (1 << 8, "", "commit aborted: the working set is up to date"),
             (0, r#"{"rows":[{"pending":0}]}"#, ""), // dolt_status: clean
         ]);
@@ -556,9 +822,16 @@ mod tests {
 
         let calls = runner.calls.borrow();
         assert_eq!(
-            calls[3].1,
-            ["sql", "-r", "json", "-q", PENDING_CHANGES_SQL].map(String::from),
-            "the system table is what answers the question"
+            calls[4].1,
+            [
+                "sql",
+                "-r",
+                "json",
+                "-q",
+                &pending_changes_sql(QUIZDOM_TABLES)
+            ]
+            .map(String::from),
+            "the system table is what answers the question — scoped to what was staged"
         );
         assert!(String::from_utf8(output)
             .unwrap()
@@ -572,9 +845,9 @@ mod tests {
     /// sitting there after the refused commit, so it surfaces.
     #[test]
     fn a_commit_failure_with_pending_changes_still_surfaces() {
-        let dir = temp_dir("still-dirty");
-        std::fs::create_dir_all(dir.join(".dolt")).unwrap();
+        let dir = existing_repo("still-dirty");
         let runner = RecordingDoltRunner::new(vec![
+            NO_FOREIGN_CHANGES,
             (0, "", ""),
             (0, "", ""),
             (1 << 8, "", "author identity unknown"),
@@ -596,9 +869,9 @@ mod tests {
     /// fallback — strictly better than declaring a real failure.
     #[test]
     fn an_unusable_probe_falls_back_to_the_prose_match() {
-        let dir = temp_dir("no-probe");
-        std::fs::create_dir_all(dir.join(".dolt")).unwrap();
+        let dir = existing_repo("no-probe");
         let runner = RecordingDoltRunner::new(vec![
+            NO_FOREIGN_CHANGES,
             (0, "", ""),
             (0, "", ""),
             (1 << 8, "no changes added to commit", ""),
@@ -608,6 +881,126 @@ mod tests {
         db_init(&dir, &runner, &mut Vec::new()).expect("the fallback still recognises it");
 
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    // trace:TASK-297 | ai:claude
+    /// The refusal, on `db-init`. A hand-run `UPDATE nodes …` left in the
+    /// working set would otherwise be staged by the schema commit and filed
+    /// under "quizdom db-init: apply domain-graph schema" — a sentence with
+    /// quizdom's name on it describing a change quizdom did not make.
+    #[test]
+    fn db_init_refuses_rather_than_absorbing_a_foreign_working_set_edit() {
+        let dir = existing_repo("foreign");
+        let runner =
+            RecordingDoltRunner::new(vec![(0, r#"{"rows":[{"table_name":"nodes"}]}"#, "")]);
+
+        match db_init(&dir, &runner, &mut Vec::new()) {
+            Err(QuizdomError::Dolt(message)) => {
+                assert!(message.contains("quizdom did not make"), "{message}");
+                assert!(message.contains("nodes"), "it names the table: {message}");
+                assert!(
+                    message.contains("quizdom db-backup"),
+                    "and a way out: {message}"
+                );
+            }
+            other => panic!("expected a refusal, got {other:?}"),
+        }
+        let calls = runner.calls.borrow();
+        assert_eq!(
+            calls.len(),
+            1,
+            "it refuses on the probe alone — no DDL, no add, no commit: {calls:?}"
+        );
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    // trace:TASK-297 | ai:claude
+    /// The pre-flight is scoped to the tables quizdom stages, so a hand-made
+    /// table it will never touch is not grounds to refuse — that edit was
+    /// already safe, because staging by name leaves it behind.
+    #[test]
+    fn a_pending_table_quizdom_never_stages_is_not_grounds_to_refuse() {
+        let dir = existing_repo("foreign-other");
+        let runner = RecordingDoltRunner::new(vec![
+            (0, "{}", ""), // scoped to nodes/edges: nothing pending
+            (0, "", ""),   // schema DDL
+            (0, "", ""),   // add nodes edges
+            (0, "", ""),   // commit
+        ]);
+
+        db_init(&dir, &runner, &mut Vec::new()).expect("an untouched table is not our business");
+
+        assert!(
+            runner.calls.borrow()[0].1[4].contains("table_name IN ('nodes', 'edges')"),
+            "the probe asks only about the tables about to be staged"
+        );
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    // trace:TASK-304 | ai:claude
+    /// The wrong-diagnosis regression: one `NotFound` from `Command::output`,
+    /// two unrelated causes. A missing repo directory must be reported as a
+    /// missing repo directory — the message it replaces told the user to go and
+    /// check a dolt installation that was working perfectly.
+    #[test]
+    fn a_missing_directory_is_diagnosed_as_a_missing_directory_not_a_missing_dolt() {
+        let missing = temp_dir("never-created");
+        let error = std::io::Error::from(std::io::ErrorKind::NotFound);
+
+        let message = spawn_failure("dolt", &missing, &error);
+        assert!(message.contains("no such directory"), "{message}");
+        assert!(
+            message.contains(&missing.display().to_string()),
+            "{message}"
+        );
+        assert!(
+            !message.contains("on PATH"),
+            "the PATH theory is exactly the wrong one here: {message}"
+        );
+        assert!(
+            message.contains("quizdom db-init"),
+            "and it names the command that creates it: {message}"
+        );
+
+        // A directory that DOES exist leaves the PATH diagnosis intact — that
+        // one is right whenever the cwd is not the problem.
+        std::fs::create_dir_all(&missing).unwrap();
+        let present = spawn_failure("dolt", &missing, &error);
+        assert!(
+            present.contains("is dolt installed and on PATH?"),
+            "{present}"
+        );
+
+        // A path that exists but is a file is neither of those stories.
+        let file = missing.join("not-a-dir");
+        std::fs::write(&file, b"").unwrap();
+        let wrong_kind = spawn_failure("dolt", &file, &error);
+        assert!(wrong_kind.contains("not a directory"), "{wrong_kind}");
+
+        let _ = std::fs::remove_dir_all(&missing);
+    }
+
+    // trace:TASK-304 | ai:claude
+    /// ...and the real runner routes through it. No `#[ignore]`: the spawn fails
+    /// on the missing `current_dir` whether or not dolt is installed, which is
+    /// precisely why the old message could not tell the two apart.
+    #[test]
+    fn the_real_runner_reports_the_missing_directory_it_was_pointed_at() {
+        let missing = temp_dir("runner-missing");
+        let runner = SystemDoltRunner::new("dolt".to_string());
+
+        match runner.run(&missing, &["version".to_string()]) {
+            Err(QuizdomError::Dolt(message)) => {
+                assert!(message.contains("no such directory"), "{message}");
+                assert!(
+                    message.contains(&missing.display().to_string()),
+                    "{message}"
+                );
+            }
+            other => panic!("expected a spawn error, got {other:?}"),
+        }
     }
 
     // trace:TASK-279 | ai:claude
@@ -708,7 +1101,7 @@ mod tests {
         db_init(&dir, &runner, &mut Vec::new()).expect("bootstrap should succeed");
 
         assert!(
-            working_set_is_clean(&runner, &dir).expect("the probe should run"),
+            working_set_is_clean(&runner, &dir, QUIZDOM_TABLES).expect("the probe should run"),
             "db-init commits its own schema, so it leaves a clean tree"
         );
 
@@ -724,7 +1117,7 @@ mod tests {
         )
         .expect("hand-run write should land");
         assert!(
-            !working_set_is_clean(&runner, &dir).expect("the probe should run"),
+            !working_set_is_clean(&runner, &dir, QUIZDOM_TABLES).expect("the probe should run"),
             "an uncommitted hand-run write is exactly what the snapshot rescues"
         );
 
