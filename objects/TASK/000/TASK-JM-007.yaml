@@ -8,7 +8,7 @@ priority: Medium
 owner: joe
 feature: Uncategorized
 created_at: 2026-06-01T03:40:23.810889834Z
-modified_at: 2026-07-22T05:46:03.329587379Z
+modified_at: 2026-07-22T14:49:50.277364670Z
 req_type: Task
 tags:
 - upstream:aida
@@ -18,3 +18,9 @@ comments:
   content: 'Recurrence #2 by joe 2026-06-01: 2nd occurrence (STORY-82 implementer): twice edited the shared main worktree instead of the scoped story-82 worktree, self-corrected both times. Root cause cited by the agent: stale absolute paths in its tool context. Recurring across agents — worth a guard.'
   created_at: 2026-06-01T07:13:40.546590349Z
   modified_at: 2026-06-01T07:13:40.546590349Z
+- id: 019f8a4d-ebc5-7f11-9eb1-d1f3a9b38f1f
+  author: joe
+  content: 'Archived from quizdom 2026-07-22: this is an AIDA engine finding, not quizdom work. Routed upstream for triage via ~/aida-upstream-triage-prompt.md (tagged upstream:aida). Archived Draft deliberately — not rejected, not abandoned; the upstream advisor owns the verdict.'
+  created_at: 2026-07-22T14:49:50.277364670Z
+  modified_at: 2026-07-22T14:49:50.277364670Z
+  session_id: 789bafdb-f673-41c5-affc-d550f95e51e5
