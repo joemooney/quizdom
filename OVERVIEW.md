@@ -132,6 +132,29 @@ The round trip (seed → backup → delete the repo → restore → count rows) 
 `real_dolt_backup_restore_round_trip`, which runs in CI alongside the other
 `real_dolt` acceptance tests now that the pipeline installs dolt.
 
+<!-- trace:BUG-277 | ai:claude -->
+
+**A backup directory belongs to exactly one graph.** A file remote is just a
+directory, and it cannot tell which repo is entitled to it. Push two repos with
+unrelated roots at the same directory and dolt refuses the second — there is no
+common ancestor to reconcile them against. `db-backup` detects that refusal and
+names the ways out (back up elsewhere, inspect what is there, or move the
+foreign copy aside — never delete it), rather than forwarding dolt's
+`unknown push error; no common ancestor`.
+
+The way that happens in practice is a **verification run with no `--to`**: it
+resolves the default backup path and claims your real backup directory with a
+throwaway fixture. So when exercising `db-backup` / `db-restore` by hand, always
+pin a scratch directory:
+
+```bash
+cargo run -p quizdom -- db-backup --path /tmp/scratch-graph --to /tmp/scratch-backup
+```
+
+Inside the test suite this is enforced, not merely advised: a `#[cfg(test)]`
+tripwire panics if any test aims either command outside the system temp
+directory. The tests cannot reach the real graph or its backup by any route.
+
 ## Non-goals (v1)
 
 - Not trivia; no scoring of "correctness."

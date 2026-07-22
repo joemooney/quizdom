@@ -318,3 +318,72 @@ note, and a correction to its "commits every write" claim.
 **Tests.** 604 quizdom + 7 llm tests green, all 4 `real_dolt` tests pass against
 dolt 2.2.1, fmt clean, no new clippy warnings (the 6 pre-existing lints in
 `input.rs` / `session.rs` are TASK-240's batch).
+
+## 2026-07-22 — BUG-277: a backup directory belongs to exactly one lineage
+
+**Request.** `/aida-pickup BUG-277`, under a headless single-spec drain (`aida
+queue work BUG-277 --auto-complete --no-human=both`).
+
+**The bug, as found.** Advisor verification of STORY-261 on main hit `error:
+dolt push backup main failed: unknown push error; no common ancestor`. Root
+cause was not in the push: `~/.local/share/quizdom/dolt-backup` already held a
+*different* repo — a two-commit throwaway, where the live `data/dolt` has 195
+commits. A verification run during the STORY-261 drive had executed `db-backup`
+with no `--to`, so it resolved the DEFAULT backup path and claimed the user's
+real backup location. Two unrelated roots, so dolt correctly refused every
+later push. The round-trip test stayed green throughout — it pins its own
+fixture and therefore never observes a pre-existing foreign remote. The advisor
+preserved the foreign copy as `dolt-backup.foreign-lineage-20260722` (moved,
+not deleted) and verified the full recovery path by hand before filing.
+
+**Defect 1 — tests could reach the real paths.** `db_backup` / `db_restore`
+now call a `#[cfg(test)]` `guard_test_paths` tripwire that panics unless BOTH
+`--path` and the backup directory sit under the system temp directory. A
+whitelist, not a blacklist of known-real paths: a test that forgets to pin
+cannot reach `data/dolt`, the platform data dir, or anywhere else by any
+route. Every test in the crate is an in-crate `#[cfg(test)]` unit test (there
+is no `tests/` directory compiling the lib without it), so one guard covers
+the whole suite, and it compiles out entirely in a real build — the CLI is
+*supposed* to write to the real paths.
+
+**Defect 2 — the failure mode was an opaque engine string.** The push moved
+out of the generic `run_dolt` into `push_to_backup`, which classifies the
+failure. On an unrelated-history refusal it raises a quizdom-level message that
+names the backup directory and the repo, explains that these are two lineages
+rather than a diverged branch, states that nothing reached the backup, and
+lists three ways out: back up elsewhere (`--to`), clone the foreign copy out to
+inspect it, or move it aside under a `.foreign-lineage` suffix — a move, never
+a delete, matching what the advisor did by hand. Dolt's own text is kept as a
+labelled parenthetical. Every other push failure keeps `run_dolt`'s plain
+shape; this is a targeted translation, not a blanket rewrite.
+
+**Detection is grounded, not guessed.** Before matching on anything, the
+scenario was reproduced against dolt 2.2.1 with two `dolt init` repos sharing
+one file remote: exit 1, stderr exactly `unknown push error; no common
+ancestor`. That probe also turned up a second defect — dolt pads stderr with
+backspace runs to erase its `- Uploading...` spinner, and `\x08` is not
+whitespace, so `str::trim` left a trail of control characters mid-message. A
+`clean_dolt_message` helper strips them; it is applied to the other two dolt
+error surfaces in the file too.
+
+**Tests.** Three new unit tests (the translation, the plain-shape control case,
+and the tripwire itself via `#[should_panic]`) plus
+`real_dolt_backup_refuses_a_foreign_lineage_backup`, which replays the exact
+BUG-277 sequence against the real engine: bootstrap two repos, let a throwaway
+claim the backup directory, then prove the genuine graph's backup is refused
+with the actionable message. The mock test pins the translation, the real one
+pins the trigger — without it a dolt rewording would silently stop the
+translation firing with every unit test green.
+
+**Verified.** 607 quizdom + 7 llm tests green; all 5 `real_dolt` tests pass
+against dolt 2.2.1 (~120s); fmt clean; no new clippy warnings (the 6
+pre-existing lints in `input.rs` / `session.rs` remain TASK-240's batch). The
+end-to-end CLI output was eyeballed against a real pair of repos, which is what
+caught both the control-character trail and an inaccurate "exactly as they
+were" claim in the draft message (`db-backup` does take a local snapshot commit
+before pushing).
+
+**Docs.** A module-level *A backup directory belongs to exactly one lineage*
+section in `db_backup.rs`, and a matching note in `OVERVIEW.md` § Durability
+and recovery covering the failure, the `--to`-into-scratch rule for manual
+verification runs, and the tripwire that enforces it in the suite.
