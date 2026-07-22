@@ -110,8 +110,21 @@ never to the terminal: `crates/quizdom/src/diagnostics.rs` is the one seam, and
 the TUI owns the alternate screen. **`quizdom logs [--tail N]`** is the reader
 (`STORY-342`); it names the resolved path above what it prints, and lives in
 `logs.rs` rather than the seam — *diagnostics writes and never prints, logs
-prints and never writes*. The log is bounded (1 MiB, then one kept generation in
-`quizdom.log.1`), and rotation is **safe under concurrency** (`STORY-342`):
+prints and never writes*. `STORY-352` made the reader **honest about why it has
+nothing to show**: only `ErrorKind::NotFound` is absence (a message, exit 0), and
+a permissions problem, a directory in the way, or a non-UTF-8 file now exit
+non-zero naming the OS's cause instead of all claiming "no such file"; a
+`--path` that found nothing also names the resolved log, since a typo's "no such
+file" says nothing about which of two candidate paths was wrong. Same story
+recorded text: `diagnostics::one_line` collapses each event to one line of
+**printable** text on the way in — escape sequences dropped whole, other control
+characters to spaces — because entries quote subprocess output, and a bare `\r`
+lets one entry hide the one before it in the very command run to diagnose the
+problem; `logs.rs` re-applies it on the way out, since `--path` reads files this
+crate never wrote. The log is bounded (1 MiB, then one kept generation in
+`quizdom.log.1` — `diagnostics::ROTATED_SUFFIX` is the one definition, shared
+with the reader that points at it, `STORY-352`), and rotation is **safe under
+concurrency** (`STORY-342`):
 every append takes an exclusive `File::lock` and rotation copies-then-truncates
 in place instead of renaming, so two quizdom processes cannot clobber the
 rotated history between them. `/settings` shows `auto_backup` and the resolved

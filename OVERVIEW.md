@@ -391,6 +391,35 @@ The reader lives outside the write seam on purpose (`logs.rs`, not
 writes*, so the seam's never-touch-the-terminal scan below stays a true
 statement about every path through it.
 
+<!-- trace:TASK-347 | ai:claude -->
+
+**Absence is one cause, not the only one.** That healthy-case message used to be
+printed for *every* unreadable log — the reader discarded the `io::Error` and
+hardcoded `no such file` — so a permissions problem, a directory in the way, and
+a file that is not valid UTF-8 all asserted a cause nobody had verified, and
+asserted it identically to the case where the install is simply fine. The broken
+case was invisible inside the good one. The two are now split by `ErrorKind`:
+`NotFound` keeps the message and the zero exit, and anything else is a failure
+that exits non-zero naming the cause the OS gave. A `--path` that found nothing
+also says the path came from the flag and names the log that was resolved —
+"no such file" about a typo tells you nothing about which of your two candidate
+paths was wrong.
+
+<!-- trace:TASK-349 | ai:claude -->
+
+**What is printed is printable.** Recorded text is not all quizdom's own prose:
+the degraded-read and failed-auto-backup entries embed subprocess output, so a
+dolt build that colourizes its stderr writes real escape sequences into the log.
+A bare `\r` is sharper still — it returns the cursor, so one entry can *hide*
+the entry before it, in the exact command someone runs to find out what went
+wrong. `diagnostics::one_line` therefore collapses each event to one line of
+printable text on the way **in**, where "one line of printable text per event"
+is a property of the file rather than a habit of whoever reads it; escape
+sequences are dropped whole (a control-character filter would leave `[0m`
+behind) and every other control character becomes a space, so the words either
+side of it stay apart. `logs.rs` applies the same helper on the way **out**,
+because `--path` will read a file this crate never wrote.
+
 <!-- trace:TASK-321 | ai:claude -->
 
 **Bounded at 1 MiB.** Append-only is not the same as unbounded. A healthy

@@ -958,3 +958,61 @@ quizdom wrote* and *`db-migrate` verifies before it commits* under *Durability
 and recovery*, plus a closing note in *Settings, and how a relative path
 resolves* on why anchoring made the missing-directory cases likelier;
 `CLAUDE.md`'s storage-seam bullet names the new rules and where they live.
+
+---
+
+## Session 2026-07-22 — STORY-352: log-reader honesty, control-character safety, one spelling of the suffix
+
+**Request.** `/aida-pickup STORY-352` — a headless `--auto-complete --no-human=both`
+drain of the three PR-105 review findings against `logs.rs` / `diagnostics.rs`.
+
+**TASK-347 — absence is one cause, not the only one.** `render_logs` matched
+`std::fs::read_to_string` with `let Ok(contents) = … else`, threw the `io::Error`
+away, and hardcoded the reason string `no such file`. Three inputs reach that
+line without the file being absent: a log quizdom cannot read (a cron- or
+root-owned run wrote it), a file that is not valid UTF-8 (`read_to_string` fails
+at the READ, not the open), and a mistyped `--path`. Each asserted a cause nobody
+had verified, and — worse — asserted it in exactly the words the *healthy*
+install gets, so the broken case was invisible inside the good one. Same shape as
+TASK-328 one module over. Now split on `ErrorKind`: `NotFound` keeps the message
+and the zero exit, everything else returns `QuizdomError::Io` carrying the kind
+through and exits non-zero (`could not read the diagnostic log at <path>: Is a
+directory (os error 21)`). `LogsConfig` also keeps the *resolved* path alongside
+an overriding `--path`, so a typo's "no such file" names both candidates instead
+of leaving the reader to guess which of the two was wrong.
+
+**TASK-349 — the log now has a path to a terminal.** `format_entry` sanitized
+exactly one thing (`replace('\n', " ")`), which was the whole requirement while
+nothing ever printed the log. TASK-331's reader changed that standing, and
+recorded text is not all quizdom's own prose — `degraded_read` and the
+auto-backup footer embed subprocess output. New `diagnostics::one_line` collapses
+an event to one line of *printable* text: escape sequences are dropped **whole**
+(a control-character filter would leave `[0m` behind, since the parameters are
+ordinary printable bytes), CSI and OSC forms both, and every other control
+character becomes a space so the words either side stay apart. The fix lives on
+the WRITE side, where "one line of printable text per event" is a property of the
+file; `logs.rs` re-applies it on the way out because `--path` reads files this
+crate never wrote. The sharp case is `\r`: it returns the cursor, so one entry
+can hide the entry before it in the exact command someone runs to find out what
+went wrong.
+
+**TASK-348 — one spelling of the rotated suffix.** `diagnostics::ROTATED_SUFFIX`
+(the writer) and a `".1"` literal in `logs.rs` (the reader, pointing at it) agreed
+today and would have drifted silently: change the suffix and `quizdom logs`
+simply stops printing its `(an earlier generation is in …)` line — no error, a
+pointer that quietly disappears, in precisely the case (a `--tail` that never
+reaches the live log's `-- rotated at … --` first line) where its absence is what
+the reader cannot detect. The constant is now `pub(crate)` and the reader uses it.
+
+**Verified.** `cargo fmt --all` clean; `cargo clippy --workspace --all-targets --
+-D warnings` exits 0; 714 tests green (7 new — the unreadable-log causes, absence
+staying absence, the `--path` typo naming both paths, escapes/`\r` not reaching
+stdout, the shared suffix, and two on `one_line` itself including truncated
+sequences). Also driven end to end against the built binary: a colourized +
+`\r`-bearing log piped through `cat -v` shows no `^[` and no `^M`, a directory in
+the way and a non-UTF-8 file each exit 1 naming the OS cause, and a mistyped
+`--path` exits 0 naming the resolved log.
+
+**Docs.** `OVERVIEW.md` gains §§ *Absence is one cause, not the only one* and
+*What is printed is printable* under the diagnostic-log section; `CLAUDE.md`'s
+durability paragraph names both rules and the single suffix definition.
