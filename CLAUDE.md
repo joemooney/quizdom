@@ -41,6 +41,22 @@ data substrate.
   intent, including contradiction-resolution decision nodes and
   `references` edges (`AidaIntentStore` — the only runtime aida writes).
   Canonical schema: `docs/architecture/graph-schema.md` + `db/schema.sql`.
+  **Whose commit is it** (`STORY-351`): `db-backup`'s snapshot is the only
+  commit that stages the whole working set (`dolt add -A`) — breadth is its
+  job, and "snapshot working set" claims nothing about authorship. Every other
+  writer stages `nodes`/`edges` **by name** (`db_init::commit_tables`), because
+  their messages do make a claim. Staging is table-granular, so `db-init` and
+  `db-migrate` also ask **before** they write
+  (`db_init::refuse_on_foreign_changes`) and refuse when a table they are about
+  to stage already holds a hand-run edit — quizdom cannot author a message for a
+  change it did not make, and refusing beats mislabelling it or dropping it.
+  `db-migrate` commits **last**, after parity + the BUG-231 cross-check + the
+  spot-check agree: its message asserts the counts it carried, and a failed run
+  used to leave permanent history asserting what that same run had just
+  disproved. A missing `dolt_path` directory now reports the missing directory
+  rather than blaming `PATH` (`db_init::spawn_failure`) — one `NotFound`, two
+  unrelated causes. `OVERVIEW.md` §§ *Whose commit is it?* / *`db-migrate`
+  verifies before it commits*.
 - **One storage seam** (`STORY-204`/`STORY-207`/`STORY-208`): all domain
   reads/writes go through the `DomainStore` trait; the Dolt backend — the
   only backend since the STORY-208 cutover — spawns `dolt sql -r json` per

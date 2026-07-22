@@ -466,7 +466,7 @@ const SNAPSHOT_MESSAGE: &str = "quizdom db-backup: snapshot working set";
 // trace:STORY-291 | ai:claude — one commit tail, shared with db-init /
 // db-migrate / the store.
 fn snapshot_working_set(runner: &dyn DoltRunner, repo: &Path) -> Result<bool> {
-    crate::db_init::commit_all(runner, repo, SNAPSHOT_MESSAGE)
+    crate::db_init::commit_working_set(runner, repo, SNAPSHOT_MESSAGE)
 }
 
 // trace:BUG-277 | ai:claude
@@ -1140,7 +1140,10 @@ mod tests {
                 "remote -v",
                 "add -A",
                 &format!("commit -m {SNAPSHOT_MESSAGE}"),
-                &format!("sql -r json -q {}", crate::db_init::PENDING_CHANGES_SQL),
+                &format!(
+                    "sql -r json -q {}",
+                    crate::db_init::pending_changes_sql(&[])
+                ),
                 "push backup main"
             ],
             "no re-add, and a clean tree is not a failure"
@@ -1920,7 +1923,7 @@ mod tests {
             backup_position(&runner, &repo, BACKUP_REMOTE_NAME),
             BackupPosition::UpToDate
         );
-        crate::db_init::commit_all(&runner, &repo, "a later write").ok();
+        crate::db_init::commit_working_set(&runner, &repo, "a later write").ok();
         run_dolt(
             &runner,
             &repo,
@@ -1932,7 +1935,7 @@ mod tests {
             ],
         )
         .expect("fixture should load");
-        crate::db_init::commit_all(&runner, &repo, "a later write")
+        crate::db_init::commit_working_set(&runner, &repo, "a later write")
             .expect("the write should commit");
         assert_eq!(
             backup_position(&runner, &repo, BACKUP_REMOTE_NAME),

@@ -8,7 +8,8 @@
 //! Reads parse the JSON row format; the selection weight is the real numeric
 //! `weight` column (ADR-22's `weight:N` tag encoding is retired — tags no
 //! longer carry weight anywhere in the app). Every mutation is followed by
-//! `dolt add -A` + `dolt commit`, so the domain graph's history lives in Dolt
+//! `dolt add nodes edges` + `dolt commit`, so the domain graph's history lives
+//! in Dolt
 //! itself. Multi-hop traversal is a single recursive CTE
 //! ([`DomainStore::reachable`]) — ADR-31's app-side per-hop walk is gone.
 //!
@@ -178,11 +179,21 @@ where
     /// Stage and commit a completed write. A no-op write (e.g. an idempotent
     /// [`DomainStore::ensure_edge`] hitting an existing row) leaves nothing to
     /// commit — dolt's refusal for that case is success here.
+    ///
+    // trace:TASK-297 | ai:claude — stages `nodes` / `edges` by name, never
+    // `-A`, so a hand-made table in the working set is not swept into a commit
+    // message about a session answer.
     fn commit(&self, message: &str) -> Result<()> {
         // trace:TASK-280 | ai:claude — the commit tail spawns dolt directly
         // rather than through `run_dolt`, so it takes the tripwire itself.
         crate::db_init::guard_test_path("the domain-graph path", &self.path);
-        crate::db_init::commit_all(&self.runner, &self.path, message).map(|committed| {
+        crate::db_init::commit_tables(
+            &self.runner,
+            &self.path,
+            crate::db_init::QUIZDOM_TABLES,
+            message,
+        )
+        .map(|committed| {
             // trace:STORY-299 | ai:claude
             if committed {
                 GRAPH_WRITTEN.store(true, Ordering::Relaxed);
@@ -960,7 +971,7 @@ mod tests {
         let store = store_with(vec![
             (0, r#"{"rows":[{"id":"Q-7"},{"id":"Q-3"}]}"#, ""), // max scan
             (0, "", ""),                                        // insert
-            (0, "", ""),                                        // add -A
+            (0, "", ""),                                        // add nodes edges
             (0, "", ""),                                        // commit
         ]);
         let node = NewNode {
@@ -986,7 +997,8 @@ mod tests {
             "tags column carries only real tags: {insert}"
         );
         assert!(insert.contains(", 55)"), "weight in the column: {insert}");
-        assert_eq!(calls[2], ["add", "-A"]);
+        // trace:TASK-297 | ai:claude — the tables quizdom owns, by name.
+        assert_eq!(calls[2], ["add", "nodes", "edges"]);
         assert_eq!(&calls[3][0..2], &["commit", "-m"]);
     }
 
@@ -1021,7 +1033,7 @@ mod tests {
     fn ensure_edge_tolerates_the_nothing_to_commit_no_op() {
         let store = store_with(vec![
             (0, "", ""),                       // insert ignore (no-op)
-            (0, "", ""),                       // add -A
+            (0, "", ""),                       // add nodes edges
             (1 << 8, "", "nothing to commit"), // commit refuses
         ]);
 
@@ -1293,7 +1305,7 @@ mod tests {
             "{update}"
         );
         assert!(update.contains("WHERE id IN ('Q-1', 'Q-2')"), "{update}");
-        assert_eq!(calls[1], ["add", "-A"]);
+        assert_eq!(calls[1], ["add", "nodes", "edges"]);
         assert_eq!(&calls[2][0..2], &["commit", "-m"]);
     }
 
@@ -1392,7 +1404,7 @@ mod tests {
             assert_eq!(hits, 2, "one tags arm + one weight arm for {id}");
         }
         // Still one add + one commit for the whole batch, not one per chunk.
-        assert_eq!(calls[calls.len() - 2], ["add", "-A"]);
+        assert_eq!(calls[calls.len() - 2], ["add", "nodes", "edges"]);
         assert_eq!(&calls[calls.len() - 1][0..2], &["commit", "-m"]);
         assert_eq!(
             calls.iter().filter(|call| call[0] == "commit").count(),

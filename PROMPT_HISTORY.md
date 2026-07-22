@@ -887,3 +887,74 @@ as if it were the rule.
 **Docs.** `OVERVIEW.md` § *Settings, and how a relative path resolves* gains the
 escape/`~` rules and a paragraph on why the engine seeds the two settings it
 owns; `CLAUDE.md` names the two new parsing rules in the `dolt_path` paragraph.
+
+---
+
+## 2026-07-22 — Dolt commit semantics: verify before committing, stage only our own writes, diagnose a missing path honestly (STORY-351)
+
+**Request.** `/aida-pickup STORY-351` — the implementer seat, working the bundle
+of TASK-296 / TASK-297 / TASK-298 / TASK-301 / TASK-304 across `db_migrate.rs`
+and `db_init.rs`.
+
+**TASK-296 — the ordering bug.** `db-migrate` committed its import *before*
+parity, the BUG-231 edge cross-check and the spot-check BFS ran, so a migration
+that FAILED parity still left a commit whose message asserted the very counts
+parity had just refuted. The commit is now the last thing the run does. This
+works because `dolt sql` reads the working set: every check already saw the
+imported rows whether or not they were committed, so nothing had to be
+restructured to verify against uncommitted data. A failed run leaves the rows
+uncommitted and the error says so, naming `dolt reset --hard` as the way to
+discard them — a terminal scrolls past, a commit does not.
+
+**TASK-297 — whose commit is it.** `commit_all` staged the entire working set
+with `dolt add -A` under a message describing only what quizdom did, and
+`db-backup`'s own docs invite the user to run `dolt sql` against `data/dolt` by
+hand. Split into two: `commit_working_set` (`-A`, one caller — `db-backup`'s
+snapshot, where breadth is the point and "snapshot working set" claims nothing
+about authorship) and `commit_tables` (`dolt add nodes edges`, every other
+writer). Staging is table-granular, though, so naming tables cannot separate a
+hand-run `UPDATE nodes …` from quizdom's own rows once both are pending — hence
+`refuse_on_foreign_changes`, a **pre-flight** asked before `db-init` /
+`db-migrate` write anything, while the two are still separable. Refusing is the
+honest option: the alternatives are mislabelling someone's commit or silently
+dropping their edit, and quizdom cannot author a message for a change it did not
+make. The edit survives the refusal untouched, verified against a real repo.
+
+One consequence that had to be chased: the TASK-276 clean-tree probe counted
+*every* pending row, so with partial staging an unrelated foreign table would
+have turned an ordinary no-op re-run into a hard failure. `pending_changes_sql`
+now takes the scope the caller actually staged (an empty scope = the whole
+working set, which is what `-A` means).
+
+**TASK-298.** One message covered two different nothings. "Import matched what
+Dolt already held" asserts Dolt HAS the graph; said over an empty store it turned
+"aida handed us nothing" into a report of a successful idempotent re-run — the
+one reading under which a broken migration looks fine.
+
+**TASK-301 — half already fixed, half not.** The `create_dir_all` half turned
+out to be fixed on `main` already (the repro in the task only still failed
+against a stale Jul-19 binary in the worktree's shadowed `target/`; with
+`CARGO_TARGET_DIR` honoured, the exact repro from the task passes). Pinned it
+with a test rather than claiming a fix. The second half was live: a bare `No such
+file or directory (os error 2)` withheld the one fact the user needs, so the
+error now names the path it could not create.
+
+**TASK-304 — a wrong diagnosis is worse than none.** `Command::spawn` returns one
+`NotFound` for two unrelated causes — no `dolt` on `PATH`, and a `current_dir`
+that does not exist — and the message asserted the first unconditionally, sending
+users to audit a dolt installation that was fine. `spawn_failure` stats the
+directory first. Its test needs no dolt binary, which is precisely why the two
+were confusable in the first place.
+
+**Verified.** `cargo fmt --all` applied; `cargo clippy --workspace --all-targets
+-- -D warnings` exits 0; 707 quizdom + 7 llm tests green (9 new), and all 10
+`real_dolt` acceptance tests pass against dolt 2.2.1 — including two new ones
+that force a parity failure and read `dolt_log` directly, and plant a hand-run
+`INSERT` and check it is neither absorbed nor discarded. Both surfaces also
+exercised end-to-end against the built binary.
+
+**Docs.** `OVERVIEW.md` gains §§ *Whose commit is it? — quizdom stages only what
+quizdom wrote* and *`db-migrate` verifies before it commits* under *Durability
+and recovery*, plus a closing note in *Settings, and how a relative path
+resolves* on why anchoring made the missing-directory cases likelier;
+`CLAUDE.md`'s storage-seam bullet names the new rules and where they live.

@@ -164,6 +164,35 @@ into pushing to the backup remote on its way out, and `backup_remote`
 (`$QUIZDOM_BACKUP_REMOTE`, default `backup`) names the Dolt remote pointed at
 the backup directory — see *Durability and recovery* below.
 
+<!-- trace:TASK-301 | ai:claude -->
+<!-- trace:TASK-304 | ai:claude -->
+
+Anchoring made one class of mistake much likelier, and `STORY-351` closed it:
+the directory a configured `dolt_path` names now routinely **does not exist
+yet**, because `~/.config/quizdom/` is not somewhere anyone pre-creates
+subdirectories. So `db-init` creates the whole chain (`dolt_path =
+"graphs/main"` bootstraps in one command), and when it genuinely cannot, it
+names the path it could not create rather than reporting a bare
+`No such file or directory (os error 2)`.
+
+The session path needed a different fix. `Command::spawn` returns one
+`NotFound` for two unrelated causes — no `dolt` on `PATH`, and a `current_dir`
+that does not exist — and quizdom used to assert the first unconditionally:
+
+```
+error: failed to spawn `dolt`: No such file or directory (os error 2); is dolt installed and on PATH?
+```
+
+That message sent people to audit a dolt installation that was working fine. It
+now stats the directory first and reports whichever thing was actually missing:
+
+```
+error: cannot run `dolt` in ~/.config/quizdom/graphs/main: no such directory (create the repo with `quizdom db-init --path ~/.config/quizdom/graphs/main`)
+```
+
+A confident wrong diagnosis costs more than no diagnosis, because it decides
+where someone looks next.
+
 ## Durability and recovery
 
 <!-- trace:STORY-261 | ai:claude -->
@@ -184,6 +213,52 @@ pushes `main`. Every quizdom writer commits its own writes — the store per wri
 (STORY-208), `db-init` its schema and `db-migrate` its import (STORY-291) — so
 that first step normally finds nothing to do; what it catches is a change made
 by hand with `dolt sql` in the repo.
+
+<!-- trace:TASK-297 | ai:claude -->
+
+#### Whose commit is it? — quizdom stages only what quizdom wrote
+
+`db-backup`'s snapshot is the **only** commit that stages the whole working set
+(`dolt add -A`), and breadth is the point there: rescuing a change quizdom did
+not make, under a message — "snapshot working set" — that claims nothing about
+who made it. Every other writer stages `nodes` and `edges` **by name**
+(`STORY-351`), because their messages *do* make a claim: "quizdom db-migrate:
+import 4 nodes / 3 edges" must not turn out to carry a table quizdom has never
+heard of.
+
+Staging is table-granular, though, so naming tables cannot separate a hand-run
+`UPDATE nodes …` from quizdom's own rows once both are pending. `db-init` and
+`db-migrate` therefore ask **before** they write, while the two are still
+separable, and refuse when a table they are about to stage already carries
+changes quizdom did not make:
+
+```
+data/dolt has uncommitted changes to nodes that quizdom did not make.
+`quizdom db-migrate` commits what it writes to those tables, and staging is
+table-granular — so those edits would land in Dolt history under a quizdom
+message that does not describe them.
+Settle them first: `quizdom db-backup` commits them under their own snapshot
+message, or `cd data/dolt && dolt add -A && dolt commit -m '…'` records them in
+your words (`dolt reset --hard` discards them).
+```
+
+Refusing is the honest option, not a safety reflex: the alternatives are to
+mislabel someone's commit or to silently drop their edit, and quizdom cannot
+author a message for a change it did not make. The edit survives the refusal
+untouched.
+
+<!-- trace:TASK-296 | ai:claude -->
+
+#### `db-migrate` verifies before it commits
+
+A commit is permanent; a terminal is not. `db-migrate`'s message asserts the
+counts its import carried, so it is written **last** (`STORY-351`) — after
+parity, the BUG-231 edge cross-check and the spot-check BFS have all agreed
+those counts are real. Committing first, as it used to, meant a run that FAILED
+parity still left history asserting exactly what the same run had just
+disproved. `dolt sql` reads the working set, so every check sees the imported
+rows whether or not they are committed yet; a run that fails leaves them
+uncommitted, and says so, where `dolt reset --hard` can still discard them.
 
 The backup directory resolves as `$QUIZDOM_DOLT_BACKUP_PATH` > `dolt_backup_path`
 in `~/.config/quizdom/settings.toml` > `~/.local/share/quizdom/dolt-backup` —
