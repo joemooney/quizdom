@@ -9082,5 +9082,37 @@ operations:
     req_type: Task
     status: Draft
     priority: Medium
-clock: 660
+- id: 019f8b89-884b-7050-8a92-7258e837f6fd
+  target_id: 019f8b89-85b2-78a1-ab2a-6abad65dabd2
+  author: aida
+  node_id: ''
+  lamport: 661
+  timestamp: 2026-07-22T20:34:34.187894471Z
+  kind: !Create
+    title: Every graph write now costs one extra dolt spawn for the pre-flight probe
+    description: |
+      BUG-366 runs the foreign-change pre-flight per WRITE on the store path
+      (`DoltDomainStore::begin_write`), not once per store or once per process. A
+      session write therefore spawns four `dolt` processes instead of three: probe,
+      write (self-staging), add, commit.
+
+      Chosen deliberately: the store is built eagerly by half a dozen `Default`
+      persisters so there is no single construction point to cache on, and "is the
+      working set clean *now*" is not a question an answer from twenty minutes of
+      session ago addresses.
+
+      Nothing measured suggests this matters — a session write is already three
+      spawns, and the graph is single-user (ADR-4). Filing it only so that if
+      session-write latency ever becomes a complaint, this is a known place to look,
+      rather than a surprise. Closing it would mean folding the probe into the write's
+      own `dolt sql` call (a leading `SELECT ... FROM dolt_status` in the same
+      multi-statement `-q`), which `dolt sql -r json` does not currently make readable
+      — only the last statement's result set comes back.
+
+      Raised by the implementer while working BUG-366.
+      Branch: bug-366  ·  Commit: 1fb58b6  ·  PR: https://github.com/joemooney/quizdom/pull/109
+    req_type: Task
+    status: Draft
+    priority: Medium
+clock: 661
 node_id: ''
