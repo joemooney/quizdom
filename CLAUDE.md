@@ -106,10 +106,10 @@ of `--spec` (which errors "already owned").
   seed clusters) lands in the local Dolt repo (`data/dolt`, gitignored) via
   `quizdom question add` / `quizdom db-migrate` — the Dolt *store* commits
   every write it makes into Dolt's own history (STORY-208; `aida push
-  --store-only` no longer carries domain data), though `db-init`'s DDL and
-  `db-migrate`'s bulk import land in the working set uncommitted, which is
-  why `db-backup` snapshots before it pushes. AIDA-store pushes remain for project
-  intent only.
+  --store-only` no longer carries domain data), as do `db-init`'s DDL and
+  `db-migrate`'s bulk import (STORY-291) — so `db-backup`'s pre-push snapshot
+  is now a backstop for hand-run `dolt sql`, not the thing that rescues a
+  migration. AIDA-store pushes remain for project intent only.
 - Reap a finished worktree from the MAIN repo (not from inside it): exit the
   agent, then `aida session end <lease-id> --skip-ci -y` (`--skip-ci` avoids the
   BUG-422 hang; lease ids from `aida session leases`).

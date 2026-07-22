@@ -14,6 +14,10 @@
 //! DUPLICATE KEY UPDATE`) and edges insert-ignore against their
 //! duplicate-proof primary key.
 //!
+//! The import commits itself (STORY-291), so a migrated repo carries the graph
+//! in Dolt *history*, not just in its working set. A re-run that changes
+//! nothing commits nothing.
+//!
 //! Every run ends with a parity report — node count per kind and edge count
 //! per kind, aida-side vs Dolt-side — plus a spot-check that walks a `begets`
 //! lineage (default root `Q-23`, the free-will seed) with a recursive CTE in
@@ -27,7 +31,7 @@
 //! that is cross-checked edge-by-edge against what the exporter loaded, and
 //! that also feeds the spot-check BFS.
 
-use crate::db_init::{DoltRunner, SystemDoltRunner, DEFAULT_DOLT_DB_PATH};
+use crate::db_init::{commit_all, DoltRunner, SystemDoltRunner, DEFAULT_DOLT_DB_PATH};
 use crate::error::{QuizdomError, Result};
 use crate::store::{parse_node_show, CommandRunner, SystemCommandRunner};
 use std::collections::{BTreeMap, BTreeSet};
@@ -216,6 +220,23 @@ fn db_migrate(
         kept.len(),
         config.path.display()
     )?;
+
+    // trace:STORY-291 | ai:claude — the import is a write, so it commits. A
+    // re-run upserts the same rows, leaves the working set clean, and so adds
+    // no empty commit.
+    let message = format!(
+        "quizdom db-migrate: import {} nodes / {} edges",
+        nodes.len(),
+        kept.len()
+    );
+    if commit_all(dolt, &config.path, &message)? {
+        writeln!(output, "Committed the import to Dolt history.")?;
+    } else {
+        writeln!(
+            output,
+            "Import matched what Dolt already held — nothing new to commit."
+        )?;
+    }
 
     // Independent aida-side edge read (BUG-231): per-node `rel list --type`
     // queries are a different query path than the exporter's unfiltered
@@ -961,7 +982,7 @@ mod tests {
     #[test]
     fn migrates_nodes_then_edges_and_reports_parity() {
         let dir = dolt_repo_dir("happy");
-        let dolt = RecordingDolt::new(&["", "", NODES_PARITY, EDGES_PARITY, SPOT_CHECK]);
+        let dolt = RecordingDolt::new(&["", "", "", "", NODES_PARITY, EDGES_PARITY, SPOT_CHECK]);
         let mut output = Vec::new();
 
         db_migrate(
@@ -975,8 +996,8 @@ mod tests {
         let calls = dolt.calls.borrow();
         assert_eq!(
             calls.len(),
-            5,
-            "nodes, edges, two parity queries, spot-check"
+            7,
+            "nodes, edges, the commit tail, two parity queries, spot-check"
         );
         drop(calls);
 
@@ -1005,8 +1026,23 @@ mod tests {
         );
         assert!(!edges_sql.contains("Q-404"), "dangling targets are skipped");
 
+        // trace:STORY-291 | ai:claude — the import lands in Dolt history, with
+        // a message that says what it carried.
+        let calls = dolt.calls.borrow();
+        assert_eq!(calls[2], ["add".to_string(), "-A".to_string()]);
+        assert_eq!(
+            calls[3],
+            [
+                "commit".to_string(),
+                "-m".to_string(),
+                "quizdom db-migrate: import 4 nodes / 3 edges".to_string()
+            ]
+        );
+        drop(calls);
+
         let rendered = String::from_utf8(output).unwrap();
         assert!(rendered.contains("Read 4 domain objects"));
+        assert!(rendered.contains("Committed the import to Dolt history."));
         assert!(rendered.contains("1 belief, 2 question, 1 term"));
         assert!(rendered.contains("skipping Q-2 -begets-> Q-404"));
         assert!(rendered.contains("question 2/2 ✓"));
@@ -1026,9 +1062,9 @@ mod tests {
     #[test]
     fn blind_exporter_edge_read_fails_parity_instead_of_self_passing() {
         let dir = dolt_repo_dir("blind");
-        // Nodes write, then the two parity queries — no edges were read, so
-        // no edge batch fires and Dolt reports an empty edges table.
-        let dolt = RecordingDolt::new(&["", NODES_PARITY, ""]);
+        // Nodes write, the commit tail, then the two parity queries — no edges
+        // were read, so no edge batch fires and Dolt reports an empty table.
+        let dolt = RecordingDolt::new(&["", "", "", NODES_PARITY, ""]);
         let mut output = Vec::new();
 
         let result = db_migrate(
@@ -1055,6 +1091,107 @@ mod tests {
         );
 
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    // trace:STORY-291 | ai:claude
+    /// TASK-272's acceptance, against the real engine: after bootstrap +
+    /// migrate the graph is in Dolt HISTORY, so a backup carries it. That the
+    /// migration commits at all, and that a re-run adds no empty commit, is
+    /// pinned by [`real_dolt_migrate_is_idempotent_and_passes_parity`]; what
+    /// this test adds is the durability half — the bug's real cost was a backup
+    /// that pushed an empty history and reported success.
+    ///
+    /// `#[ignore]`d so a plain `cargo test` never needs a dolt binary; CI
+    /// installs dolt and runs the `real_dolt` family explicitly (TASK-219):
+    /// cargo test real_dolt -- --ignored
+    #[test]
+    #[ignore = "requires the dolt binary on PATH"]
+    fn real_dolt_migrate_commits_its_import_so_the_backup_carries_history() {
+        let repo = real_temp_dir("real-history");
+        let backup = real_temp_dir("real-history-backup");
+        let restored = real_temp_dir("real-history-restored");
+        let dolt = SystemDoltRunner::new("dolt".to_string());
+
+        crate::db_init::run_db_init(
+            [
+                "db-init".to_string(),
+                "--path".to_string(),
+                repo.display().to_string(),
+            ],
+            &mut Vec::new(),
+        )
+        .expect("bootstrap should succeed");
+
+        db_migrate(
+            &config(&repo, Some("Q-1")),
+            &scripted_store(),
+            &dolt,
+            &mut Vec::new(),
+        )
+        .expect("migration should succeed");
+
+        let commits = scalar(&dolt, &repo, "SELECT COUNT(*) FROM dolt_log;");
+
+        // The payoff: the backup carries that history, not an empty one.
+        crate::db_backup::run_db_backup(
+            [
+                "db-backup".to_string(),
+                "--path".to_string(),
+                repo.display().to_string(),
+                "--to".to_string(),
+                backup.display().to_string(),
+            ],
+            &mut Vec::new(),
+        )
+        .expect("backup should succeed");
+        crate::db_backup::run_db_restore(
+            [
+                "db-restore".to_string(),
+                "--path".to_string(),
+                restored.display().to_string(),
+                "--from".to_string(),
+                backup.display().to_string(),
+            ],
+            &mut Vec::new(),
+        )
+        .expect("restore should succeed");
+
+        assert_eq!(
+            scalar(&dolt, &restored, "SELECT COUNT(*) FROM nodes;"),
+            4,
+            "the clone should carry every migrated node"
+        );
+        assert_eq!(
+            scalar(&dolt, &restored, "SELECT COUNT(*) FROM edges;"),
+            3,
+            "the clone should carry every migrated edge"
+        );
+        assert_eq!(
+            scalar(&dolt, &restored, "SELECT COUNT(*) FROM dolt_log;"),
+            commits,
+            "the clone should carry the whole history, not one bootstrap commit"
+        );
+
+        for dir in [&repo, &backup, &restored] {
+            let _ = std::fs::remove_dir_all(dir);
+        }
+    }
+
+    /// A temp path for the tests that drive a REAL dolt repo — cleared, not
+    /// pre-seeded with a fake `.dolt` the way [`dolt_repo_dir`] is.
+    fn real_temp_dir(label: &str) -> PathBuf {
+        let dir =
+            std::env::temp_dir().join(format!("quizdom-db-migrate-{label}-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        dir
+    }
+
+    /// The single number a `SELECT COUNT(*)` returns, out of `dolt sql`'s ASCII
+    /// table.
+    fn scalar(dolt: &dyn DoltRunner, path: &Path, sql: &str) -> u64 {
+        let rendered = run_dolt_sql(dolt, path, sql).expect("query should run");
+        let count = table_rows(&rendered).find_map(|cells| cells.first()?.parse::<u64>().ok());
+        count.unwrap_or_else(|| panic!("expected a count in: {rendered}"))
     }
 
     #[test]
@@ -1096,7 +1233,7 @@ mod tests {
         let dir = dolt_repo_dir("mismatch");
         // Dolt reports one question too few.
         let short = NODES_PARITY.replace("| question | 2        |", "| question | 1        |");
-        let dolt = RecordingDolt::new(&["", "", &short, EDGES_PARITY, SPOT_CHECK]);
+        let dolt = RecordingDolt::new(&["", "", "", "", &short, EDGES_PARITY, SPOT_CHECK]);
         let mut output = Vec::new();
 
         let result = db_migrate(&config(&dir, None), &scripted_store(), &dolt, &mut output);
@@ -1118,7 +1255,7 @@ mod tests {
         let dir = dolt_repo_dir("spot");
         // The CTE reaches Q-1 only — the aida-side walk expects Q-1 and Q-2.
         let short_chain = "+------+\n| id   |\n+------+\n| Q-1  |\n+------+\n";
-        let dolt = RecordingDolt::new(&["", "", NODES_PARITY, EDGES_PARITY, short_chain]);
+        let dolt = RecordingDolt::new(&["", "", "", "", NODES_PARITY, EDGES_PARITY, short_chain]);
         let mut output = Vec::new();
 
         let result = db_migrate(
@@ -1140,7 +1277,7 @@ mod tests {
     #[test]
     fn unknown_spot_check_root_is_a_parity_error() {
         let dir = dolt_repo_dir("badroot");
-        let dolt = RecordingDolt::new(&["", "", NODES_PARITY, EDGES_PARITY]);
+        let dolt = RecordingDolt::new(&["", "", "", "", NODES_PARITY, EDGES_PARITY]);
         let mut output = Vec::new();
 
         let result = db_migrate(
@@ -1155,7 +1292,7 @@ mod tests {
             }
             other => panic!("expected root error, got {other:?}"),
         }
-        assert_eq!(dolt.calls.borrow().len(), 4, "no spot-check query fired");
+        assert_eq!(dolt.calls.borrow().len(), 6, "no spot-check query fired");
 
         let _ = std::fs::remove_dir_all(&dir);
     }
@@ -1348,6 +1485,7 @@ mod tests {
         )
         .expect("bootstrap should succeed");
 
+        let mut commits_after_first = 0;
         for run in ["first", "second (idempotency)"] {
             let mut output = Vec::new();
             db_migrate(
@@ -1360,6 +1498,27 @@ mod tests {
             let rendered = String::from_utf8(output).unwrap();
             assert!(rendered.contains("Parity OK."), "{run} run: {rendered}");
             assert!(rendered.contains("begets lineage of Q-1 reaches 2 nodes"));
+
+            // trace:STORY-291 | ai:claude — idempotency is now also a claim
+            // about history: the first run commits its import, the second
+            // finds nothing changed and must not add an empty commit.
+            assert_eq!(
+                scalar(&dolt, &dir, "SELECT COUNT(*) FROM dolt_status;"),
+                0,
+                "{run} run should leave a clean working set"
+            );
+            let commits = scalar(&dolt, &dir, "SELECT COUNT(*) FROM dolt_log;");
+            if commits_after_first == 0 {
+                assert!(
+                    commits >= 3,
+                    "expected dolt init + schema + import in the log, got {commits}"
+                );
+                assert!(rendered.contains("Committed the import to Dolt history."));
+                commits_after_first = commits;
+            } else {
+                assert_eq!(commits, commits_after_first, "{run} run added a commit");
+                assert!(rendered.contains("nothing new to commit"), "{rendered}");
+            }
         }
 
         let _ = std::fs::remove_dir_all(&dir);

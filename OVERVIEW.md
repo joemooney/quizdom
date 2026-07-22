@@ -95,9 +95,12 @@ cargo run -p quizdom -- db-backup      # snapshot + push to the backup remote
 ```
 
 `db-backup` commits anything sitting in the working set first (a push carries
-committed data only, and `db-init` / `db-migrate` leave their writes
-uncommitted), points the `backup` remote at the backup directory, and pushes
-`main`. Run it after a session that wrote to the graph, or from cron:
+committed data only), points the `backup` remote at the backup directory, and
+pushes `main`. Every quizdom writer commits its own writes — the store per write
+(STORY-208), `db-init` its schema and `db-migrate` its import (STORY-291) — so
+that first step normally finds nothing to do; what it catches is a change made
+by hand with `dolt sql` in the repo. Run `db-backup` after a session that wrote
+to the graph, or from cron:
 
 ```cron
 0 * * * * cd /path/to/quizdom && ./target/release/quizdom db-backup

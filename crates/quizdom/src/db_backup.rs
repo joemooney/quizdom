@@ -31,11 +31,13 @@
 //! `quizdom db-backup` after a working session, or from cron / a systemd timer.
 //!
 //! A push carries COMMITTED data only, so `db-backup` commits the working set
-//! first ([`snapshot_working_set`]). The store commits every write it makes
-//! (STORY-208), but `db-init`'s schema DDL and `db-migrate`'s bulk import do
-//! not — on a freshly migrated repo the whole graph sits untracked in the
-//! working set, and pushing it without a snapshot would upload an empty history
-//! and call that a backup.
+//! first ([`snapshot_working_set`]). Every quizdom writer now commits its own
+//! writes — the store per write (STORY-208), `db-init` its schema and
+//! `db-migrate` its import (STORY-291) — so on a repo only quizdom has touched
+//! the snapshot finds nothing to do. It stays because the repo is a database a
+//! user can also write to directly: a hand-run `dolt sql -q 'UPDATE nodes …'`
+//! leaves changes in the working set, and pushing without a snapshot would
+//! silently leave them out of the backup.
 //!
 //! ## A backup directory belongs to exactly one lineage (BUG-277)
 //!
@@ -326,11 +328,11 @@ const SNAPSHOT_MESSAGE: &str = "quizdom db-backup: snapshot working set";
 /// Commit whatever sits in the working set, returning whether anything was
 /// actually committed.
 ///
-/// A push carries COMMITTED data only, and not every writer commits: the store
-/// commits each write (STORY-208), but `db-init`'s schema DDL and `db-migrate`'s
-/// bulk import land in the working set untracked. Pushing such a repo would
-/// upload an empty history and report success — a backup that silently contains
-/// nothing is worse than no backup at all, so `db-backup` snapshots first.
+/// A push carries COMMITTED data only. Every quizdom writer commits its own
+/// writes (STORY-208 for the store, STORY-291 for `db-init` / `db-migrate`), so
+/// this is a backstop rather than the main event: what it catches is a change
+/// made outside quizdom — a `dolt sql -q` run by hand in the repo — which would
+/// otherwise be pushed-around rather than pushed.
 ///
 /// `dolt commit` exits non-zero with "no changes added to commit" on a clean
 /// tree; that is the ordinary case (nothing new since the last backup), not a
@@ -347,7 +349,9 @@ fn snapshot_working_set(runner: &dyn DoltRunner, repo: &Path) -> Result<bool> {
         String::from_utf8_lossy(&output.stdout),
         String::from_utf8_lossy(&output.stderr)
     );
-    if reported.contains("no changes added to commit") || reported.contains("nothing to commit") {
+    // trace:STORY-291 | ai:claude — one clean-tree predicate, shared with the
+    // commit tail db-init / db-migrate / the store all run.
+    if crate::db_init::is_nothing_to_commit(&reported) {
         return Ok(false);
     }
     Err(QuizdomError::Dolt(format!(
@@ -1007,9 +1011,10 @@ mod tests {
             ],
         )
         .expect("fixture should load");
-        // Deliberately NOT committed here: `db-init` + `db-migrate` leave the
-        // graph in the working set, and the snapshot step is what makes it
-        // survive the round trip.
+        // trace:STORY-291 | ai:claude — deliberately NOT committed here. Every
+        // quizdom writer commits its own writes now, so what the snapshot step
+        // still has to rescue is a hand-run `dolt sql` like this one, and that
+        // is what this fixture stands for.
 
         let config = config(&repo, &backup);
         db_backup(&config, &runner, &mut Vec::new()).expect("backup should succeed");

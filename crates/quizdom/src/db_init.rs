@@ -3,9 +3,10 @@
 //! domain graph (EPIC-202 / ADR-201).
 //!
 //! Creates the repo directory if needed, runs `dolt init` unless the
-//! directory is already a Dolt repo, and applies the checked-in DDL
-//! (`db/schema.sql`, embedded at compile time). The DDL is idempotent
-//! (`CREATE TABLE IF NOT EXISTS` only), so re-running `db-init` is safe.
+//! directory is already a Dolt repo, applies the checked-in DDL
+//! (`db/schema.sql`, embedded at compile time), and commits it. The DDL is
+//! idempotent (`CREATE TABLE IF NOT EXISTS` only), so re-running `db-init` is
+//! safe — the second run changes nothing and therefore commits nothing.
 //!
 //! This slice bootstraps the empty database only; the exporter (STORY-206)
 //! and the Dolt-backed `DomainStore` (STORY-207) build on it.
@@ -120,8 +121,14 @@ pub fn run_db_init(args: impl IntoIterator<Item = String>, output: &mut impl Wri
     db_init(&config.path, &runner, output)
 }
 
+// trace:STORY-291 | ai:claude — the DDL is a write like any other, so it
+// commits.
+/// The commit message `db-init` stamps on the schema it applies.
+const SCHEMA_COMMIT_MESSAGE: &str = "quizdom db-init: apply domain-graph schema";
+
 /// The bootstrap flow: ensure the directory exists, `dolt init` it unless a
-/// `.dolt/` repo is already present, then apply the idempotent schema DDL.
+/// `.dolt/` repo is already present, apply the idempotent schema DDL, and
+/// commit it.
 fn db_init(path: &Path, runner: &dyn DoltRunner, output: &mut impl Write) -> Result<()> {
     std::fs::create_dir_all(path)?;
 
@@ -141,7 +148,55 @@ fn db_init(path: &Path, runner: &dyn DoltRunner, output: &mut impl Write) -> Res
         output,
         "Applied domain-graph schema (nodes, edges) — DDL is idempotent."
     )?;
+    // trace:STORY-291 | ai:claude
+    if commit_all(runner, path, SCHEMA_COMMIT_MESSAGE)? {
+        writeln!(output, "Committed the schema to Dolt history.")?;
+    } else {
+        writeln!(output, "Schema already committed — nothing new to record.")?;
+    }
     Ok(())
+}
+
+// trace:STORY-291 | ai:claude
+/// Whether a failed `dolt commit` is the benign "there was nothing to commit"
+/// case rather than a real failure. An idempotent write (re-running `db-init`,
+/// re-running `db-migrate`, an [`crate::store::DomainStore::ensure_edge`] that
+/// hits an existing row) leaves the working set clean, and dolt exits non-zero
+/// saying so — which is success for every caller here. Matched loosely: dolt
+/// says "no changes added to commit" in some paths and "nothing to commit" in
+/// others, and neither wording is a stable API.
+pub(crate) fn is_nothing_to_commit(reported: &str) -> bool {
+    let text = reported.to_ascii_lowercase();
+    text.contains("nothing to commit") || text.contains("no changes added")
+}
+
+// trace:STORY-291 | ai:claude
+/// Stage and commit everything in `repo`'s working set, returning whether a
+/// commit was actually created (`false` = the tree was already clean).
+///
+/// The one commit tail every writer shares. `DoltDomainStore` commits each
+/// write (STORY-208), and since STORY-291 `db-init` and `db-migrate` commit
+/// theirs too — before that their writes sat untracked, so a freshly
+/// bootstrapped-and-migrated repo had one commit and a working set holding the
+/// entire graph, and the first `db-backup` pushed an empty history.
+pub(crate) fn commit_all(runner: &dyn DoltRunner, repo: &Path, message: &str) -> Result<bool> {
+    run_dolt(runner, repo, &["add", "-A"])?;
+    let args = ["commit", "-m", message].map(String::from);
+    let output = runner.run(repo, &args)?;
+    if output.status.success() {
+        return Ok(true);
+    }
+    let reported = format!(
+        "{}{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    if is_nothing_to_commit(&reported) {
+        return Ok(false);
+    }
+    Err(QuizdomError::Dolt(format!(
+        "dolt commit failed: {reported}"
+    )))
 }
 
 fn run_dolt(runner: &dyn DoltRunner, cwd: &Path, args: &[&str]) -> Result<Output> {
@@ -223,7 +278,7 @@ mod tests {
         db_init(&dir, &runner, &mut output).expect("bootstrap should succeed");
 
         let calls = runner.calls.borrow();
-        assert_eq!(calls.len(), 2, "init then sql");
+        assert_eq!(calls.len(), 4, "init, sql, then the commit tail");
         assert_eq!(calls[0].0, dir);
         assert_eq!(calls[0].1, vec!["init".to_string()]);
         assert_eq!(calls[1].1[0..2], ["sql".to_string(), "-q".to_string()]);
@@ -245,10 +300,81 @@ mod tests {
         db_init(&dir, &runner, &mut output).expect("re-run should succeed");
 
         let calls = runner.calls.borrow();
-        assert_eq!(calls.len(), 1, "schema only — no re-init");
+        assert_eq!(calls.len(), 3, "schema plus its commit — no re-init");
         assert_eq!(calls[0].1[0], "sql");
         let rendered = String::from_utf8(output).unwrap();
         assert!(rendered.contains("already initialised"));
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    // trace:STORY-291 | ai:claude
+    #[test]
+    fn the_schema_is_committed_not_left_in_the_working_set() {
+        let dir = temp_dir("commits");
+        let runner = RecordingDoltRunner::new(vec![(0, "", ""), (0, "", "")]);
+        let mut output = Vec::new();
+
+        db_init(&dir, &runner, &mut output).expect("bootstrap should succeed");
+
+        let calls = runner.calls.borrow();
+        assert_eq!(calls[2].1, ["add".to_string(), "-A".to_string()]);
+        assert_eq!(
+            calls[3].1,
+            [
+                "commit".to_string(),
+                "-m".to_string(),
+                SCHEMA_COMMIT_MESSAGE.to_string()
+            ]
+        );
+        let rendered = String::from_utf8(output).unwrap();
+        assert!(rendered.contains("Committed the schema to Dolt history."));
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    // trace:STORY-291 | ai:claude — a second db-init changes nothing, so dolt
+    // refuses the commit; that refusal is the idempotent path, not a failure,
+    // and it must not leave an empty commit behind either.
+    #[test]
+    fn a_re_run_with_nothing_to_commit_is_not_a_failure() {
+        let dir = temp_dir("idempotent");
+        std::fs::create_dir_all(dir.join(".dolt")).unwrap();
+        let runner = RecordingDoltRunner::new(vec![
+            (0, "", ""),                                // schema DDL
+            (0, "", ""),                                // add -A
+            (1 << 8, "no changes added to commit", ""), // commit refuses
+        ]);
+        let mut output = Vec::new();
+
+        db_init(&dir, &runner, &mut output).expect("a no-op re-run should succeed");
+
+        let rendered = String::from_utf8(output).unwrap();
+        assert!(rendered.contains("Schema already committed"));
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    // trace:STORY-291 | ai:claude — a commit that fails for a real reason still
+    // surfaces, so the clean-tree tolerance cannot swallow a broken repo.
+    #[test]
+    fn a_genuine_commit_failure_still_surfaces() {
+        let dir = temp_dir("commit-fails");
+        std::fs::create_dir_all(dir.join(".dolt")).unwrap();
+        let runner = RecordingDoltRunner::new(vec![
+            (0, "", ""),
+            (0, "", ""),
+            (1 << 8, "", "author identity unknown"),
+        ]);
+        let mut output = Vec::new();
+
+        match db_init(&dir, &runner, &mut output) {
+            Err(QuizdomError::Dolt(message)) => {
+                assert!(message.contains("dolt commit failed"), "{message}");
+                assert!(message.contains("author identity unknown"), "{message}");
+            }
+            other => panic!("expected a Dolt error, got {other:?}"),
+        }
 
         let _ = std::fs::remove_dir_all(&dir);
     }
