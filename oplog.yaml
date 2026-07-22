@@ -7058,5 +7058,36 @@ operations:
     req_type: Story
     status: Approved
     priority: Medium
-clock: 551
+- id: 019f8ae2-045e-72f2-9381-596a11fa646b
+  target_id: 019f8ae2-0252-7f50-b2cd-b4b9dd2fcd6d
+  author: aida
+  node_id: ''
+  lamport: 552
+  timestamp: 2026-07-22T17:31:35.902192192Z
+  kind: !Create
+    title: Session-end backup probe hardcodes the default remote name
+    description: |
+      `db_backup::session_end_durability` always probes the tracking ref for
+      `BACKUP_REMOTE_NAME` (`crates/quizdom/src/db_backup.rs:855`), but `db-backup`
+      accepts `--remote <name>` (`crates/quizdom/src/db_backup.rs:150`).
+
+      An operator who backs up under a non-default remote name never populates
+      `remotes/backup/main`. `backup_position_from_row` deliberately reads a missing
+      tracking ref as `Ahead` — the right call for "you have never backed this graph
+      up" — so the reminder then fires after EVERY writing session, including seconds
+      after a successful `db-backup --remote archive`. A reminder that is always wrong
+      is the exact failure the Unknown-stays-silent rule was written to avoid.
+
+      Not data loss and not on the default path; the cost is a spurious advisory line
+      that erodes trust in the reminder.
+
+      Options: resolve the remote name through the same env > settings > default chain
+      the paths use (so the probe and the push agree), or read the repo's remote list
+      and probe whichever remote points at the resolved backup directory.
+
+      Raised in review of PR-102: https://github.com/joemooney/quizdom/pull/102#issuecomment-5049355015
+    req_type: Task
+    status: Draft
+    priority: Medium
+clock: 552
 node_id: ''
