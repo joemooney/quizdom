@@ -4192,5 +4192,43 @@ operations:
     req_type: Task
     status: Draft
     priority: Medium
-clock: 410
+- id: 019f8867-e70f-7c03-908a-9f702eb1ab2d
+  target_id: 019f8867-e52a-7161-a8d3-136364a46196
+  author: aida
+  node_id: ''
+  lamport: 411
+  timestamp: 2026-07-22T05:58:58.575263088Z
+  kind: !Create
+    title: take_by_id's doc-comment justifies remove-over-get with a scenario the caller makes unreachable, and it is untested
+    description: |
+      crates/quizdom/src/signals.rs:265-267 (TASK-246, PR-91).
+
+      The doc-comment on take_by_id reads:
+
+          Removing rather than borrowing means a batch that returned one id twice
+          can't satisfy two requests with the same entry.
+
+      "Two requests" for the same id cannot occur. `applied` is built from the
+      BTreeSet<String> at signals.rs:143-146, so the id list passed to
+      load_questions is unique by construction — the walk never asks for the same
+      id twice.
+
+      The `remove` choice is still the right defensive default (it is the strictly
+      safer primitive and costs nothing), so this is not a request to change the
+      code. Two smaller things:
+
+      1. The rationale describes a state the caller makes impossible, which will
+         mislead the next reader into thinking duplicate requests are a live
+         concern. Rewording to the invariant that actually holds — "the id list is
+         unique by construction; `remove` keeps that true even if a future caller
+         stops deduping" — says the same thing honestly.
+      2. No test pins the duplicate-returned-entry behavior that index_by_id
+         silently collapses (last wins). If the collapse is intended, a test
+         naming it would make it intended-and-checked rather than incidental.
+
+      Raised in review of PR-91: https://github.com/joemooney/quizdom/pull/91#issuecomment-5042411535
+    req_type: Task
+    status: Draft
+    priority: Medium
+clock: 411
 node_id: ''
