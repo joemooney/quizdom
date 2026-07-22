@@ -34,12 +34,12 @@ description: |
   log rather than `unwrap_or_default()` the error away.
 
   Raised in review of PR-90: https://github.com/joemooney/quizdom/pull/90#issuecomment-5041919599
-status: Approved
+status: InProgress
 priority: Medium
 owner: ''
 feature: Uncategorized
 created_at: 2026-07-22T04:39:39.715652627Z
-modified_at: 2026-07-22T05:47:58.541310597Z
+modified_at: 2026-07-22T06:07:25.886643064Z
 req_type: Task
 tags:
 - from-review:PR-90
