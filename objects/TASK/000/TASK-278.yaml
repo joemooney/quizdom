@@ -1,0 +1,37 @@
+id: 019f88cc-3117-77b2-94cf-dc20a59bd5c8
+spec_id: TASK-278
+agreed_id: TASK-278
+title: BUG-277 shipped the 'explicitly overwrite' option as a documented mv recipe, not a --force flag
+description: |
+  BUG-277's description asked the new error to "offer the choices (point --to at
+  a fresh dir, or explicitly overwrite)". The three acceptance criteria only
+  require the *message* to name the options, so I implemented "explicitly
+  overwrite" as a concrete two-line recipe inside the message:
+
+      mv <backup> <backup>.foreign-lineage
+      quizdom db-backup
+
+  rather than adding a `db-backup --force` flag that moves the foreign copy
+  aside itself. Rationale: a flag on a durability command that displaces an
+  existing backup is a destructive-by-default surface, the acceptance criteria
+  did not ask for it, and the mv recipe is exactly the remedy the advisor
+  applied by hand when the bug was found (preserve under a suffix, never
+  delete). It is also trivially auditable — the user sees what moved where.
+
+  If the advisor wants the flag after all, it is a small follow-up:
+  crates/quizdom/src/db_backup.rs:~415 (unrelated_history_message) plus a new
+  arm in DbBackupConfig::parse.
+
+  Raised by the implementer while working BUG-277.
+  Branch: bug-277  ·  Commit: 3bf8e0b  (PR link added on merge)
+status: Draft
+priority: Medium
+owner: ''
+feature: Uncategorized
+created_at: 2026-07-22T07:48:31.127440641Z
+modified_at: 2026-07-22T07:48:31.127440641Z
+req_type: Task
+tags:
+- from-implementer:BUG-277
+- kind:design-choice
+- severity:minor
