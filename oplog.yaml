@@ -5409,5 +5409,28 @@ operations:
     req_type: Task
     status: Draft
     priority: Medium
-clock: 470
+- id: 019f88d4-a3a5-7cd3-9263-b42e27730997
+  target_id: 019f88d4-a158-7ae2-aa3f-b7ee68fb4f4e
+  author: aida
+  node_id: ''
+  lamport: 471
+  timestamp: 2026-07-22T07:57:44.741647015Z
+  kind: !Create
+    title: push_to_backup concatenates stderr+stdout with no separator when matching markers
+    description: |
+      crates/quizdom/src/db_backup.rs:398 matches the unrelated-history markers
+      against `format!("{stderr}{stdout}")`. The two streams are joined with no
+      separator, so a marker could in principle be formed across the boundary —
+      stderr ending `...no common` and stdout opening `ancestor...` would trigger a
+      false positive translation.
+
+      Contrived rather than likely (verified against dolt 2.2.1: stderr carries the
+      whole diagnosis, stdout carries only the `- Uploading...` spinner), and the
+      one-character fix is `format!("{stderr}\n{stdout}")`.
+
+      Raised in review of PR-96: https://github.com/joemooney/quizdom/pull/96#issuecomment-5043339135
+    req_type: Task
+    status: Draft
+    priority: Medium
+clock: 471
 node_id: ''
