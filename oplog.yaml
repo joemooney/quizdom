@@ -5241,5 +5241,40 @@ operations:
     req_type: Task
     status: Draft
     priority: Medium
-clock: 464
+- id: 019f88cc-7e23-7492-9573-9162bf32862d
+  target_id: 019f88cc-6422-77c2-8b4f-a6805f4f97bc
+  author: aida
+  node_id: ''
+  lamport: 465
+  timestamp: 2026-07-22T07:48:50.851578649Z
+  kind: !Create
+    title: The other dolt error surfaces still forward backspace control characters into messages
+    description: |
+      Found while fixing BUG-277. Dolt pads stderr with backspace runs (\x08) to
+      erase its "- Uploading..." spinner in place. `\x08` is not whitespace, so
+      `str::trim()` leaves it, and a forwarded stream drags a trail of control
+      characters through the middle of the error the user sees. Verified with
+      `od -c` against dolt 2.2.1.
+
+      BUG-277 fixed this in db_backup.rs via a `clean_dolt_message` helper applied
+      to all three of that file's dolt error surfaces. The same raw forwarding
+      remains in:
+
+        - crates/quizdom/src/db_init.rs:154
+        - crates/quizdom/src/db_migrate.rs:502 and :514
+        - crates/quizdom/src/dolt_store.rs:110, :168, :182
+
+      Cosmetic — the text is still readable, it just has junk appended — but it is
+      the same one-line fix in each place, and `clean_dolt_message` is right there.
+      The tidy version is to lift the helper somewhere shared (db_init.rs already
+      owns the DoltRunner trait these all use) rather than copy it four times.
+
+      Out of scope for BUG-277, which is about the backup path specifically.
+
+      Raised by the implementer while working BUG-277.
+      Branch: bug-277  ·  Commit: 3bf8e0b  (PR link added on merge)
+    req_type: Task
+    status: Draft
+    priority: Medium
+clock: 465
 node_id: ''
