@@ -13,10 +13,10 @@ description: |-
   - A resumed session frames every question with the seeded mode, including the auto-continue path (test).
   - If a third clobber route exists, fix it at the seam rather than case by case.
   - cargo test green; clippy clean.
-status: Approved
+status: InProgress
 priority: Medium
 owner: ''
 feature: Uncategorized
 created_at: 2026-07-22T20:10:24.625577801Z
-modified_at: 2026-07-22T20:10:24.625577801Z
+modified_at: 2026-07-22T20:41:45.333786697Z
 req_type: Story
