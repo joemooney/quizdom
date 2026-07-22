@@ -23,7 +23,8 @@ use crate::model::AnswerKind;
 use crate::palette::PaletteContext;
 // trace:STORY-194 | ai:claude — the settings surface crosses the seam: the engine
 // owns score/mode authoritatively, the front-end owns editor/mouse + persistence.
-use crate::settings::Settings;
+use crate::settings::{LiveSettings, Settings};
+use crate::strategy::SessionMode;
 use std::io::{BufRead, BufReader, Read, Write};
 
 /// The interface the session ENGINE talks to instead of stdin/stdout.
@@ -142,18 +143,35 @@ pub(crate) trait FrontEnd {
     /// single-key one — the next engine-owned setting inherits the seed instead
     /// of repeating the bug. The default is [`Settings::default`], for a
     /// front-end that persists nothing.
+    ///
+    // trace:STORY-367 | ai:claude
+    /// It is also, exactly, WHAT A SAVE WOULD WRITE. Mirroring the live session
+    /// values ([`mirror_live`](FrontEnd::mirror_live)) must leave it alone —
+    /// that invariant IS STORY-367, and the engine's seed depends on it being
+    /// true a second time, on the next run.
     fn persisted_settings(&self) -> Settings {
         Settings::default()
     }
 
+    // trace:STORY-194 | ai:claude — one `sync_*` pair until STORY-367 found the
+    // two callers meaning different things by it.
+    /// MIRROR the engine-owned live values into the front-end's DISPLAY copy so
+    /// the `/settings` surface shows what the session is actually doing.
+    ///
+    /// Never writes the config file. `--mode debate` makes the live mode differ
+    /// from the saved one for the whole session; when this was also the
+    /// persisting call, the first `/settings` of such a session rewrote the
+    /// user's saved default with the flag they had passed once.
+    fn mirror_live(&mut self, live: LiveSettings);
+
     // trace:STORY-194 | ai:claude
-    /// KEEP the front-end's owned settings in sync when a DEDICATED shortcut
-    /// (`/score`, `/mode`) flips the engine-owned state, so the `/settings` panel
-    /// always reflects the live value. Persists the change. No-op-cheap.
-    fn sync_score(&mut self, on: bool);
-    /// Mirror of [`sync_score`](FrontEnd::sync_score) for the session mode token
-    /// (`socratic` / `debate`).
-    fn sync_mode(&mut self, mode_token: &str);
+    /// PERSIST an explicit user change to the score gauge (the `/score`
+    /// shortcut), mirroring it too so the panel and the shortcut agree.
+    fn persist_score(&mut self, on: bool);
+    /// Twin of [`persist_score`](FrontEnd::persist_score) for an explicit
+    /// `/mode <socratic|debate>`. A bare `/mode` changes nothing and so must not
+    /// reach here — showing a value is not choosing one.
+    fn persist_mode(&mut self, mode: SessionMode);
 
     // trace:STORY-194 | ai:claude
     /// Open the SETTINGS surface (`/settings`). `rest` is the text after
@@ -223,7 +241,14 @@ pub(crate) struct LineFrontEnd<R: Read, W: Write> {
     // trace:STORY-194 | ai:claude — the canonical settings (loaded/seeded once).
     // Headless `/settings` degrades to a printed value list; `/editor` records the
     // choice (rustyline already chose its edit mode from $EDITOR at startup).
+    // trace:STORY-367 | ai:claude — this is the DISPLAY copy: the engine mirrors
+    // its live score/mode into it so the value list tells the truth about the
+    // session. It is deliberately NOT the copy that gets saved.
     settings: Settings,
+    // trace:STORY-367 | ai:claude — what `settings.toml` says, and the only thing
+    // ever written back. Explicit changes reach it one key at a time
+    // (`Settings::adopt`); a mirrored `--mode debate` never does.
+    persisted: Settings,
 }
 
 impl<R: Read, W: Write> LineFrontEnd<R, W> {
@@ -233,16 +258,28 @@ impl<R: Read, W: Write> LineFrontEnd<R, W> {
     /// the free-text input mode from the real stdin's TTY-ness.
     pub(crate) fn new(input: R, output: W) -> Result<Self> {
         let free_text_input = FreeTextInput::from_stdin()?;
+        // trace:STORY-194 | ai:claude — load the persisted settings (seed from
+        // $EDITOR on a first run). Affects only the new /settings + /editor
+        // commands, so the byte-exact behavior the piped tests assert is
+        // untouched.
+        let settings = crate::settings::load_or_seed();
         Ok(Self {
             input: BufReader::new(input),
             free_text_input,
             output,
-            // trace:STORY-194 | ai:claude — load the persisted settings (seed from
-            // $EDITOR on a first run). Affects only the new /settings + /editor
-            // commands, so the byte-exact behavior the piped tests assert is
-            // untouched.
-            settings: crate::settings::load_or_seed(),
+            settings,
+            // The two copies start equal: nothing has been mirrored yet.
+            persisted: settings,
         })
+    }
+
+    // trace:STORY-367 | ai:claude
+    /// Carry ONE explicitly changed key from the display copy into the persisted
+    /// one and write the file (best-effort). The single write path — so a value
+    /// the user never asked to change cannot ride along with one they did.
+    fn persist(&mut self, key: crate::settings::SettingKey) {
+        self.persisted.adopt(key, self.settings);
+        let _ = crate::settings::save(&self.persisted);
     }
 
     /// Consume the front-end and hand back the output sink. Standalone commands
@@ -307,7 +344,7 @@ impl<R: Read, W: Write> FrontEnd for LineFrontEnd<R, W> {
         match crate::settings::EditorChoice::parse(token) {
             Some(choice) => {
                 self.settings.editor = choice;
-                let _ = crate::settings::save(&self.settings);
+                self.persist(crate::settings::SettingKey::Editor);
                 let _ = writeln!(
                     self.output,
                     "Editor mode set: {} (the in-pane editor follows this in the TUI)",
@@ -325,26 +362,27 @@ impl<R: Read, W: Write> FrontEnd for LineFrontEnd<R, W> {
     }
 
     // trace:TASK-266 | ai:claude — widened by TASK-300.
+    // trace:STORY-367 | ai:claude — the PERSISTED copy, not the mirrored one.
     fn persisted_settings(&self) -> Settings {
-        self.settings
+        self.persisted
+    }
+
+    // trace:STORY-367 | ai:claude
+    fn mirror_live(&mut self, live: LiveSettings) {
+        self.settings.score = live.score;
+        self.settings.mode = live.mode;
     }
 
     // trace:STORY-194 | ai:claude
-    fn sync_score(&mut self, on: bool) {
-        if self.settings.score != on {
-            self.settings.score = on;
-            let _ = crate::settings::save(&self.settings);
-        }
+    fn persist_score(&mut self, on: bool) {
+        self.settings.score = on;
+        self.persist(crate::settings::SettingKey::Score);
     }
 
     // trace:STORY-194 | ai:claude
-    fn sync_mode(&mut self, mode_token: &str) {
-        if let Some(mode) = crate::strategy::SessionMode::parse(mode_token) {
-            if self.settings.mode != mode {
-                self.settings.mode = mode;
-                let _ = crate::settings::save(&self.settings);
-            }
-        }
+    fn persist_mode(&mut self, mode: SessionMode) {
+        self.settings.mode = mode;
+        self.persist(crate::settings::SettingKey::Mode);
     }
 
     // trace:STORY-194 | ai:claude — the HEADLESS settings surface: a bare
@@ -360,7 +398,8 @@ impl<R: Read, W: Write> FrontEnd for LineFrontEnd<R, W> {
             match (key.and_then(SettingKey::parse), value) {
                 (Some(key), Some(value)) => {
                     if self.settings.set_from_token(key, value) {
-                        let _ = crate::settings::save(&self.settings);
+                        // trace:STORY-367 | ai:claude — one key: the user named it.
+                        self.persist(key);
                         let _ = writeln!(
                             self.output,
                             "{} set: {}",
@@ -453,18 +492,59 @@ mod tests {
             crate::strategy::SessionMode::Socratic
         );
 
-        // A front-end that loaded `score = true` / `mode = "debate"` reports both,
-        // and the engine's matching `sync_*` is then a no-op rather than a clobber.
-        fe.sync_score(true);
-        fe.sync_mode("debate");
+        // An EXPLICIT change (`/score on`, `/mode debate`) is the user choosing a
+        // new default, so it reaches the persisted copy and the surface alike.
+        fe.persist_score(true);
+        fe.persist_mode(SessionMode::Debate);
         assert!(fe.persisted_settings().score);
-        assert_eq!(
-            fe.persisted_settings().mode,
-            crate::strategy::SessionMode::Debate
-        );
+        assert_eq!(fe.persisted_settings().mode, SessionMode::Debate);
         let surfaced = fe.settings_surface("");
         assert!(surfaced.score);
-        assert_eq!(surfaced.mode, crate::strategy::SessionMode::Debate);
+        assert_eq!(surfaced.mode, SessionMode::Debate);
+    }
+
+    // trace:STORY-367 | ai:claude — a session's LIVE values are shown, never saved.
+    // `quizdom start --mode debate` over a `mode = "socratic"` file used to rewrite
+    // that file the first time the user opened `/settings` — the engine pushed its
+    // live mode across the seam and the seam persisted everything it was told. A
+    // flag passed once became the permanent default, which is TASK-266's clobber
+    // arriving by a different road.
+    #[test]
+    fn a_mirrored_session_override_is_displayed_but_never_persisted() {
+        let mut fe = LineFrontEnd::new(Cursor::new(Vec::new()), Vec::new()).unwrap();
+        // The file (here: the defaults) says Socratic, gauge off.
+        let saved = fe.persisted_settings();
+        assert_eq!(saved.mode, SessionMode::Socratic);
+
+        // `--mode debate` + a live gauge: the engine mirrors both before opening
+        // the surface.
+        fe.mirror_live(LiveSettings {
+            score: true,
+            mode: SessionMode::Debate,
+        });
+
+        // The surface SHOWS the session's truth...
+        let shown = fe.settings_surface("");
+        assert_eq!(shown.mode, SessionMode::Debate);
+        assert!(shown.score);
+        // ...and the file still says what the user wrote in it.
+        assert_eq!(fe.persisted_settings(), saved);
+
+        // The third route, which the one-key `adopt` closes: changing an UNRELATED
+        // setting used to save the mirrored struct whole, carrying the override to
+        // disk behind a request that never mentioned it.
+        let _ = fe.settings_surface("set editor vim");
+        assert_eq!(
+            fe.persisted_settings().editor,
+            crate::settings::EditorChoice::Vim,
+            "the key the user named is the one that persists"
+        );
+        assert_eq!(
+            fe.persisted_settings().mode,
+            SessionMode::Socratic,
+            "and the mode they overrode for this session only stays overridden"
+        );
+        assert!(!fe.persisted_settings().score);
     }
 
     // trace:STORY-194 | ai:claude — a bare `/editor` SHOWS the current model

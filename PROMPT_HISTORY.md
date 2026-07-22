@@ -1090,3 +1090,63 @@ answers, not a memory* (with the staged/unstaged table and why the breadcrumb wa
 rejected) under the existing authorship section, whose refusal example is updated
 to the new wording; `CLAUDE.md`'s Dolt paragraph names `begin_write`,
 `staging_write`, and the claim-shaped seam.
+
+## Session 2026-07-22 — STORY-367: the mode seam, finished — a flag stops becoming a default, and a resume stops changing its mind
+
+**Request.** `/aida-pickup STORY-367` — finish the mode seam TASK-300 started.
+Two routes still defeated the seed, both found while reviewing STORY-350:
+`--mode` persisting itself into `settings.toml` on the first `/settings`
+(TASK-356), and a resumed session's auto-continue framing one question with
+`config.mode` rather than the seeded mode (TASK-355). Plus a standing
+instruction: if a third clobber route exists, fix it at the seam rather than
+case by case.
+
+**The third route existed, and it was the reason a two-copy fix was the right
+one.** Each front-end held a single `Settings`, and three different callers wrote
+to it meaning three different things. The engine *mirrored* its live score/mode
+in before opening `/settings` so the panel would show the truth — and the mirror
+was also the persisting call, so `quizdom start --mode debate` over a saved
+`mode = "socratic"` rewrote the file the first time the user opened the panel
+(TASK-356). A bare `/mode`, which asks what the mode is rather than choosing
+one, wrote the answer back the same way. And because `save` wrote the struct
+whole, *any* later explicit change carried the mirrored override with it:
+`/settings set editor vim` persisted `mode = "debate"` as a side effect of
+changing the editor. That third one is the one that made "fix each caller" the
+wrong shape — the defect was that one struct was serving as both *what the
+session is doing* and *what the file says*.
+
+So the front-ends now keep both: a display copy the engine mirrors into
+(`FrontEnd::mirror_live`, which never writes) and a persisted copy that is
+exactly what a save writes (`persisted_settings()` — an accessor that already
+existed and already claimed to mean this). Explicit changes cross from one to
+the other **one key at a time** via `Settings::adopt(key, live)`, and both
+front-ends funnel every write through a single `persist(key)`. `grep
+settings::save` now returns two call sites, both inside that one method. The
+`/score` and `/mode <token>` shortcuts still persist — an explicit choice IS a
+new default, per STORY-194 — but `set_mode_in_session` now returns whether the
+user actually named a mode, so a bare `/mode` mirrors instead.
+
+**TASK-355 was one tier applied one seam too late.** The precedence (`--mode` >
+resumed log > `settings.toml` > Socratic) was resolved where the loop seeds its
+live mode, which left `config.mode` still holding the compiled default —
+correct for the loop, wrong for anything that read `config.mode` earlier. A
+resume whose saved path is terminal auto-continues into a generated successor
+(BUG-136) built straight from the config, so a user with `mode = "debate"` saved
+got exactly one Socratic question and then a silent switch. `CliConfig::parse`
+is now followed by `seeded_from(&load_or_seed())` in `run_cli` — one place,
+upstream of every reader, and still outranked by `resolve_resume_config` so a
+resumed debate stays a debate. The loop reads `config.mode` directly.
+
+**Verified.** `cargo fmt --all` clean; `cargo clippy --workspace --all-targets --
+-D warnings` exits 0; 724 unit tests green (+ 7 in `llm`). Both new regression
+tests were checked against the old behaviour rather than assumed:
+`a_resumed_auto_continue_frames_with_the_same_mode_as_the_loop` records the mode
+of every framing request and fails with `[Debate, Socratic]` on the pre-fix code
+— the divergence, visible; `a_mirrored_session_override_is_displayed_but_never_persisted`
+fails when `mirror_live` is made to persist. A TUI twin covers the panel, and
+`the_seed_resolves_into_the_config_every_reader_shares` pins the tier landing on
+`config.mode` itself.
+
+**Docs.** `OVERVIEW.md` § *Settings, and how a relative path resolves* gains the
+display-copy/persisted-copy rule, all three closed routes, and why the tier moved
+upstream; `CLAUDE.md`'s settings paragraph carries the short form.

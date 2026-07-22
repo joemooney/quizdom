@@ -2057,6 +2057,92 @@ impl NextQuestionStrategy for AlwaysGeneratesStrategy {
     }
 }
 
+// trace:STORY-367 | ai:claude
+// Records the MODE every framing request arrives with. A session that switches
+// mode mid-flight without the user asking shows up here as two different values.
+struct RecordsModeStrategy {
+    generated: Question,
+    modes: std::cell::RefCell<Vec<SessionMode>>,
+}
+
+impl NextQuestionStrategy for RecordsModeStrategy {
+    fn next_question(
+        &self,
+        _current: &Question,
+        context: &StrategyContext,
+        _bank: &dyn QuestionBank,
+    ) -> Result<Option<Question>> {
+        self.modes.borrow_mut().push(context.mode);
+        Ok(Some(self.generated.clone()))
+    }
+}
+
+// trace:STORY-367 | ai:claude
+// A resumed session frames EVERY question with the mode it starts in — including
+// the BUG-136 auto-continue, which runs before the loop does.
+//
+// The auto-continue read `config.mode` while the loop seeded its own live mode
+// from the persisted tier, so the two disagreed whenever that tier was in play: a
+// user with `mode = "debate"` saved got exactly one Socratic question on resume,
+// then a silent switch. The tier is now resolved into `config.mode` upstream of
+// both, so a config carrying the seeded mode (unpinned — nothing overrode it)
+// frames the whole session with it.
+#[test]
+fn a_resumed_auto_continue_frames_with_the_same_mode_as_the_loop() {
+    let path = std::env::temp_dir().join(format!(
+        "quizdom-story-367-resume-mode-{}.jsonl",
+        std::process::id()
+    ));
+    let _ = fs::remove_file(&path);
+    let q_gen = question("Q-GEN", 0, AnswerKind::YesNo);
+    let bank = FakeBank::new([question("Q-1", 0, AnswerKind::YesNo), q_gen.clone()]);
+    let config = test_config(&path, "Q-1");
+
+    // Start + answer Q-1, then quit the dead-end menu: a terminal saved path, so
+    // the resume auto-continues instead of dead-ending.
+    let mut start_output = Vec::new();
+    run_session(
+        &config,
+        &bank,
+        &DeterministicNextQuestionStrategy,
+        "yes\nq\n".as_bytes(),
+        &mut start_output,
+    )
+    .unwrap();
+
+    // Resume in Debate with nothing pinning it — the shape `seeded_from` produces
+    // for a saved `mode = "debate"` and no `--mode` flag.
+    let mut resume_config = config.clone();
+    resume_config.command = SessionCommand::Resume;
+    resume_config.mode = SessionMode::Debate;
+    resume_config.mode_pinned = false;
+    let recorder = RecordsModeStrategy {
+        generated: q_gen,
+        modes: std::cell::RefCell::new(Vec::new()),
+    };
+    let mut resume_output = Vec::new();
+    resume_session(
+        &resume_config,
+        &bank,
+        &recorder,
+        "yes\n/end\n".as_bytes(),
+        &mut resume_output,
+    )
+    .unwrap();
+
+    let modes = recorder.modes.into_inner();
+    assert!(
+        modes.len() >= 2,
+        "the auto-continue and the loop should both have framed a question: {modes:?}"
+    );
+    assert!(
+        modes.iter().all(|m| *m == SessionMode::Debate),
+        "every question of a resumed debate is framed as a debate: {modes:?}"
+    );
+
+    let _ = fs::remove_file(path);
+}
+
 // trace:BUG-136 | ai:claude
 // Returns None on its first call (so the session reaches the dead-end menu),
 // then a fresh question afterwards (so pressing [G] there continues).

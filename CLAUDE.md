@@ -138,7 +138,19 @@ concurrency** (`STORY-342`):
 every append takes an exclusive `File::lock` and rotation copies-then-truncates
 in place instead of renaming, so two quizdom processes cannot clobber the
 rotated history between them. `/settings` shows `auto_backup` and the resolved
-log path as read-only rows beside `dolt_path`. Exercising `db-backup`
+log path as read-only rows beside `dolt_path`. **`settings.toml` changes only
+when the user asks it to** (`STORY-367`): a session can run a mode the file does
+not name (`--mode debate` over a saved `mode = "socratic"`), so each front-end
+keeps a *display* copy the engine mirrors its live `score`/`mode` into
+(`FrontEnd::mirror_live`, never writes) beside the *persisted* copy that a save
+writes, and an explicit change crosses between them one key at a time
+(`Settings::adopt`). Before this, `/settings` pushed the live mode across as a
+persisting call, a bare `/mode` wrote back the answer to its own question, and
+any explicit change saved the mirrored struct whole — three roads to the same
+clobber `TASK-266`/`TASK-300` fixed at the seed. The mode precedence (`--mode` >
+resumed log > `settings.toml` > Socratic) is also resolved **once**, into
+`config.mode`, so the resume auto-continue and the loop cannot frame two
+different modes. `OVERVIEW.md` § *Settings, and how a relative path resolves*. Exercising `db-backup`
 by hand: a `--path` away from the resolved default now REQUIRES `--to`, so a
 scratch run cannot claim the real backup directory (`STORY-292`), and
 `db-backup --force` is the executable way past a backup directory already held

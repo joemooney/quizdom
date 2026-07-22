@@ -183,6 +183,23 @@ impl Default for Settings {
     }
 }
 
+// trace:STORY-367 | ai:claude
+/// The two settings the ENGINE owns and a session can hold a TRANSIENT override
+/// of: the score gauge and the questioning mode.
+///
+/// They travel to the front-end so the `/settings` surface DISPLAYS what the
+/// session is actually doing — `quizdom start --mode debate` runs a debate even
+/// when the file says `mode = "socratic"`. They must never travel any further:
+/// a CLI override is a choice about THIS session, not a new default, and the
+/// route that carried one to disk is what STORY-367 closed. Everything reaching
+/// `settings.toml` goes through [`Settings::adopt`] instead, one explicitly
+/// changed key at a time.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct LiveSettings {
+    pub(crate) score: bool,
+    pub(crate) mode: SessionMode,
+}
+
 /// The config keys [`Settings`] models, in write order. Every OTHER key in the
 /// file is foreign — read by someone else (`dolt_path`) or written by a future
 /// version — and [`Settings::to_toml_merged`] preserves it untouched.
@@ -392,6 +409,26 @@ impl Settings {
                 }
                 None => false,
             },
+        }
+    }
+
+    // trace:STORY-367 | ai:claude
+    /// Take ONE key's value from `live` — the front-end's live/display copy —
+    /// into `self`, the copy that gets written to `settings.toml`.
+    ///
+    /// This is the only door into the persisted struct, and it is deliberately
+    /// one key wide. The two front-ends mirror the engine's live `score`/`mode`
+    /// into their display copy so the panel shows the truth; before STORY-367
+    /// they persisted that same copy WHOLE, so a `/settings set editor vim`
+    /// under `--mode debate` wrote `mode = "debate"` over the user's saved
+    /// default as a side effect of changing the editor. Copying only the key the
+    /// user actually changed makes that impossible to write by accident.
+    pub(crate) fn adopt(&mut self, key: SettingKey, live: Settings) {
+        match key {
+            SettingKey::Editor => self.editor = live.editor,
+            SettingKey::Mouse => self.mouse = live.mouse,
+            SettingKey::Score => self.score = live.score,
+            SettingKey::Mode => self.mode = live.mode,
         }
     }
 
