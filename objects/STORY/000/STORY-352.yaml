@@ -14,12 +14,12 @@ description: |-
   - Control characters and ANSI escapes in a recorded entry cannot reach the terminal through quizdom logs (test with an entry containing escapes and \r).
   - The rotated suffix has exactly one definition.
   - cargo test green; clippy clean.
-status: Done
+status: Completed
 priority: Medium
 owner: ''
 feature: Uncategorized
 created_at: 2026-07-22T19:01:32.628896531Z
-modified_at: 2026-07-22T20:02:32.317342553Z
+modified_at: 2026-07-22T20:08:17.372799742Z
 req_type: Story
 relationships:
 - rel_type: !Custom implemented-by
@@ -47,7 +47,23 @@ comments:
   created_at: 2026-07-22T20:01:33.089550795Z
   modified_at: 2026-07-22T20:01:33.089550795Z
   session_id: 019f8b63-175f-7182-bc87-fb806fe3937b
+history:
+- id: 019f8b71-78c5-7de2-b062-9de9ca165e02
+  author: aida-auto-bump
+  timestamp: 2026-07-22T20:08:17.349357259Z
+  changes:
+  - field_name: status
+    old_value: Done
+    new_value: Completed
+processing_record:
+- id: 019f8b71-78dc-7731-8446-9babe17007c4
+  timestamp: 2026-07-22T20:08:17.372798042Z
+  agent: aida
+  commit_sha: 6fde43d70e621268b6c27119518d2f05c46e8e44
+  summary: Completed via merge 6fde43d7
 implementation_info:
   implemented: true
   implemented_at: 2026-07-22T20:02:32.317342553Z
   implemented_by: joe
+  completed_at: 2026-07-22T20:08:17.349220332Z
+  completion_sha: 6fde43d70e621268b6c27119518d2f05c46e8e44
