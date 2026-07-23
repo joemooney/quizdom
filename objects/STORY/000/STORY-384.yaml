@@ -25,5 +25,12 @@ priority: Medium
 owner: ''
 feature: Uncategorized
 created_at: 2026-07-23T01:52:42.706194021Z
-modified_at: 2026-07-23T01:52:54.386644911Z
+modified_at: 2026-07-23T02:08:32.314089405Z
 req_type: Story
+comments:
+- id: 019f8cbb-4a3a-74c0-99fa-2b29eda795a3
+  author: joe
+  content: Commit 6c57b27 references this requirement
+  created_at: 2026-07-23T02:08:32.314089405Z
+  modified_at: 2026-07-23T02:08:32.314089405Z
+  session_id: 019f8cac-fbd0-7731-b9aa-c0cec62b563e
