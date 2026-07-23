@@ -1,0 +1,26 @@
+id: 019f8cbd-14af-7132-b201-dbae3d0ace72
+spec_id: STORY-385
+agreed_id: STORY-385
+title: 'Review PR-112: [AI:claude] feat(backup): back up per-user session history, not just the graph (STORY-384)'
+description: |
+  Auto-filed by `aida session end` (backup trigger) (session `019f8cad`) for branch `story-384`.
+
+  - PR: <https://github.com/joemooney/quizdom/pull/112>
+  - Branch: `story-384` → `main`
+
+  ## Covers
+
+  - STORY-384
+
+  ## Acceptance
+
+  - Generate a structured review prompt with `aida review prompt --pr 112` and verify each spec's acceptance criteria.
+  - Approve and merge, or request changes by spec id.
+  - Mark this story `completed` once the PR is merged.
+status: Approved
+priority: Medium
+owner: ''
+feature: Uncategorized
+created_at: 2026-07-23T02:10:29.679564809Z
+modified_at: 2026-07-23T02:10:29.679564809Z
+req_type: Story
