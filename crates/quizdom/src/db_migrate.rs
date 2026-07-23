@@ -1207,6 +1207,14 @@ mod tests {
         let repo = real_temp_dir("real-history");
         let backup = real_temp_dir("real-history-backup");
         let restored = real_temp_dir("real-history-restored");
+        // trace:STORY-384 | ai:claude — the CLI entry points resolve the session
+        // leg's paths from settings, and the BUG-277 tripwire refuses the real
+        // `data/users`, so this test pins the session leg into temp too. This
+        // test does not exercise the session leg (no `data/users` seeded), only
+        // the graph; pinning keeps the tripwire satisfied.
+        let users = real_temp_dir("real-history-users");
+        let users_backup = real_temp_dir("real-history-users-backup");
+        let users_restored = real_temp_dir("real-history-users-restored");
         let dolt = SystemDoltRunner::new("dolt".to_string());
 
         crate::db_init::run_db_init(
@@ -1237,6 +1245,10 @@ mod tests {
                 repo.display().to_string(),
                 "--to".to_string(),
                 backup.display().to_string(),
+                "--users-path".to_string(),
+                users.display().to_string(),
+                "--users-to".to_string(),
+                users_backup.display().to_string(),
             ],
             &mut Vec::new(),
         )
@@ -1248,6 +1260,10 @@ mod tests {
                 restored.display().to_string(),
                 "--from".to_string(),
                 backup.display().to_string(),
+                "--users-path".to_string(),
+                users_restored.display().to_string(),
+                "--users-from".to_string(),
+                users_backup.display().to_string(),
             ],
             &mut Vec::new(),
         )
@@ -1269,7 +1285,14 @@ mod tests {
             "the clone should carry the whole history, not one bootstrap commit"
         );
 
-        for dir in [&repo, &backup, &restored] {
+        for dir in [
+            &repo,
+            &backup,
+            &restored,
+            &users,
+            &users_backup,
+            &users_restored,
+        ] {
             let _ = std::fs::remove_dir_all(dir);
         }
     }
