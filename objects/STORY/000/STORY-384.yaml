@@ -1,0 +1,29 @@
+id: 019f8cac-ccd2-7162-ad24-fbfbf3a018fc
+spec_id: STORY-384
+agreed_id: STORY-384
+title: db-backup/db-restore also cover data/users session history, not just the Dolt graph
+description: |-
+  Today db-backup pushes ONLY the Dolt domain graph to its file remote; db-restore clones ONLY that graph. Per-user session history lives in flat JSONL under data/users/<user>/sessions/ (ADR-12's per-user log) and is BACKED UP BY NOTHING — it is single-copy on local disk, gitignored, and a lost working copy loses every exploration. A user with real sessions (verified: several multi-day free-will threads) has no recovery path. Close the gap the same way the graph's was closed, with the same honesty guarantees (BUG-277: a backup that silently does nothing is worse than none).
+
+  Design (decided — implement as stated, do not re-litigate):
+  - Session backups go to a SIBLING of the dolt-backup remote, never inside it (the remote is a Dolt file-remote with its own manifest/.darc — do not pollute it). Resolve the location as QUIZDOM_USERS_BACKUP_PATH (env) > users_backup_path in settings.toml > a default beside the dolt-backup default (e.g. ~/.local/share/quizdom/users-backup). Follow the exact resolution pattern db-backup already uses for the dolt remote (TASK-228/STORY-258 shared chain).
+  - db-backup: after the graph push succeeds, mirror data/users/ into the users-backup location. Write to a temp path then swap, so an interrupted backup cannot corrupt the existing session backup. Report the session leg explicitly (count of sessions/files carried); a failure of this leg is reported, never swallowed.
+  - db-restore: after the graph clone, restore data/users/ from the users-backup. REFUSE to overwrite an existing non-empty data/users (mirror db-restore's existing 'refuses to touch an existing repo' rule — recovery must never destroy a live copy); document restoring beside a live tree via an explicit path, exactly as db-restore already does for the graph with --path.
+  - The session leg is INDEPENDENT of the graph leg: a graph that is up to date but sessions that are not must still back up the sessions (do not short-circuit on 'graph unchanged').
+  - Update OVERVIEW.md § Durability and recovery and CLAUDE.md to state that BOTH the graph and session history are covered, with the recovery steps.
+
+  ## Acceptance
+  - Round-trip proven end to end (the BUG-277 bar, tested for real against the actual layout): start a session so data/users has content, db-backup, DELETE data/users entirely, db-restore, then 'session list' shows the same sessions with the same answers. A test asserts this.
+  - db-backup reports how many sessions it carried; a forced session-leg failure surfaces as an error, not a silent success (test).
+  - db-restore refuses to clobber an existing non-empty data/users and says how to restore beside it (test).
+  - The session leg runs even when the Dolt graph leg is a no-op (test).
+  - An interrupted/failed mirror cannot leave the users-backup in a half-written state that a later restore would read (temp-then-swap; test the swap semantics).
+  - cargo test green; real_dolt tests green; clippy clean under -D warnings.
+  - OVERVIEW.md and CLAUDE.md updated.
+status: Approved
+priority: Medium
+owner: ''
+feature: Uncategorized
+created_at: 2026-07-23T01:52:42.706194021Z
+modified_at: 2026-07-23T01:52:42.706194021Z
+req_type: Story
