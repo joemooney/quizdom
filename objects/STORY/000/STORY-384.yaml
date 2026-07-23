@@ -25,7 +25,7 @@ priority: Medium
 owner: ''
 feature: Uncategorized
 created_at: 2026-07-23T01:52:42.706194021Z
-modified_at: 2026-07-23T02:08:32.314089405Z
+modified_at: 2026-07-23T02:09:04.990485413Z
 req_type: Story
 comments:
 - id: 019f8cbb-4a3a-74c0-99fa-2b29eda795a3
@@ -33,4 +33,10 @@ comments:
   content: Commit 6c57b27 references this requirement
   created_at: 2026-07-23T02:08:32.314089405Z
   modified_at: 2026-07-23T02:08:32.314089405Z
+  session_id: 019f8cac-fbd0-7731-b9aa-c0cec62b563e
+- id: 019f8cbb-c9de-7b51-aa6c-15ffdae95370
+  author: joe
+  content: 'Implemented and shipped as PR #112 (branch story-384). Session-history leg added to db-backup/db-restore: sibling users-backup dir, temp-then-swap mirror, independent of the graph leg, refuses a non-empty data/users on restore, reports the count carried. All acceptance covered: real_dolt round-trip proves byte-for-byte session recovery. cargo test + 14 real_dolt + clippy -D warnings + fmt all green. Completes when PR merges.'
+  created_at: 2026-07-23T02:09:04.990485413Z
+  modified_at: 2026-07-23T02:09:04.990485413Z
   session_id: 019f8cac-fbd0-7731-b9aa-c0cec62b563e
