@@ -104,8 +104,8 @@ cargo run -p quizdom       # run the CLI session loop (reads the Dolt domain gra
 cargo build                # build
 cargo run -p quizdom -- db-init     # bootstrap the Dolt repo (data/dolt)
 cargo run -p quizdom -- db-migrate  # import a legacy AIDA-store domain graph
-cargo run -p quizdom -- db-backup   # snapshot + push data/dolt to its file remote
-cargo run -p quizdom -- db-restore  # clone it back after a disk loss
+cargo run -p quizdom -- db-backup   # snapshot + push data/dolt AND mirror data/users
+cargo run -p quizdom -- db-restore  # clone the graph AND restore session history
 cargo run -p quizdom -- logs        # read the diagnostic log (--tail N)
 ```
 
@@ -114,7 +114,20 @@ CI installs a pinned dolt and runs the `real_dolt` acceptance tests
 verified in the pipeline, not only on a developer's machine (STORY-261).
 The domain graph's durability path — a file-based Dolt remote defaulting to
 `~/.local/share/quizdom/dolt-backup`, with the recovery steps spelled out — is
-documented in `OVERVIEW.md` § *Durability and recovery*. Backups stay
+documented in `OVERVIEW.md` § *Durability and recovery*. **Session history rides
+the same commands** (`STORY-384`): `db-backup` also mirrors the per-user session
+JSONL (`data/users/`, ADR-12's per-user log) into a **sibling** of the graph
+backup (`$QUIZDOM_USERS_BACKUP_PATH` > `users_backup_path` >
+`~/.local/share/quizdom/users-backup`) and `db-restore` brings it back — because
+that history was otherwise single-copy on gitignored disk, backed up by nothing.
+The session leg is **independent** of the graph leg (sessions written since the
+last backup are carried even when the graph push is a no-op), is **temp-then-swap**
+(an interrupted mirror never leaves a half-written backup, and an empty source
+never wipes a good one), reports how many session files it carried, and **refuses**
+a non-empty `data/users` on restore (naming `--users-path <empty-dir>` to restore
+beside a live tree) — the same "recovery must not destroy the live copy" rule the
+graph clone follows. `OVERVIEW.md` § *The session history is backed up too*.
+Backups stay
 **explicit** (`STORY-299`): a session that wrote to the graph and sits ahead of
 its backup ends with a one-line reminder naming the command, `auto_backup =
 true` in `settings.toml` opts into the push instead (off by default, degrades

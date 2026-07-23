@@ -620,6 +620,47 @@ The round trip (seed → backup → delete the repo → restore → count rows) 
 `real_dolt_backup_restore_round_trip`, which runs in CI alongside the other
 `real_dolt` acceptance tests now that the pipeline installs dolt.
 
+<!-- trace:STORY-384 | ai:claude -->
+
+### The session history is backed up too, not only the graph
+
+The domain graph is not the only thing living single-copy on gitignored local
+disk. **Per-user session history** — the JSONL threads under
+`data/users/<user>/sessions/` (ADR-12's per-user log) — is where every
+exploration a user has actually had is recorded, and until STORY-384 `db-backup`
+carried none of it: a lost working copy lost every session with no recovery
+path. `db-backup` now covers both, and `db-restore` brings both back, with the
+same honesty guarantees the graph's backup has (BUG-277: a backup that silently
+does nothing is worse than none).
+
+Session history is flat JSONL, not Dolt, so its backup is a **directory mirror**,
+not a `dolt push`, written to a **sibling** of the graph's file-remote — never
+inside it, because that directory is a Dolt remote with its own manifest. The
+location resolves the same env > settings > default chain as everything else:
+`$QUIZDOM_USERS_BACKUP_PATH` > `users_backup_path` in `settings.toml` >
+`~/.local/share/quizdom/users-backup` (beside `dolt-backup`).
+
+Three properties matter, all tested:
+
+- **The session leg is independent of the graph leg.** A graph that is already
+  backed up but sessions written since are not must still carry the sessions —
+  `db-backup` mirrors them even when the graph push transfers nothing.
+- **The mirror is temp-then-swap.** The tree is copied into a scratch sibling
+  first and swapped into place only once whole, so an interrupted or failed
+  backup leaves the existing session backup untouched rather than half-written.
+  An **empty** source never wipes a good backup — mirroring emptiness over a
+  backup is exactly the silent-data-loss footgun, so it is refused by
+  construction and reports "nothing to carry".
+- **Restore refuses a non-empty `data/users`.** As with the graph, recovery must
+  never destroy the live copy you were trying to protect; the refusal names
+  `--users-path <empty-dir>` for restoring the sessions beside a live tree to
+  inspect them.
+
+`db-backup` reports how many session files it carried; a failed session leg is
+returned as an error, never a silent success. The full round trip — seed a
+session, back up, delete `data/users`, restore, and prove the answers came back
+byte-for-byte — is asserted in `real_dolt_backup_restore_round_trip`.
+
 <!-- trace:BUG-277 | ai:claude -->
 <!-- trace:STORY-292 | ai:claude -->
 

@@ -104,6 +104,14 @@ struct DbBackupConfig {
     path: PathBuf,
     /// The backup directory serving as the file remote.
     backup: PathBuf,
+    // trace:STORY-384 | ai:claude — the session-history leg's two paths, carried
+    // beside the graph's so one config drives both legs.
+    /// The per-user session tree to mirror FROM (`db-restore`: restore INTO):
+    /// `data/users`.
+    users_dir: PathBuf,
+    /// The directory the session tree is mirrored TO — a SIBLING of `backup`,
+    /// never inside it (that is a Dolt file-remote, not a plain directory).
+    users_backup: PathBuf,
     remote: String,
     dolt_command: String,
     /// `db-backup --force`: on a foreign-lineage refusal, retire the copy
@@ -124,9 +132,13 @@ impl DbBackupConfig {
         default_path: PathBuf,
         default_backup: PathBuf,
         default_remote: String,
+        default_users_dir: PathBuf,
+        default_users_backup: PathBuf,
     ) -> Result<Self> {
         let mut path = default_path.clone();
         let mut backup = default_backup;
+        let mut users_dir = default_users_dir;
+        let mut users_backup = default_users_backup;
         // trace:TASK-324 | ai:claude — the remote name is a resolved default
         // now, not a constant, so a `backup_remote` in settings.toml reaches
         // both this command and the end-of-session probe.
@@ -150,6 +162,13 @@ impl DbBackupConfig {
                 "--to" | "--from" => {
                     backup = PathBuf::from(next_arg(&mut args, &arg)?);
                     backup_is_explicit = true;
+                }
+                // trace:STORY-384 | ai:claude — the session leg's overrides,
+                // named so the refuse-message can point a live-tree restore at a
+                // real flag.
+                "--users-path" => users_dir = PathBuf::from(next_arg(&mut args, "--users-path")?),
+                "--users-to" | "--users-from" => {
+                    users_backup = PathBuf::from(next_arg(&mut args, &arg)?)
                 }
                 "--remote" => remote = next_arg(&mut args, "--remote")?,
                 "--dolt" => dolt_command = next_arg(&mut args, "--dolt")?,
@@ -180,6 +199,8 @@ impl DbBackupConfig {
         Ok(Self {
             path,
             backup,
+            users_dir,
+            users_backup,
             remote,
             dolt_command,
             force,
@@ -232,12 +253,21 @@ fn usage(subcommand: &str) -> String {
     } else {
         ("--to <backup-dir>", " [--force]")
     };
+    let users_direction = if subcommand == "db-restore" {
+        "--users-from <dir>"
+    } else {
+        "--users-to <dir>"
+    };
     format!(
         "usage: quizdom {subcommand} [--path <dir>] [{direction}] \
+         [--users-path <dir>] [{users_direction}] \
          [--remote <name>] [--dolt dolt]{force}\n\
          (--path defaults to $QUIZDOM_DOLT_PATH, else dolt_path in settings.toml;\n\
          the backup directory defaults to $QUIZDOM_DOLT_BACKUP_PATH, else \
          dolt_backup_path in settings.toml, else the platform data dir;\n\
+         --users-path defaults to data/users; the session backup directory \
+         defaults to $QUIZDOM_USERS_BACKUP_PATH, else users_backup_path in \
+         settings.toml, else a sibling of the graph backup;\n\
          --remote defaults to $QUIZDOM_BACKUP_REMOTE, else backup_remote in \
          settings.toml, else `{BACKUP_REMOTE_NAME}`;\n\
          --path away from that default requires an explicit --to;\n\
@@ -277,6 +307,8 @@ pub fn run_db_backup(
         crate::settings::resolve_dolt_path(),
         crate::settings::resolve_dolt_backup_path(),
         crate::settings::resolve_backup_remote(),
+        crate::settings::resolve_users_dir(),
+        crate::settings::resolve_users_backup_path(),
     )?;
     let runner = SystemDoltRunner::new(config.dolt_command.clone());
     db_backup(&config, &runner, output)
@@ -293,6 +325,8 @@ pub fn run_db_restore(
         crate::settings::resolve_dolt_path(),
         crate::settings::resolve_dolt_backup_path(),
         crate::settings::resolve_backup_remote(),
+        crate::settings::resolve_users_dir(),
+        crate::settings::resolve_users_backup_path(),
     )?;
     let runner = SystemDoltRunner::new(config.dolt_command.clone());
     db_restore(&config, &runner, output)
@@ -360,9 +394,21 @@ fn db_backup(
     push_to_backup(runner, config, output)?;
     writeln!(
         output,
-        "Pushed {} ({BACKUP_BRANCH}) to {url}.\n\
-         Restore with: quizdom db-restore --path {} --from {}",
+        "Pushed {} ({BACKUP_BRANCH}) to {url}.",
         config.path.display(),
+    )?;
+
+    // trace:STORY-384 | ai:claude — the session-history leg, INDEPENDENT of the
+    // graph push above: even when the push transferred nothing (the graph is
+    // already backed up), sessions written since the last backup still have to
+    // be carried. A failure here is returned, never swallowed — a backup that
+    // silently drops the session history is the BUG-277 footgun in a new place.
+    let carried = mirror_users(&config.users_dir, &config.users_backup)?;
+    report_session_leg(carried, &config.users_backup, output)?;
+
+    writeln!(
+        output,
+        "Restore both with: quizdom db-restore --path {} --from {}",
         // trace:TASK-275 | ai:claude — a printed command has to be runnable.
         shell_quote(&config.path),
         shell_quote(&config.backup)
@@ -442,6 +488,13 @@ fn db_restore(
         // trace:TASK-275 | ai:claude
         shell_quote(&config.path)
     )?;
+
+    // trace:STORY-384 | ai:claude — the session-history leg. It runs whether or
+    // not a session backup exists (a graph backed up before this feature has
+    // none), and REFUSES a non-empty `data/users` for the same reason the graph
+    // clone refuses an existing repo: recovery must never be the command that
+    // destroys the live copy you were trying to protect.
+    restore_users(&config.users_backup, &config.users_dir, output)?;
     Ok(())
 }
 
@@ -646,6 +699,201 @@ fn unrelated_history_message(config: &DbBackupConfig, reported: &str) -> String 
     )
 }
 
+// ---------------------------------------------------------------------------
+// trace:STORY-384 | ai:claude — the session-history leg.
+//
+// db-backup pushed only the Dolt domain graph; per-user session history —
+// `data/users/<user>/sessions/*.jsonl` (ADR-12's per-user log) — was backed up
+// by nothing, single-copy on gitignored local disk. This leg closes the gap the
+// way the graph's was closed, with BUG-277's honesty guarantees: report exactly
+// what was carried, never fail silently, and never let an interrupted mirror
+// leave a half-written backup a later restore would read.
+//
+// Session history is flat JSONL, not Dolt, so the mirror is a directory copy,
+// not a `dolt push`. The backup lives in a SIBLING directory of the graph's
+// file-remote so the two never share a directory.
+// ---------------------------------------------------------------------------
+
+/// A session file: one per exploration, the unit `db-backup` reports carrying.
+const SESSION_LOG_SUFFIX: &str = ".jsonl";
+
+/// Mirror the per-user session tree into its backup location, returning the
+/// number of session logs carried.
+///
+/// **Temp-then-swap.** The whole tree is copied into a scratch sibling of the
+/// backup FIRST; only once that copy is complete is it swapped into place
+/// (previous backup moved aside, scratch renamed in, old copy removed). So an
+/// interrupted or failed copy leaves the existing backup untouched rather than
+/// half-overwritten — a restore reading concurrently sees the old backup or the
+/// new one, never a partially-written mix.
+///
+/// **Empty source is a no-op.** A `data/users` with no session logs (or none at
+/// all) leaves any existing backup ALONE and reports zero. Mirroring emptiness
+/// over a good backup — the "I cleared my sessions, then backed up, and my
+/// backup vanished" footgun — is exactly the silent-data-loss BUG-277 warns
+/// against, so it is refused by construction.
+fn mirror_users(users_dir: &Path, users_backup: &Path) -> Result<usize> {
+    let carried = count_session_logs(users_dir);
+    if carried == 0 {
+        return Ok(0);
+    }
+
+    let parent = users_backup
+        .parent()
+        .map(Path::to_path_buf)
+        .unwrap_or_else(|| PathBuf::from("."));
+    std::fs::create_dir_all(&parent)?;
+
+    let staging = scratch_sibling(users_backup, "incoming");
+    let _ = std::fs::remove_dir_all(&staging); // a crashed prior run's leftover
+    copy_dir_all(users_dir, &staging)?;
+
+    // The swap. Move the current backup aside before renaming the new one in, so
+    // the window in which the destination does not exist is a rename apart, not
+    // a recursive copy apart — and the displaced copy is only removed once the
+    // new one is in place.
+    let retiring = if users_backup.exists() {
+        let retiring = scratch_sibling(users_backup, "retiring");
+        let _ = std::fs::remove_dir_all(&retiring);
+        std::fs::rename(users_backup, &retiring)?;
+        Some(retiring)
+    } else {
+        None
+    };
+    if let Err(error) = std::fs::rename(&staging, users_backup) {
+        // Put the old backup back before surfacing the failure: a failed swap
+        // must not be the thing that loses the backup it was replacing.
+        if let Some(retiring) = &retiring {
+            let _ = std::fs::rename(retiring, users_backup);
+        }
+        let _ = std::fs::remove_dir_all(&staging);
+        return Err(error.into());
+    }
+    if let Some(retiring) = retiring {
+        let _ = std::fs::remove_dir_all(&retiring);
+    }
+    Ok(carried)
+}
+
+/// Restore the session tree from its backup, returning the number of session
+/// logs restored. Tolerant of a MISSING backup (a graph backed up before this
+/// feature has no session backup) — that is a note, not an error, because the
+/// graph clone that preceded it already succeeded.
+///
+/// REFUSES a non-empty target for the same reason the graph clone does: recovery
+/// must never overwrite a live copy. The refusal names `--users-path`, the way
+/// to restore the sessions BESIDE a live tree for inspection.
+fn restore_users(users_backup: &Path, users_dir: &Path, output: &mut impl Write) -> Result<usize> {
+    if !users_backup.exists() {
+        writeln!(
+            output,
+            "No session-history backup at {} — restored the graph only.",
+            users_backup.display()
+        )?;
+        return Ok(0);
+    }
+    if users_dir.exists() && std::fs::read_dir(users_dir)?.next().is_some() {
+        return Err(QuizdomError::Dolt(format!(
+            "{} exists and is not empty — restore refuses to overwrite your \
+             session history.\n\
+             Move it aside first, or restore the backup beside it for \
+             inspection:\n\
+             \x20   quizdom db-restore --users-path <empty-scratch-dir> --users-from {}",
+            users_dir.display(),
+            shell_quote(users_backup)
+        )));
+    }
+    let carried = count_session_logs(users_backup);
+    if let Some(parent) = users_dir.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
+    let _ = std::fs::remove_dir(users_dir); // an empty target: copy wants it gone
+    copy_dir_all(users_backup, users_dir)?;
+    writeln!(
+        output,
+        "Restored {carried} session file(s) into {} from {}.",
+        users_dir.display(),
+        users_backup.display()
+    )?;
+    Ok(carried)
+}
+
+/// The one line `db-backup` prints about the session leg — count and
+/// destination, the same shape as the graph line above it.
+fn report_session_leg(carried: usize, users_backup: &Path, output: &mut impl Write) -> Result<()> {
+    if carried == 0 {
+        writeln!(
+            output,
+            "No session history to carry — left {} as it was.",
+            users_backup.display()
+        )?;
+    } else {
+        writeln!(
+            output,
+            "Carried {carried} session file(s) to {}.",
+            users_backup.display()
+        )?;
+    }
+    Ok(())
+}
+
+/// A unique-per-call scratch sibling of `target`, e.g.
+/// `<users-backup>.incoming-<pid>-<seq>`. Unique per call, not per process, so
+/// two concurrent backups sharing a parent cannot agree on one scratch path and
+/// delete it out from under each other (the same rule [`db_restore`]'s clone
+/// scratch follows).
+fn scratch_sibling(target: &Path, label: &str) -> PathBuf {
+    PathBuf::from(format!(
+        "{}.{label}-{}-{}",
+        target.display(),
+        std::process::id(),
+        RESTORE_SCRATCH_SEQ.fetch_add(1, Ordering::Relaxed)
+    ))
+}
+
+/// Count `*.jsonl` session logs anywhere under `root`. A missing `root` is zero,
+/// not an error — "no sessions yet" is a legitimate state, not a failure.
+fn count_session_logs(root: &Path) -> usize {
+    fn walk(dir: &Path, count: &mut usize) {
+        let Ok(entries) = std::fs::read_dir(dir) else {
+            return;
+        };
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if path.is_dir() {
+                walk(&path, count);
+            } else if path
+                .file_name()
+                .and_then(|name| name.to_str())
+                .is_some_and(|name| name.ends_with(SESSION_LOG_SUFFIX))
+            {
+                *count += 1;
+            }
+        }
+    }
+    let mut count = 0;
+    walk(root, &mut count);
+    count
+}
+
+/// Recursively copy `src` into `dst`, creating `dst` and every intermediate
+/// directory. Symlinks are followed as their targets (the session tree is plain
+/// files quizdom wrote; there are no symlinks to preserve).
+fn copy_dir_all(src: &Path, dst: &Path) -> Result<()> {
+    std::fs::create_dir_all(dst)?;
+    for entry in std::fs::read_dir(src)? {
+        let entry = entry?;
+        let from = entry.path();
+        let to = dst.join(entry.file_name());
+        if entry.file_type()?.is_dir() {
+            copy_dir_all(&from, &to)?;
+        } else {
+            std::fs::copy(&from, &to)?;
+        }
+    }
+    Ok(())
+}
+
 // trace:BUG-277 | ai:claude
 // trace:TASK-280 | ai:claude
 /// Both of this command's paths, through the shared tripwire
@@ -655,6 +903,12 @@ fn unrelated_history_message(config: &DbBackupConfig, reported: &str) -> String 
 fn guard_test_paths(config: &DbBackupConfig) {
     crate::db_init::guard_test_path("--path", &config.path);
     crate::db_init::guard_test_path("--to/--from", &config.backup);
+    // trace:STORY-384 | ai:claude — the session leg writes to real disk too, so
+    // it earns the same tripwire: a test that forgot to pin `--users-path` /
+    // `--users-to` would mirror over (or wipe) the developer's actual session
+    // history and its backup.
+    crate::db_init::guard_test_path("--users-path", &config.users_dir);
+    crate::db_init::guard_test_path("--users-to/--users-from", &config.users_backup);
 }
 
 /// The `file://` URL for a backup directory. Dolt requires an ABSOLUTE path
@@ -976,6 +1230,12 @@ pub(crate) fn session_end_durability() -> Option<String> {
             let config = DbBackupConfig {
                 path: path.clone(),
                 backup: backup.clone(),
+                // trace:STORY-384 | ai:claude — the auto-backup path carries the
+                // session leg too: a writing session wrote its session log, and
+                // an opted-in backup that left it single-copy would reopen the
+                // gap this story closed.
+                users_dir: crate::settings::resolve_users_dir(),
+                users_backup: crate::settings::resolve_users_backup_path(),
                 remote: remote.clone(),
                 dolt_command: "dolt".to_string(),
                 // NEVER force from an automatic path: `--force` retires whatever
@@ -1062,13 +1322,24 @@ mod tests {
     }
 
     fn config(path: &Path, backup: &Path) -> DbBackupConfig {
+        // The session-leg paths default to temp siblings of the graph paths, so
+        // they satisfy the BUG-277 tripwire and stay no-ops (the source does not
+        // exist) unless a test populates them deliberately.
         DbBackupConfig {
             path: path.to_path_buf(),
             backup: backup.to_path_buf(),
+            users_dir: sibling(path, "users-src"),
+            users_backup: sibling(backup, "users-bk"),
             remote: BACKUP_REMOTE_NAME.to_string(),
             dolt_command: "dolt".to_string(),
             force: false,
         }
+    }
+
+    /// A temp sibling of `base` — `base.suffix` — used to derive the session-leg
+    /// paths in tests without leaving the temp directory the tripwire guards.
+    fn sibling(base: &Path, suffix: &str) -> PathBuf {
+        PathBuf::from(format!("{}.{suffix}", base.display()))
     }
 
     // trace:TASK-278 | ai:claude
@@ -1526,6 +1797,339 @@ mod tests {
         }
     }
 
+    // -----------------------------------------------------------------------
+    // trace:STORY-384 | ai:claude — the session-history leg.
+    // -----------------------------------------------------------------------
+
+    /// Write one session log under `data/users/<user>/sessions/<id>.jsonl`.
+    fn seed_session(users_dir: &Path, user: &str, id: &str, body: &str) {
+        let dir = users_dir.join(user).join("sessions");
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join(format!("{id}.jsonl")), body).unwrap();
+    }
+
+    /// A backup config whose session leg is aimed at real temp paths the test
+    /// controls (the default `config` derives no-op siblings).
+    fn config_with_sessions(
+        path: &Path,
+        backup: &Path,
+        users_dir: &Path,
+        users_backup: &Path,
+    ) -> DbBackupConfig {
+        DbBackupConfig {
+            users_dir: users_dir.to_path_buf(),
+            users_backup: users_backup.to_path_buf(),
+            ..config(path, backup)
+        }
+    }
+
+    #[test]
+    fn backup_carries_the_session_history_and_reports_the_count() {
+        let repo = temp_dir("sess");
+        std::fs::create_dir_all(repo.join(".dolt")).unwrap();
+        let backup = temp_dir("sess-dest");
+        let users_dir = temp_dir("sess-users");
+        let users_backup = temp_dir("sess-users-dest");
+        seed_session(&users_dir, "ada", "sess-1", "{\"answer\":\"yes\"}\n");
+        seed_session(&users_dir, "ada", "sess-2", "{\"answer\":\"no\"}\n");
+        seed_session(&users_dir, "grace", "sess-3", "{\"answer\":\"maybe\"}\n");
+        let runner = RecordingDoltRunner::new(vec![(0, "", "")]); // remote -v empty
+        let mut output = Vec::new();
+
+        db_backup(
+            &config_with_sessions(&repo, &backup, &users_dir, &users_backup),
+            &runner,
+            &mut output,
+        )
+        .expect("backup should succeed");
+
+        assert_eq!(
+            std::fs::read_to_string(users_backup.join("ada/sessions/sess-1.jsonl")).unwrap(),
+            "{\"answer\":\"yes\"}\n",
+            "the session content is carried verbatim"
+        );
+        assert!(users_backup.join("grace/sessions/sess-3.jsonl").exists());
+        let rendered = String::from_utf8(output).unwrap();
+        assert!(
+            rendered.contains("Carried 3 session file(s)"),
+            "reports the count it carried: {rendered}"
+        );
+        // No scratch left behind by the swap.
+        assert!(!swap_scratch_remains(&users_backup), "scratch cleaned up");
+
+        for dir in [&repo, &backup, &users_dir, &users_backup] {
+            let _ = std::fs::remove_dir_all(dir);
+        }
+    }
+
+    #[test]
+    fn the_session_leg_runs_even_when_the_graph_push_is_a_no_op() {
+        let repo = temp_dir("noop");
+        std::fs::create_dir_all(repo.join(".dolt")).unwrap();
+        let backup = temp_dir("noop-dest");
+        std::fs::create_dir_all(&backup).unwrap();
+        let users_dir = temp_dir("noop-users");
+        let users_backup = temp_dir("noop-users-dest");
+        seed_session(&users_dir, "ada", "sess-1", "fresh\n");
+        let url = file_remote_url(&backup).unwrap();
+        // The graph is fully backed up already: remote matches, clean tree — the
+        // push transfers nothing. The session leg must still carry the sessions.
+        let runner = RecordingDoltRunner::new(vec![
+            (0, &format!("backup {url} \n"), ""), // remote -v: already points here
+            (0, "", ""),                          // add -A
+            (1 << 8, "", "working set is up to date"), // commit: clean tree
+            (0, r#"{"rows":[{"pending":0}]}"#, ""), // dolt_status: nothing pending
+            (0, "", ""),                          // push: a no-op transfer
+        ]);
+        let mut output = Vec::new();
+
+        db_backup(
+            &config_with_sessions(&repo, &backup, &users_dir, &users_backup),
+            &runner,
+            &mut output,
+        )
+        .expect("backup should succeed");
+
+        assert!(
+            users_backup.join("ada/sessions/sess-1.jsonl").exists(),
+            "the session leg ran despite the graph being up to date"
+        );
+        assert!(String::from_utf8(output)
+            .unwrap()
+            .contains("Carried 1 session file(s)"));
+
+        for dir in [&repo, &backup, &users_dir, &users_backup] {
+            let _ = std::fs::remove_dir_all(dir);
+        }
+    }
+
+    #[test]
+    fn a_failed_session_mirror_surfaces_as_an_error_not_a_silent_success() {
+        let repo = temp_dir("legfail");
+        std::fs::create_dir_all(repo.join(".dolt")).unwrap();
+        let backup = temp_dir("legfail-dest");
+        let users_dir = temp_dir("legfail-users");
+        seed_session(&users_dir, "ada", "sess-1", "content\n");
+        // The session backup's PARENT is a regular FILE, so creating the backup
+        // directory under it fails — a deterministic, cross-platform mirror
+        // failure standing in for a full disk / a permission error.
+        let wall = temp_dir("legfail-wall");
+        std::fs::write(&wall, "not a directory").unwrap();
+        let users_backup = wall.join("users-backup");
+        let runner = RecordingDoltRunner::new(vec![(0, "", "")]); // remote -v empty
+        let mut output = Vec::new();
+
+        let result = db_backup(
+            &config_with_sessions(&repo, &backup, &users_dir, &users_backup),
+            &runner,
+            &mut output,
+        );
+        assert!(
+            matches!(result, Err(QuizdomError::Io(_))),
+            "a session-leg failure is returned, not swallowed: {result:?}"
+        );
+        // The graph push DID run first (the legs are independent), so the failure
+        // is genuinely the session leg's.
+        assert!(
+            runner
+                .call_names()
+                .iter()
+                .any(|call| call.starts_with("push")),
+            "the graph leg ran before the session leg failed"
+        );
+
+        for dir in [&repo, &backup, &users_dir] {
+            let _ = std::fs::remove_dir_all(dir);
+        }
+        let _ = std::fs::remove_file(&wall);
+    }
+
+    #[test]
+    fn restore_brings_back_the_session_history() {
+        let repo = temp_dir("rsess");
+        let backup = temp_dir("rsess-src");
+        std::fs::create_dir_all(&backup).unwrap();
+        let users_dir = temp_dir("rsess-users");
+        let users_backup = temp_dir("rsess-users-src");
+        seed_session(&users_backup, "ada", "sess-1", "restored answer\n");
+        let runner = RecordingDoltRunner::new(vec![(0, "", "")]); // clone
+        let mut output = Vec::new();
+
+        db_restore(
+            &config_with_sessions(&repo, &backup, &users_dir, &users_backup),
+            &runner,
+            &mut output,
+        )
+        .expect("restore should succeed");
+
+        assert_eq!(
+            std::fs::read_to_string(users_dir.join("ada/sessions/sess-1.jsonl")).unwrap(),
+            "restored answer\n"
+        );
+        assert!(String::from_utf8(output)
+            .unwrap()
+            .contains("Restored 1 session file(s)"));
+
+        for dir in [&repo, &backup, &users_dir, &users_backup] {
+            let _ = std::fs::remove_dir_all(dir);
+        }
+    }
+
+    #[test]
+    fn restore_refuses_a_non_empty_users_dir_and_says_how_to_restore_beside_it() {
+        let repo = temp_dir("rrefuse");
+        let backup = temp_dir("rrefuse-src");
+        std::fs::create_dir_all(&backup).unwrap();
+        let users_dir = temp_dir("rrefuse-users");
+        let users_backup = temp_dir("rrefuse-users-src");
+        // A LIVE session tree the restore must not destroy.
+        seed_session(&users_dir, "ada", "live", "do not lose me\n");
+        seed_session(&users_backup, "ada", "backed-up", "the backup\n");
+        let runner = RecordingDoltRunner::new(vec![(0, "", "")]); // clone (graph)
+        let mut output = Vec::new();
+
+        match db_restore(
+            &config_with_sessions(&repo, &backup, &users_dir, &users_backup),
+            &runner,
+            &mut output,
+        ) {
+            Err(QuizdomError::Dolt(message)) => {
+                assert!(
+                    message.contains("refuses to overwrite your session history"),
+                    "{message}"
+                );
+                assert!(
+                    message.contains("--users-path"),
+                    "names the way to restore beside it: {message}"
+                );
+            }
+            other => panic!("expected a refusal, got {other:?}"),
+        }
+        // The live tree is untouched.
+        assert_eq!(
+            std::fs::read_to_string(users_dir.join("ada/sessions/live.jsonl")).unwrap(),
+            "do not lose me\n"
+        );
+
+        for dir in [&repo, &backup, &users_dir, &users_backup] {
+            let _ = std::fs::remove_dir_all(dir);
+        }
+    }
+
+    #[test]
+    fn restore_tolerates_a_graph_only_backup_with_no_session_history() {
+        let repo = temp_dir("rgraphonly");
+        let backup = temp_dir("rgraphonly-src");
+        std::fs::create_dir_all(&backup).unwrap();
+        let users_dir = temp_dir("rgraphonly-users");
+        // A backup made before this feature: no session backup directory at all.
+        let users_backup = temp_dir("rgraphonly-users-src"); // does not exist
+        let runner = RecordingDoltRunner::new(vec![(0, "", "")]); // clone
+        let mut output = Vec::new();
+
+        db_restore(
+            &config_with_sessions(&repo, &backup, &users_dir, &users_backup),
+            &runner,
+            &mut output,
+        )
+        .expect("a graph-only backup still restores the graph");
+
+        let rendered = String::from_utf8(output).unwrap();
+        assert!(
+            rendered.contains("No session-history backup"),
+            "says the graph came back but the sessions did not: {rendered}"
+        );
+
+        for dir in [&repo, &backup, &users_dir] {
+            let _ = std::fs::remove_dir_all(dir);
+        }
+    }
+
+    // trace:STORY-384 | ai:claude — the temp-then-swap guarantee, in three parts:
+    // an existing backup is REPLACED (not merged), the swap leaves no scratch
+    // behind, and an EMPTY source never wipes a good backup.
+    #[test]
+    fn the_mirror_swaps_atomically_and_never_wipes_a_good_backup() {
+        let users_dir = temp_dir("swap-users");
+        let users_backup = temp_dir("swap-users-dest");
+
+        // A first mirror lays down the backup.
+        seed_session(&users_dir, "ada", "one", "first\n");
+        assert_eq!(mirror_users(&users_dir, &users_backup).unwrap(), 1);
+        assert!(users_backup.join("ada/sessions/one.jsonl").exists());
+
+        // A second mirror with DIFFERENT content REPLACES the backup — a session
+        // deleted from the source is gone from the backup, mirror semantics.
+        std::fs::remove_dir_all(&users_dir).unwrap();
+        seed_session(&users_dir, "grace", "two", "second\n");
+        assert_eq!(mirror_users(&users_dir, &users_backup).unwrap(), 1);
+        assert!(
+            !users_backup.join("ada/sessions/one.jsonl").exists(),
+            "the replaced backup does not keep the old lineage's files"
+        );
+        assert!(users_backup.join("grace/sessions/two.jsonl").exists());
+        assert!(
+            !swap_scratch_remains(&users_backup),
+            "no scratch left behind"
+        );
+
+        // An EMPTY source must NOT wipe the good backup — mirroring emptiness
+        // over a backup is the silent-data-loss footgun BUG-277 warns against.
+        std::fs::remove_dir_all(&users_dir).unwrap();
+        std::fs::create_dir_all(&users_dir).unwrap(); // exists, but no sessions
+        assert_eq!(
+            mirror_users(&users_dir, &users_backup).unwrap(),
+            0,
+            "an empty source carries nothing"
+        );
+        assert!(
+            users_backup.join("grace/sessions/two.jsonl").exists(),
+            "and leaves the existing backup intact"
+        );
+
+        for dir in [&users_dir, &users_backup] {
+            let _ = std::fs::remove_dir_all(dir);
+        }
+    }
+
+    #[test]
+    fn count_session_logs_counts_nested_jsonl_and_ignores_the_rest() {
+        let root = temp_dir("count");
+        seed_session(&root, "ada", "s1", "a\n");
+        seed_session(&root, "ada", "s2", "b\n");
+        seed_session(&root, "grace", "s3", "c\n");
+        // A liveness marker and a stray non-session file are not sessions.
+        std::fs::write(root.join("ada/sessions/s1.active"), "1234").unwrap();
+        std::fs::write(root.join("README"), "notes").unwrap();
+        assert_eq!(count_session_logs(&root), 3);
+        assert_eq!(
+            count_session_logs(&root.join("does-not-exist")),
+            0,
+            "a missing tree is zero, not a panic"
+        );
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// Whether any `.incoming-*` / `.retiring-*` swap scratch is still sitting
+    /// beside `users_backup` — it must not be after a completed mirror.
+    fn swap_scratch_remains(users_backup: &Path) -> bool {
+        let parent = users_backup.parent().unwrap();
+        let name = users_backup
+            .file_name()
+            .unwrap()
+            .to_string_lossy()
+            .to_string();
+        std::fs::read_dir(parent)
+            .map(|entries| {
+                entries.flatten().any(|entry| {
+                    let entry_name = entry.file_name().to_string_lossy().to_string();
+                    entry_name.starts_with(&format!("{name}.incoming-"))
+                        || entry_name.starts_with(&format!("{name}.retiring-"))
+                })
+            })
+            .unwrap_or(false)
+    }
+
     #[test]
     fn parse_reads_overrides_and_keeps_resolved_defaults() {
         let config = DbBackupConfig::parse(
@@ -1537,17 +2141,27 @@ mod tests {
                 "/tmp/b",
                 "--dolt",
                 "dolt2",
+                // trace:STORY-384 | ai:claude — the session-leg overrides parse
+                // as their own pair, on top of the resolved defaults.
+                "--users-path",
+                "/tmp/u",
+                "--users-to",
+                "/tmp/ub",
             ]
             .map(String::from),
             "db-backup",
             PathBuf::from("/from/env"),
             PathBuf::from("/from/env-backup"),
             BACKUP_REMOTE_NAME.to_string(),
+            PathBuf::from("/from/env-users"),
+            PathBuf::from("/from/env-users-backup"),
         )
         .unwrap();
         assert_eq!(config.path, PathBuf::from("/tmp/x"));
         assert_eq!(config.backup, PathBuf::from("/tmp/b"));
         assert_eq!(config.dolt_command, "dolt2");
+        assert_eq!(config.users_dir, PathBuf::from("/tmp/u"));
+        assert_eq!(config.users_backup, PathBuf::from("/tmp/ub"));
 
         let defaulted = DbBackupConfig::parse(
             ["db-backup".to_string()],
@@ -1555,11 +2169,31 @@ mod tests {
             PathBuf::from("/from/env"),
             PathBuf::from("/from/env-backup"),
             BACKUP_REMOTE_NAME.to_string(),
+            PathBuf::from("/from/env-users"),
+            PathBuf::from("/from/env-users-backup"),
         )
         .unwrap();
         assert_eq!(defaulted.path, PathBuf::from("/from/env"));
         assert_eq!(defaulted.backup, PathBuf::from("/from/env-backup"));
         assert_eq!(defaulted.remote, BACKUP_REMOTE_NAME);
+        assert_eq!(defaulted.users_dir, PathBuf::from("/from/env-users"));
+        assert_eq!(
+            defaulted.users_backup,
+            PathBuf::from("/from/env-users-backup")
+        );
+
+        // `--users-from` is `db-restore`'s spelling of the session backup.
+        let restore_users = DbBackupConfig::parse(
+            ["db-restore", "--users-from", "/tmp/ub"].map(String::from),
+            "db-restore",
+            PathBuf::from("/from/env"),
+            PathBuf::from("/from/env-backup"),
+            BACKUP_REMOTE_NAME.to_string(),
+            PathBuf::from("/from/env-users"),
+            PathBuf::from("/from/env-users-backup"),
+        )
+        .unwrap();
+        assert_eq!(restore_users.users_backup, PathBuf::from("/tmp/ub"));
 
         // `--from` is `db-restore`'s spelling of the same directory.
         let restore = DbBackupConfig::parse(
@@ -1568,6 +2202,8 @@ mod tests {
             PathBuf::from("/from/env"),
             PathBuf::from("/from/env-backup"),
             BACKUP_REMOTE_NAME.to_string(),
+            PathBuf::from("data/users"),
+            PathBuf::from("/tmp/users-bk"),
         )
         .unwrap();
         assert_eq!(restore.backup, PathBuf::from("/tmp/b"));
@@ -1581,6 +2217,8 @@ mod tests {
             PathBuf::from("data/dolt"),
             PathBuf::from("/tmp/backup"),
             BACKUP_REMOTE_NAME.to_string(),
+            PathBuf::from("data/users"),
+            PathBuf::from("/tmp/users-bk"),
         );
         assert!(matches!(result, Err(QuizdomError::Usage(_))));
     }
@@ -1598,6 +2236,8 @@ mod tests {
             PathBuf::from("/home/dev/quizdom/data/dolt"),
             PathBuf::from("/home/dev/.local/share/quizdom/dolt-backup"),
             BACKUP_REMOTE_NAME.to_string(),
+            PathBuf::from("data/users"),
+            PathBuf::from("/tmp/users-bk"),
         );
         match refused {
             Err(QuizdomError::Usage(message)) => {
@@ -1627,6 +2267,8 @@ mod tests {
                 default_path.clone(),
                 default_backup.clone(),
                 BACKUP_REMOTE_NAME.to_string(),
+                PathBuf::from("data/users"),
+                PathBuf::from("/tmp/users-bk"),
             )
             .unwrap_or_else(|error| panic!("{args:?} should parse, got {error:?}"))
         };
@@ -1656,6 +2298,8 @@ mod tests {
             default_path,
             default_backup,
             BACKUP_REMOTE_NAME.to_string(),
+            PathBuf::from("data/users"),
+            PathBuf::from("/tmp/users-bk"),
         )
         .is_ok());
     }
@@ -1670,6 +2314,8 @@ mod tests {
                 PathBuf::from("/tmp/x"),
                 PathBuf::from("/tmp/b"),
                 BACKUP_REMOTE_NAME.to_string(),
+                PathBuf::from("data/users"),
+                PathBuf::from("/tmp/users-bk"),
             )
             .unwrap()
             .force
@@ -1683,6 +2329,8 @@ mod tests {
                 PathBuf::from("/tmp/x"),
                 PathBuf::from("/tmp/b"),
                 BACKUP_REMOTE_NAME.to_string(),
+                PathBuf::from("data/users"),
+                PathBuf::from("/tmp/users-bk"),
             ),
             Err(QuizdomError::Usage(_))
         ));
@@ -1740,7 +2388,7 @@ mod tests {
         let rendered = String::from_utf8(output).unwrap();
         let hint = rendered
             .lines()
-            .find(|line| line.contains("Restore with:"))
+            .find(|line| line.contains("Restore both with:"))
             .expect("prints the recovery command");
         assert!(
             hint.contains(&shell_quote(&repo)) && hint.contains(&shell_quote(&backup)),
@@ -1788,15 +2436,20 @@ mod tests {
         }
     }
 
-    /// The STORY-261 acceptance criterion as a test: seed a real Dolt repo,
-    /// back it up, DELETE the repo, restore it, and prove the rows came back.
-    /// Runs in CI now that the pipeline installs dolt (TASK-219); locally with:
+    /// The STORY-261 + STORY-384 acceptance criterion as one test against the
+    /// real engine and the real on-disk layout: seed a Dolt repo AND a
+    /// `data/users` session tree, back BOTH up, DELETE both, restore, and prove
+    /// the graph rows AND the session answers came back byte-for-byte. Runs in
+    /// CI now that the pipeline installs dolt (TASK-219); locally with:
     /// cargo test real_dolt -- --ignored
     #[test]
     #[ignore = "requires the dolt binary on PATH"]
     fn real_dolt_backup_restore_round_trip() {
         let repo = temp_dir("real");
         let backup = temp_dir("real-dest");
+        // trace:STORY-384 | ai:claude — the session leg's real paths.
+        let users_dir = temp_dir("real-users");
+        let users_backup = temp_dir("real-users-dest");
         let runner = SystemDoltRunner::new("dolt".to_string());
         crate::db_init::run_db_init(
             [
@@ -1826,13 +2479,19 @@ mod tests {
         // still has to rescue is a hand-run `dolt sql` like this one, and that
         // is what this fixture stands for.
 
-        let config = config(&repo, &backup);
+        // A real session tree, the shape ADR-12 writes: a multi-day free-will
+        // thread whose answers must survive the round trip verbatim.
+        let answer = "{\"kind\":\"answer\",\"q\":\"Q-1\",\"text\":\"I chose freely\"}\n";
+        seed_session(&users_dir, "local-user", "sess-free-will", answer);
+
+        let config = config_with_sessions(&repo, &backup, &users_dir, &users_backup);
         db_backup(&config, &runner, &mut Vec::new()).expect("backup should succeed");
         // Idempotent: a second backup re-uses the already-pointed remote.
         db_backup(&config, &runner, &mut Vec::new()).expect("re-backup should succeed");
 
-        // The disaster: the only copy of the domain graph is gone.
+        // The disaster: the only copy of BOTH the graph and the sessions is gone.
         std::fs::remove_dir_all(&repo).expect("simulated disk loss");
+        std::fs::remove_dir_all(&users_dir).expect("simulated session loss");
 
         db_restore(&config, &runner, &mut Vec::new()).expect("restore should succeed");
 
@@ -1854,9 +2513,19 @@ mod tests {
             rendered.contains("\"nodes\":2") && rendered.contains("\"edges\":1"),
             "restored graph should carry the seeded rows: {rendered}"
         );
+        // The session answers came back unchanged — the BUG-277 bar for the
+        // session leg: `session list` would show the same thread with the same
+        // answers because the log file is identical.
+        assert_eq!(
+            std::fs::read_to_string(users_dir.join("local-user/sessions/sess-free-will.jsonl"))
+                .unwrap(),
+            answer,
+            "the restored session log is byte-for-byte the one backed up"
+        );
 
-        let _ = std::fs::remove_dir_all(&repo);
-        let _ = std::fs::remove_dir_all(&backup);
+        for dir in [&repo, &backup, &users_dir, &users_backup] {
+            let _ = std::fs::remove_dir_all(dir);
+        }
     }
 
     // trace:STORY-299 | ai:claude
@@ -2330,6 +2999,8 @@ mod tests {
             PathBuf::from("/from/env"),
             PathBuf::from("/from/env-backup"),
             "archive".to_string(),
+            PathBuf::from("data/users"),
+            PathBuf::from("/tmp/users-bk"),
         )
         .unwrap();
         assert_eq!(
@@ -2343,6 +3014,8 @@ mod tests {
             PathBuf::from("/from/env"),
             PathBuf::from("/from/env-backup"),
             "archive".to_string(),
+            PathBuf::from("data/users"),
+            PathBuf::from("/tmp/users-bk"),
         )
         .unwrap();
         assert_eq!(

@@ -749,6 +749,51 @@ fn user_data_dir() -> Option<PathBuf> {
         .map(|base| base.join("quizdom"))
 }
 
+// trace:STORY-384 | ai:claude — the session-history durability path, given the
+// same env > settings > default shape as the graph's backup directory.
+/// THE resolution chain for the per-user SESSION-HISTORY backup directory (the
+/// plain-filesystem mirror `quizdom db-backup` writes and `db-restore` reads):
+/// `QUIZDOM_USERS_BACKUP_PATH` (env) > `users_backup_path` (settings.toml) >
+/// [`default_users_backup_path`]. `--users-to` / `--users-from` sit on top,
+/// exactly as `--to` / `--from` do over [`resolve_dolt_backup_path`].
+///
+/// A SIBLING of the Dolt backup directory, never inside it: that directory is a
+/// Dolt file-remote with its own manifest, and dropping a tree of JSONL beside
+/// its objects would corrupt it. Session history is flat JSONL, not Dolt, so
+/// the mirror is a directory copy rather than a push.
+pub(crate) fn resolve_users_backup_path() -> PathBuf {
+    tiered_path(
+        env::var("QUIZDOM_USERS_BACKUP_PATH").ok().as_deref(),
+        &config_text(),
+        config_dir().as_deref(),
+        "users_backup_path",
+        default_users_backup_path(),
+    )
+}
+
+/// The platform default session-history backup directory:
+/// `$XDG_DATA_HOME/quizdom/users-backup`, else
+/// `$HOME/.local/share/quizdom/users-backup` — a SIBLING of
+/// [`default_dolt_backup_path`], the same reasoning: outside the project tree so
+/// an `rm -rf data/` cannot take the backup with it, and beside the graph backup
+/// so one place holds everything quizdom keeps off to the side.
+fn default_users_backup_path() -> PathBuf {
+    user_data_dir()
+        .map(|base| base.join("users-backup"))
+        .unwrap_or_else(|| PathBuf::from("data/users-backup"))
+}
+
+// trace:STORY-384 | ai:claude
+/// The SOURCE session tree `db-backup` mirrors and `db-restore` restores into:
+/// `data/users`, cwd-relative. This is not env/settings-configurable, because it
+/// is not resolved anywhere else either — [`crate::session`] and
+/// [`crate::transcript`] both write session logs to a literal `data/users`
+/// relative to the process cwd, so the backup source has to name that exact
+/// tree or it would carry nothing.
+pub(crate) fn resolve_users_dir() -> PathBuf {
+    PathBuf::from("data").join("users")
+}
+
 // trace:STORY-299 | ai:claude — TASK-273's opt-in half.
 /// Whether a session that WROTE to the domain graph should push to the backup
 /// remote on its way out: `QUIZDOM_AUTO_BACKUP` (env) > `auto_backup`
